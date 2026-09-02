@@ -816,14 +816,19 @@ class RemnaWaveAPI:
         hwid_device_limit: int | None = None,
         description: str | None = None,
         tag: str | None = None,
+        username: str | None = None,
         active_internal_squads: list[str] | None = None,
         external_squad_uuid: str | None | type(...) = ...,
     ) -> RemnaWaveUser:
         # 3.0.0: UpdateUserCommand.RequestBodySchema не имеет поля `uuid`, а
         # .refine((d) => d.username ?? d.id) требует хотя бы один из двух —
         # неизвестный ключ zod срезает молча, и запрос падает в 400.
+        # Пред-3.0 панели refine другой: `uuid ?? username` — поле `id` они
+        # игнорируют. Username валиден в обеих схемах, поэтому шлём его, когда есть.
         panel_user_id = coerce_panel_user_id(user_id)
         data = {'id': panel_user_id}
+        if username:
+            data['username'] = username
 
         if status:
             data['status'] = status.value

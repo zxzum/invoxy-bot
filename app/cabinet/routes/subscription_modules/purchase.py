@@ -1530,6 +1530,13 @@ async def activate_trial(
 
     logger.info('Trial subscription activated for user', user_id=user.id)
 
+    # IDs before panel I/O: create_remnawave_user does db.rollback() on API
+    # error, which expires the ORM instances. Enqueue then lazy-refreshes
+    # subscription.id and raises MissingGreenlet — cabinet sees a 500 after
+    # the trial row is already committed.
+    trial_subscription_id = subscription.id
+    trial_user_id = user.id
+
     # Create RemnaWave user
     subscription_service = SubscriptionService()
     panel_user = None
@@ -1539,7 +1546,12 @@ async def activate_trial(
             # stays None and the check below enqueues remnawave_retry_queue, instead
             # of holding the cabinet response open after the trial is committed.
             async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
-                panel_user = await subscription_service.create_remnawave_user(db, subscription)
+                panel_user = await subscription_service.create_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=True,
+                    reset_reason='trial_activation',
+                )
                 await db.refresh(subscription)
     except Exception as e:
         logger.error('Failed to create RemnaWave user for trial', error=e)
@@ -1552,14 +1564,14 @@ async def activate_trial(
         from app.services.remnawave_retry_queue import remnawave_retry_queue
 
         remnawave_retry_queue.enqueue(
-            subscription_id=subscription.id,
-            user_id=user.id,
+            subscription_id=trial_subscription_id,
+            user_id=trial_user_id,
             action='create',
         )
         logger.warning(
             'Trial RemnaWave user not provisioned, enqueued for retry',
-            user_id=user.id,
-            subscription_id=subscription.id,
+            user_id=trial_user_id,
+            subscription_id=trial_subscription_id,
         )
 
     # Send admin notification about trial activation

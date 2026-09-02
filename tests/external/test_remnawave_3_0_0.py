@@ -259,6 +259,20 @@ async def test_update_user_body_is_keyed_on_id_not_uuid():
     assert body['telegramId'] == 555
 
 
+async def test_update_user_sends_username_for_pre_3_panels():
+    """Пред-3.0 панели refine `uuid ?? username` и игнорируют `id`. Без username
+    PATCH отвечает 400 Validation failed — триал в кабинете падал в 500."""
+    api = _api()
+    api._make_request = AsyncMock(return_value={'response': _user_payload()})
+
+    await api.update_user(42, username='tg_5548521968', telegram_id=555)
+
+    body = api._make_request.call_args.args[2]
+    assert body['id'] == 42
+    assert body['username'] == 'tg_5548521968'
+    assert 'uuid' not in body
+
+
 async def test_update_user_coerces_digit_string_id_to_number():
     api = _api()
     api._make_request = AsyncMock(return_value={'response': _user_payload()})

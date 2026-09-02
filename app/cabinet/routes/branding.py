@@ -333,18 +333,18 @@ class AnalyticsCountersUpdate(BaseModel):
 
 # Default theme colors
 DEFAULT_THEME_COLORS = {
-    'accent': '#3b82f6',
-    'darkBackground': '#0a0f1a',
-    'darkSurface': '#0f172a',
-    'darkText': '#f1f5f9',
-    'darkTextSecondary': '#94a3b8',
-    'lightBackground': '#F7E7CE',
-    'lightSurface': '#FEF9F0',
-    'lightText': '#1F1A12',
-    'lightTextSecondary': '#7D6B48',
-    'success': '#22c55e',
+    'accent': '#22d3ee',
+    'darkBackground': '#05080f',
+    'darkSurface': '#0c141c',
+    'darkText': '#e8f4f8',
+    'darkTextSecondary': '#8aa4b0',
+    'lightBackground': '#d9f4f8',
+    'lightSurface': '#f3fcfd',
+    'lightText': '#0b1c22',
+    'lightTextSecondary': '#3d6a75',
+    'success': '#34d399',
     'warning': '#f59e0b',
-    'error': '#ef4444',
+    'error': '#f43f5e',
 }
 
 

@@ -471,7 +471,9 @@ class SubscriptionService:
                         if not await api.reset_user_devices(existing.id):
                             logger.error('⚠️ Не удалось сбросить HWID', panel_user_id=existing.id)
 
-                    updated = await api.update_user(user_id=existing.id, **common_kwargs)
+                    updated = await api.update_user(
+                        user_id=existing.id, username=existing.username, **common_kwargs
+                    )
                     if reset_traffic:
                         await self._reset_user_traffic(api, updated.id, user, reset_reason)
                     return updated
@@ -512,7 +514,9 @@ class SubscriptionService:
             if settings.RESET_DEVICES_ON_RENEWAL:
                 if not await api.reset_user_devices(adopted.id):
                     logger.error('⚠️ Не удалось сбросить HWID', panel_user_id=adopted.id)
-            updated = await api.update_user(user_id=adopted.id, **common_kwargs)
+            updated = await api.update_user(
+                user_id=adopted.id, username=adopted.username, **common_kwargs
+            )
             if reset_traffic:
                 await self._reset_user_traffic(api, updated.id, user, reset_reason)
             return updated
@@ -667,7 +671,9 @@ class SubscriptionService:
                 else:
                     logger.error('⚠️ Не удалось сбросить HWID', panel_user_id=remnawave_user.id)
 
-            updated_user = await api.update_user(user_id=remnawave_user.id, **common_kwargs)
+            updated_user = await api.update_user(
+                user_id=remnawave_user.id, username=remnawave_user.username, **common_kwargs
+            )
             if reset_traffic:
                 await self._reset_user_traffic(api, updated_user.id, user, reset_reason)
             return updated_user
