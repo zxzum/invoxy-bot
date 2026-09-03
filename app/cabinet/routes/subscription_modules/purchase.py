@@ -11,6 +11,7 @@ POST /subscription/trial
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -19,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cabinet.routes.balance import _create_payment_link, get_payment_methods
 from app.config import settings
 from app.database.crud.server_squad import get_server_squad_by_uuid
 from app.database.crud.subscription import (
@@ -53,6 +55,8 @@ from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import (
     PurchasePreviewRequest,
     SubscriptionResponse,
+    TariffInvoiceRequest,
+    TariffInvoiceResponse,
     TariffPurchaseRequest,
     TrialActivateRequest,
     TrialInfoResponse,
@@ -644,6 +648,210 @@ async def submit_purchase(
         )
 
 
+@dataclass
+class TariffPurchaseContext:
+    """Результат валидации+цены покупки тарифа — общий для /purchase-tariff и invoice."""
+
+    tariff: Tariff
+    user: User
+    is_daily: bool
+    period_days: int
+    traffic_limit_gb: int
+    custom_traffic_gb: int | None
+    existing_subscription: Subscription | None
+    effective_device_limit: int
+    device_limit: int | None
+    price_kopeks: int
+    original_price: int
+    discount_percent: int
+    promo_offer_discount_value: int
+    promo_offer_discount_percent: int
+    price_before_promo_offer: int
+    promo_group: Any | None
+    squads: list[str]
+
+
+async def _resolve_tariff_purchase_context(
+    db: AsyncSession,
+    user: User,
+    *,
+    tariff_id: int,
+    period_days: int | None,
+    traffic_gb: int | None,
+    subscription_id: int | None,
+) -> TariffPurchaseContext:
+    """Validate tariff/period/traffic, resolve the existing subscription and compute the price."""
+    # Get tariff
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if not tariff or not tariff.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Tariff not found or inactive',
+        )
+
+    # Lock user BEFORE price computation to prevent TOCTOU on promo offer
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
+
+    # Check tariff availability for user's promo group and get promo group for discounts
+    promo_group = user.get_primary_promo_group() if hasattr(user, 'get_primary_promo_group') else None
+    promo_group_id = promo_group.id if promo_group else None
+    if not tariff.is_available_for_promo_group(promo_group_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='This tariff is not available for your promo group',
+        )
+
+    # Handle daily tariffs specially
+    is_daily_tariff = getattr(tariff, 'is_daily', False)
+    if is_daily_tariff:
+        period_days = 1
+
+    # Validate period_days against tariff's configured periods (prevent arbitrary periods)
+    if not is_daily_tariff:
+        if tariff.period_prices:
+            available_periods = [int(p) for p in tariff.period_prices.keys()]
+        else:
+            available_periods = []
+
+        custom_days_allowed = (
+            hasattr(tariff, 'can_purchase_custom_days')
+            and tariff.can_purchase_custom_days()
+            and hasattr(tariff, 'get_price_for_custom_days')
+            and tariff.get_price_for_custom_days(period_days) is not None
+        )
+
+        if period_days not in available_periods and not custom_days_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Selected period is not available for this tariff',
+            )
+
+    # Determine traffic limit (custom traffic support)
+    traffic_limit_gb = tariff.traffic_limit_gb
+    custom_traffic_gb = None
+    if traffic_gb is not None and tariff.can_purchase_custom_traffic():
+        # Validate against the tariff's allowed custom-traffic range. Without this an
+        # out-of-range value makes get_price_for_custom_traffic() return None, which the
+        # pricing engine treats as 0 — provisioning free (even unlimited) traffic. The
+        # bot-side flow clamps the same input (tariff_purchase.py); mirror that here.
+        if traffic_gb < tariff.min_traffic_gb or traffic_gb > tariff.max_traffic_gb:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f'Traffic must be between {tariff.min_traffic_gb} and '
+                    f'{tariff.max_traffic_gb} GB for this tariff'
+                ),
+            )
+        custom_traffic_gb = traffic_gb
+        traffic_limit_gb = traffic_gb
+
+    # Determine device_limit for renewal pricing.
+    #
+    # When the caller passes an explicit ``subscription_id`` (the
+    # user clicked "Renew this subscription" rather than a fresh
+    # catalog buy), use it via the ownership-checked lookup. This
+    # is race-resistant: even if a concurrent panel webhook briefly
+    # flips the target sub's status between request arrival and
+    # this query, the ID-based lookup still finds the right row.
+    # Without this pin, the bot was hitting the partial UNIQUE
+    # ``uq_subscriptions_user_tariff_active`` on confirm and
+    # logging "Тариф уже активен" — the exact production scenario
+    # the bot-side fix already closed (commit 5cd53e4c).
+    existing_subscription = None
+    if settings.is_multi_tariff_enabled():
+        if subscription_id is not None:
+            existing_subscription = await get_subscription_by_id_for_user(db, subscription_id, user.id)
+            # If the pinned sub points to a different tariff than
+            # the request carries (admin swap, stale client state),
+            # ignore it and fall back to tariff-level lookup so the
+            # purchase doesn't extend a sub of the wrong tariff.
+            if existing_subscription and existing_subscription.tariff_id != tariff.id:
+                logger.warning(
+                    'Cabinet purchase: explicit subscription_id has divergent tariff_id; falling back',
+                    request_subscription_id=subscription_id,
+                    pinned_tariff_id=existing_subscription.tariff_id,
+                    request_tariff_id=tariff.id,
+                    user_id=user.id,
+                )
+                existing_subscription = None
+        if existing_subscription is None:
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            # include_inactive=True so an EXPIRED (or disabled) trial of THIS
+            # tariff is found and converted in place via the extend branch
+            # below (same Remnawave user → same link). Without it the expired
+            # trial is invisible → killed → re-created with a new link.
+            existing_subscription = await get_subscription_by_user_and_tariff(
+                db, user.id, tariff.id, include_inactive=True
+            )
+    else:
+        existing_subscription = await get_subscription_by_user_id(db, user.id)
+    device_limit = None
+    effective_device_limit = tariff.device_limit
+    if existing_subscription and existing_subscription.tariff_id == tariff.id:
+        device_limit = existing_subscription.device_limit
+        if (existing_subscription.device_limit or 0) > (tariff.device_limit or 0):
+            effective_device_limit = existing_subscription.device_limit
+
+    # Calculate price via PricingEngine (single source of truth)
+    result = await pricing_engine.calculate_tariff_purchase_price(
+        tariff,
+        period_days,
+        device_limit=device_limit,
+        custom_traffic_gb=custom_traffic_gb,
+        user=user,
+    )
+    price_kopeks = result.final_total
+    original_price = result.original_total
+    bd = result.breakdown
+    group_pcts = bd.get('group_discount_pct', {})
+    discount_percent = group_pcts.get('period', 0)
+    promo_offer_discount_percent = bd.get('offer_discount_pct', 0)
+    promo_offer_discount_value = result.promo_offer_discount
+    price_before_promo_offer = price_kopeks + promo_offer_discount_value
+
+    # Safety guard: reject zero-price purchases for non-daily tariffs (defense in depth).
+    # Use original_total (pre-discount price) — base_price is already discounted,
+    # so a 100% group discount legitimately makes it 0.
+    if price_kopeks <= 0 and result.original_total <= 0 and not is_daily_tariff:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Invalid tariff period or pricing configuration',
+        )
+
+    # Get server squads from tariff
+    squads = tariff.allowed_squads or []
+
+    # If allowed_squads is empty, it means "all servers"
+    if not squads:
+        from app.database.crud.server_squad import get_all_server_squads
+
+        all_servers, _ = await get_all_server_squads(db, available_only=True)
+        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+
+    return TariffPurchaseContext(
+        tariff=tariff,
+        user=user,
+        is_daily=is_daily_tariff,
+        period_days=period_days,
+        traffic_limit_gb=traffic_limit_gb,
+        custom_traffic_gb=custom_traffic_gb,
+        existing_subscription=existing_subscription,
+        effective_device_limit=effective_device_limit,
+        device_limit=device_limit,
+        price_kopeks=price_kopeks,
+        original_price=original_price,
+        discount_percent=discount_percent,
+        promo_offer_discount_value=promo_offer_discount_value,
+        promo_offer_discount_percent=promo_offer_discount_percent,
+        price_before_promo_offer=price_before_promo_offer,
+        promo_group=promo_group,
+        squads=squads,
+    )
+
+
 # ============ Tariff Purchase (for tariffs mode) ============
 
 
@@ -668,147 +876,29 @@ async def purchase_tariff(
                 detail='Tariffs mode is not enabled',
             )
 
-        # Get tariff
-        tariff = await get_tariff_by_id(db, request.tariff_id)
-        if not tariff or not tariff.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail='Tariff not found or inactive',
-            )
-
-        # Lock user BEFORE price computation to prevent TOCTOU on promo offer
-        from app.database.crud.user import lock_user_for_pricing
-
-        user = await lock_user_for_pricing(db, user.id)
-
-        # Check tariff availability for user's promo group and get promo group for discounts
-        promo_group = user.get_primary_promo_group() if hasattr(user, 'get_primary_promo_group') else None
-        promo_group_id = promo_group.id if promo_group else None
-        if not tariff.is_available_for_promo_group(promo_group_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail='This tariff is not available for your promo group',
-            )
-
-        # Handle daily tariffs specially
-        is_daily_tariff = getattr(tariff, 'is_daily', False)
-        if is_daily_tariff:
-            period_days = 1
-        else:
-            period_days = request.period_days
-
-        # Validate period_days against tariff's configured periods (prevent arbitrary periods)
-        if not is_daily_tariff:
-            if tariff.period_prices:
-                available_periods = [int(p) for p in tariff.period_prices.keys()]
-            else:
-                available_periods = []
-
-            custom_days_allowed = (
-                hasattr(tariff, 'can_purchase_custom_days')
-                and tariff.can_purchase_custom_days()
-                and hasattr(tariff, 'get_price_for_custom_days')
-                and tariff.get_price_for_custom_days(period_days) is not None
-            )
-
-            if period_days not in available_periods and not custom_days_allowed:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Selected period is not available for this tariff',
-                )
-
-        # Determine traffic limit (custom traffic support)
-        traffic_limit_gb = tariff.traffic_limit_gb
-        custom_traffic_gb = None
-        if request.traffic_gb is not None and tariff.can_purchase_custom_traffic():
-            # Validate against the tariff's allowed custom-traffic range. Without this an
-            # out-of-range value makes get_price_for_custom_traffic() return None, which the
-            # pricing engine treats as 0 — provisioning free (even unlimited) traffic. The
-            # bot-side flow clamps the same input (tariff_purchase.py); mirror that here.
-            if request.traffic_gb < tariff.min_traffic_gb or request.traffic_gb > tariff.max_traffic_gb:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        f'Traffic must be between {tariff.min_traffic_gb} and '
-                        f'{tariff.max_traffic_gb} GB for this tariff'
-                    ),
-                )
-            custom_traffic_gb = request.traffic_gb
-            traffic_limit_gb = request.traffic_gb
-
-        # Determine device_limit for renewal pricing.
-        #
-        # When the frontend passes an explicit ``subscription_id`` (the
-        # user clicked "Renew this subscription" rather than a fresh
-        # catalog buy), use it via the ownership-checked lookup. This
-        # is race-resistant: even if a concurrent panel webhook briefly
-        # flips the target sub's status between request arrival and
-        # this query, the ID-based lookup still finds the right row.
-        # Without this pin, the bot was hitting the partial UNIQUE
-        # ``uq_subscriptions_user_tariff_active`` on confirm and
-        # logging "Тариф уже активен" — the exact production scenario
-        # the bot-side fix already closed (commit 5cd53e4c).
-        existing_subscription = None
-        if settings.is_multi_tariff_enabled():
-            if request.subscription_id is not None:
-                existing_subscription = await get_subscription_by_id_for_user(db, request.subscription_id, user.id)
-                # If the pinned sub points to a different tariff than
-                # the request carries (admin swap, stale client state),
-                # ignore it and fall back to tariff-level lookup so the
-                # purchase doesn't extend a sub of the wrong tariff.
-                if existing_subscription and existing_subscription.tariff_id != tariff.id:
-                    logger.warning(
-                        'Cabinet purchase: explicit subscription_id has divergent tariff_id; falling back',
-                        request_subscription_id=request.subscription_id,
-                        pinned_tariff_id=existing_subscription.tariff_id,
-                        request_tariff_id=tariff.id,
-                        user_id=user.id,
-                    )
-                    existing_subscription = None
-            if existing_subscription is None:
-                from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-                # include_inactive=True so an EXPIRED (or disabled) trial of THIS
-                # tariff is found and converted in place via the extend branch
-                # below (same Remnawave user → same link). Without it the expired
-                # trial is invisible → killed → re-created with a new link.
-                existing_subscription = await get_subscription_by_user_and_tariff(
-                    db, user.id, tariff.id, include_inactive=True
-                )
-        else:
-            existing_subscription = await get_subscription_by_user_id(db, user.id)
-        device_limit = None
-        effective_device_limit = tariff.device_limit
-        if existing_subscription and existing_subscription.tariff_id == tariff.id:
-            device_limit = existing_subscription.device_limit
-            if (existing_subscription.device_limit or 0) > (tariff.device_limit or 0):
-                effective_device_limit = existing_subscription.device_limit
-
-        # Calculate price via PricingEngine (single source of truth)
-        result = await pricing_engine.calculate_tariff_purchase_price(
-            tariff,
-            period_days,
-            device_limit=device_limit,
-            custom_traffic_gb=custom_traffic_gb,
-            user=user,
+        ctx = await _resolve_tariff_purchase_context(
+            db,
+            user,
+            tariff_id=request.tariff_id,
+            period_days=request.period_days,
+            traffic_gb=request.traffic_gb,
+            subscription_id=request.subscription_id,
         )
-        price_kopeks = result.final_total
-        original_price = result.original_total
-        bd = result.breakdown
-        group_pcts = bd.get('group_discount_pct', {})
-        discount_percent = group_pcts.get('period', 0)
-        promo_offer_discount_percent = bd.get('offer_discount_pct', 0)
-        promo_offer_discount_value = result.promo_offer_discount
-        price_before_promo_offer = price_kopeks + promo_offer_discount_value
-
-        # Safety guard: reject zero-price purchases for non-daily tariffs (defense in depth).
-        # Use original_total (pre-discount price) — base_price is already discounted,
-        # so a 100% group discount legitimately makes it 0.
-        if price_kopeks <= 0 and result.original_total <= 0 and not is_daily_tariff:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Invalid tariff period or pricing configuration',
-            )
+        tariff = ctx.tariff
+        user = ctx.user
+        is_daily_tariff = ctx.is_daily
+        period_days = ctx.period_days
+        traffic_limit_gb = ctx.traffic_limit_gb
+        existing_subscription = ctx.existing_subscription
+        effective_device_limit = ctx.effective_device_limit
+        price_kopeks = ctx.price_kopeks
+        original_price = ctx.original_price
+        discount_percent = ctx.discount_percent
+        promo_offer_discount_value = ctx.promo_offer_discount_value
+        promo_offer_discount_percent = ctx.promo_offer_discount_percent
+        price_before_promo_offer = ctx.price_before_promo_offer
+        promo_group = ctx.promo_group
+        squads = ctx.squads
 
         # Check balance
         if price_kopeks > 0 and user.balance_kopeks < price_kopeks:
@@ -873,15 +963,6 @@ async def purchase_tariff(
 
         subscription = existing_subscription
 
-        # Get server squads from tariff
-        squads = tariff.allowed_squads or []
-
-        # If allowed_squads is empty, it means "all servers"
-        if not squads:
-            from app.database.crud.server_squad import get_all_server_squads
-
-            all_servers, _ = await get_all_server_squads(db, available_only=True)
-            squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
         # Charge balance
         if is_daily_tariff:
@@ -1284,6 +1365,138 @@ async def purchase_tariff(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to process tariff purchase',
         )
+
+
+@router.post('/purchase-tariff/invoice', response_model=TariffInvoiceResponse)
+async def create_tariff_invoice(
+    request: TariffInvoiceRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Прямая оплата тарифа: инвойс на НЕДОСТАЮЩУЮ сумму без ручного пополнения.
+
+    Корзина сохраняется до создания ссылки — после оплаты вебхук зачислит
+    баланс и auto_purchase_saved_cart_after_topup активирует тариф (тот же
+    боевой путь, что у пополнения, но для пользователя — один платёж).
+    """
+    if getattr(user, 'restriction_subscription', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Subscription purchases are restricted for this account',
+        )
+    if not settings.is_tariffs_mode():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Tariffs mode is not enabled',
+        )
+
+    ctx = await _resolve_tariff_purchase_context(
+        db,
+        user,
+        tariff_id=request.tariff_id,
+        period_days=request.period_days,
+        traffic_gb=request.traffic_gb,
+        subscription_id=request.subscription_id,
+    )
+
+    if user.balance_kopeks >= ctx.price_kopeks:
+        # Баланс уже покрывает цену — клиент должен звать /purchase-tariff.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'balance_sufficient',
+                'message': 'Balance covers the price — use balance purchase',
+                'price_kopeks': ctx.price_kopeks,
+                'balance_kopeks': user.balance_kopeks,
+            },
+        )
+
+    missing = ctx.price_kopeks - user.balance_kopeks
+
+    methods = await get_payment_methods(user=user, db=db)
+    method = next((m for m in methods if m.id == request.payment_method), None)
+    if not method or not method.is_available:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Invalid or unavailable payment method',
+        )
+    if missing < method.min_amount_kopeks:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f'Minimum amount is {method.min_amount_kopeks / 100:.2f} RUB, '
+                f'but only {missing / 100:.2f} RUB is missing'
+            ),
+        )
+
+    # Корзина — та же структура, что в 402-ветке /purchase-tariff:
+    # её съест auto_purchase_saved_cart_after_topup после оплаты.
+    cart_data = {
+        'cart_mode': 'daily_tariff_purchase' if ctx.is_daily else 'tariff_purchase',
+        'tariff_id': ctx.tariff.id,
+        'period_days': ctx.period_days,
+        'total_price': ctx.price_kopeks,
+        'user_id': user.id,
+        'saved_cart': True,
+        'missing_amount': missing,
+        'return_to_cart': True,
+        'description': f'Покупка тарифа {ctx.tariff.name} на {ctx.period_days} дней',
+        'traffic_limit_gb': ctx.traffic_limit_gb,
+        'device_limit': ctx.effective_device_limit,
+        'allowed_squads': ctx.tariff.allowed_squads or [],
+        'discount_percent': ctx.discount_percent,
+        'consume_promo_offer': ctx.promo_offer_discount_value > 0,
+        'source': 'cabinet',
+        'subscription_id': ctx.existing_subscription.id if ctx.existing_subscription else None,
+    }
+    if ctx.is_daily:
+        cart_data['is_daily'] = True
+        cart_data['daily_price_kopeks'] = ctx.price_kopeks
+    try:
+        await user_cart_service.save_user_cart(user.id, cart_data)
+        logger.info(
+            'Tariff invoice cart saved (cabinet)', user_id=user.id, tariff_id=ctx.tariff.id
+        )
+    except Exception as cart_error:
+        logger.error('Error saving tariff invoice cart (cabinet)', error=cart_error)
+
+    cabinet_return_url = f'{settings.CABINET_URL.rstrip("/")}/subscriptions'
+    description = (
+        f'Оплата тарифа «{ctx.tariff.name}» ({ctx.period_days} дн.)'
+        if not ctx.is_daily
+        else f'Активация суточного тарифа «{ctx.tariff.name}»'
+    )
+    payment_url, payment_id = await _create_payment_link(
+        db,
+        user,
+        payment_method=request.payment_method,
+        payment_option=request.payment_option,
+        amount_kopeks=missing,
+        description=description,
+        return_url=cabinet_return_url,
+        success_url=cabinet_return_url,
+        failed_url=cabinet_return_url,
+        extra_metadata={
+            'purpose': 'tariff_purchase',
+            'tariff_id': str(ctx.tariff.id),
+            'source': 'cabinet',
+        },
+    )
+    if not payment_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Payment URL not received',
+        )
+
+    return TariffInvoiceResponse(
+        payment_id=payment_id or 'pending',
+        payment_url=payment_url,
+        amount_kopeks=missing,
+        amount_rubles=missing / 100,
+        price_kopeks=ctx.price_kopeks,
+        balance_kopeks=user.balance_kopeks,
+        method=request.payment_method,
+    )
 
 
 # ============ Trial ============

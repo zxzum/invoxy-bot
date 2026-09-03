@@ -58,19 +58,19 @@ def test_purchase_tariff_tariff_lookup_includes_inactive() -> None:
     """
     source = PURCHASE_PATH.read_text(encoding='utf-8')
     tree = ast.parse(source)
-    func = _find_async_function(tree, 'purchase_tariff')
+    func = _find_async_function(tree, '_resolve_tariff_purchase_context')
     body = _function_source(source, func)
 
     # The CALL (paren) — not the import line, which mentions the name without a
     # paren. The call may wrap across lines, so inspect a window over its args.
     call_idx = body.find('get_subscription_by_user_and_tariff(')
     assert call_idx >= 0, (
-        'purchase_tariff must resolve the existing subscription by (user, tariff) '
-        'via get_subscription_by_user_and_tariff'
+        '_resolve_tariff_purchase_context (used by purchase_tariff) must resolve the '
+        'existing subscription by (user, tariff) via get_subscription_by_user_and_tariff'
     )
     call_window = body[call_idx : call_idx + 200]
     assert 'include_inactive=True' in call_window, (
-        'purchase_tariff must call get_subscription_by_user_and_tariff(..., '
+        '_resolve_tariff_purchase_context must call get_subscription_by_user_and_tariff(..., '
         'include_inactive=True) so an EXPIRED trial of the same tariff is found and '
         'converted in place. Without it the expired trial is missed, killed, and a '
         'new subscription with a new Remnawave link is created (prod bug 2026-06).'

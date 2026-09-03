@@ -237,3 +237,24 @@ class TariffPurchaseRequest(BaseModel):
         pattern=r'^[A-Za-z0-9._:-]{4,128}$',
         description='Cached Yandex.Metrika ClientID (optional).',
     )
+
+
+class TariffInvoiceRequest(BaseModel):
+    """Прямая оплата тарифа инвойсом (без пополнения баланса)."""
+
+    tariff_id: int
+    period_days: int | None = None
+    traffic_gb: int | None = None
+    subscription_id: int | None = None
+    payment_method: str
+    payment_option: str | None = None
+
+
+class TariffInvoiceResponse(BaseModel):
+    payment_id: str
+    payment_url: str
+    amount_kopeks: int  # нехватка: price − balance
+    amount_rubles: float
+    price_kopeks: int  # полная цена тарифа
+    balance_kopeks: int
+    method: str
