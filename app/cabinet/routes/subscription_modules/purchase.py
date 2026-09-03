@@ -1458,7 +1458,27 @@ async def create_tariff_invoice(
             'Tariff invoice cart saved (cabinet)', user_id=user.id, tariff_id=ctx.tariff.id
         )
     except Exception as cart_error:
+        # Fail fast: без сохранённой корзины оплата не активирует тариф
+        # (вебхук только зачислит баланс). Деньги ещё не списаны — списание
+        # произойдёт в вебхуке, так что отдаём 500 вместо платёжной ссылки.
         logger.error('Error saving tariff invoice cart (cabinet)', error=cart_error)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to prepare cart for purchase. Please try again.',
+        )
+
+    # Yandex.Metrika offline conversion — see /purchase endpoint for context (#558449).
+    try:
+        from app.services import yandex_offline_conv_service as yandex_conv
+
+        # Purchase event fires centrally from create_transaction; here we
+        # only persist the request-body CID synchronously (#558449).
+        await yandex_conv.store_cid_only(
+            user.id,
+            request.yandex_cid,
+        )
+    except Exception as yconv_err:
+        logger.debug('yandex_conv tariff invoice hook failed (non-fatal)', user_id=user.id, error=str(yconv_err))
 
     cabinet_return_url = f'{settings.CABINET_URL.rstrip("/")}/subscriptions'
     description = (

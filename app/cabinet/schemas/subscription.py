@@ -248,6 +248,13 @@ class TariffInvoiceRequest(BaseModel):
     subscription_id: int | None = None
     payment_method: str
     payment_option: str | None = None
+    # See PurchasePreviewRequest.yandex_cid (#558449).
+    yandex_cid: str | None = Field(
+        None,
+        max_length=128,
+        pattern=r'^[A-Za-z0-9._:-]{4,128}$',
+        description='Cached Yandex.Metrika ClientID (optional).',
+    )
 
 
 class TariffInvoiceResponse(BaseModel):
