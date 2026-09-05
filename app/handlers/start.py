@@ -3338,29 +3338,35 @@ async def process_webauth_confirm(
     if not isinstance(callback.message, types.Message):
         return
 
+    async def edit_auth_message(text: str) -> None:
+        if callback.message.photo:
+            await callback.message.edit_caption(caption=text, reply_markup=None)
+        else:
+            await callback.message.edit_text(text, reply_markup=None)
+
     if callback.data == 'webauth_deny':
-        await callback.message.edit_text('❌ Вход отменён.')
+        await edit_auth_message('❌ Вход отменён.')
         return
 
     # Extract token from callback_data: "webauth_confirm:{token}"
     token = callback.data.split(':', 1)[1] if ':' in callback.data else ''
     if len(token) < WEB_AUTH_TOKEN_MIN_LENGTH:
-        await callback.message.edit_text('❌ Ошибка: неверный токен.')
+        await edit_auth_message('❌ Ошибка: неверный токен.')
         return
 
     user = await get_user_by_telegram_id(db, callback.from_user.id)
     if not user or user.status != UserStatus.ACTIVE.value:
-        await callback.message.edit_text('❌ Учётная запись неактивна.')
+        await edit_auth_message('❌ Учётная запись неактивна.')
         return
 
     linked = await link_web_auth_token(token, callback.from_user.id, user.id)
     texts = get_texts(user.language)
     if linked:
-        await callback.message.edit_text(
+        await edit_auth_message(
             texts.t('WEB_AUTH_SUCCESS', '✅ Авторизация в кабинете подтверждена! Вернитесь в браузер.'),
         )
     else:
-        await callback.message.edit_text(
+        await edit_auth_message(
             texts.t('WEB_AUTH_EXPIRED', '❌ Ссылка для входа истекла. Попробуйте снова.'),
         )
 
