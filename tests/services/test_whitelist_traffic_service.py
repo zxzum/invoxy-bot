@@ -84,7 +84,7 @@ def test_effective_whitelist_squads_removes_and_restores_access():
 
 
 @pytest.mark.asyncio
-async def test_production_seed_uses_scoped_one_gb_prices_and_exact_device_caps(monkeypatch):
+async def test_production_seed_uses_scoped_package_prices_and_exact_device_caps(monkeypatch):
     bootstrap = _load_bootstrap()
     monkeypatch.setattr(bootstrap, 'upsert_system_setting', AsyncMock())
     tariffs = [
@@ -104,11 +104,14 @@ async def test_production_seed_uses_scoped_one_gb_prices_and_exact_device_caps(m
     premium_white = by_name['Премиум 💎 Белый интернет']
     trial = by_name['Пробный период']
 
-    assert basic.get_traffic_topup_packages() == {1: 50}
-    assert standard_white.get_traffic_topup_packages() == {1: 50}
-    assert standard_white.get_whitelist_traffic_topup_packages() == {1: 300}
-    assert premium_white.get_traffic_topup_packages() == {1: 50}
-    assert premium_white.get_whitelist_traffic_topup_packages() == {1: 300}
+    assert basic.get_traffic_topup_packages() == {100: 5000, 300: 15000}
+    assert standard_white.get_traffic_topup_packages() == {100: 5000, 300: 15000}
+    assert standard_white.get_whitelist_traffic_topup_packages() == {50: 15000, 100: 30000}
+    assert premium_white.get_traffic_topup_packages() == {100: 5000, 300: 15000}
+    assert premium_white.get_whitelist_traffic_topup_packages() == {50: 15000, 100: 30000}
+    assert basic.allowed_squads == [bootstrap.JUST_VPN_SQUAD_UUID]
+    assert standard_white.allowed_squads == [bootstrap.JUST_VPN_SQUAD_UUID, bootstrap.WHITELIST_SQUAD_UUID]
+    assert premium_white.allowed_squads == [bootstrap.JUST_VPN_SQUAD_UUID, bootstrap.WHITELIST_SQUAD_UUID]
     assert (basic.device_limit, basic.device_price_kopeks, basic.max_device_limit) == (3, 3000, 10)
     assert (standard_white.device_limit, standard_white.device_price_kopeks, standard_white.max_device_limit) == (
         5,

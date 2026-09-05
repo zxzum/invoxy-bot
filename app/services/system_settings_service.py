@@ -332,6 +332,7 @@ class BotConfigurationService:
         'PRICE_360_DAYS': 'SUBSCRIPTION_PRICES',
         'PAID_SUBSCRIPTION_USER_TAG': 'SUBSCRIPTION_PRICES',
         'TRAFFIC_PACKAGES_CONFIG': 'TRAFFIC_PACKAGES',
+        'TRAFFIC_TOPUP_PACKAGES_CONFIG': 'TRAFFIC_PACKAGES',
         'MULTI_TARIFF_ENABLED': 'SUBSCRIPTIONS_CORE',
         'MAX_ACTIVE_SUBSCRIPTIONS': 'SUBSCRIPTIONS_CORE',
         'BASE_PROMO_GROUP_PERIOD_DISCOUNTS_ENABLED': 'SUBSCRIPTIONS_CORE',
@@ -837,6 +838,43 @@ class BotConfigurationService:
                 'При недоступности бот сам вернётся к классическому виду до рестарта.'
             ),
             'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED',
+        },
+        'ADMIN_NOTIFICATIONS_ENABLED': {
+            'description': 'Включает отправку событий бота в админский Telegram-чат.',
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': 'Требует корректный ADMIN_NOTIFICATIONS_CHAT_ID и добавленного бота в чат.',
+        },
+        'ADMIN_NOTIFICATIONS_CHAT_ID': {
+            'description': 'ID Telegram-чата, куда бот отправляет административные уведомления.',
+            'format': 'Числовой chat ID; для супергруппы обычно начинается с -100.',
+            'example': '-1001234567890',
+            'warning': 'Бот должен состоять в чате и иметь право отправлять сообщения.',
+            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED',
+        },
+        'TRAFFIC_PACKAGES_CONFIG': {
+            'description': 'Глобальные пакеты докупки обычного VPN-трафика.',
+            'format': 'ГБ:цена в копейках:enabled через запятую.',
+            'example': '100:5000:true,300:15000:true',
+            'warning': 'Настройки конкретного тарифа из админки имеют приоритет над этим fallback.',
+        },
+        'TRAFFIC_TOPUP_PACKAGES_CONFIG': {
+            'description': 'Пакеты докупки обычного VPN-трафика для быстрого режима.',
+            'format': 'ГБ:цена в копейках:enabled через запятую.',
+            'example': '100:5000:true,300:15000:true',
+            'warning': 'Для тарифного режима редактируйте пакеты в карточке самого тарифа.',
+        },
+        'REFERRAL_BROADCAST_ENABLED': {
+            'description': 'Еженедельное сообщение пользователям о реферальной программе.',
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': 'Отправка учитывает глобальные пользовательские уведомления и отключённые промопредложения.',
+        },
+        'REFERRAL_BROADCAST_INTERVAL_DAYS': {
+            'description': 'Период реферальной рассылки в днях.',
+            'format': 'Целое число дней, минимум 1.',
+            'example': '7',
+            'dependencies': 'REFERRAL_BROADCAST_ENABLED',
         },
         'MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE': {
             'description': (
