@@ -79,7 +79,7 @@ async def get_subscription(
 
     # Fetch traffic purchases (monthly packages)
     traffic_purchases_data = []
-    from app.database.models import TrafficPurchase
+    from app.database.models import TrafficPurchase, WhitelistTrafficPurchase
 
     now = datetime.now(UTC)
     purchases_query = (
@@ -111,8 +111,39 @@ async def get_subscription(
             }
         )
 
+    whitelist_purchases_result = await db.execute(
+        select(WhitelistTrafficPurchase)
+        .where(WhitelistTrafficPurchase.subscription_id == subscription.id)
+        .where(WhitelistTrafficPurchase.expires_at > now)
+        .order_by(WhitelistTrafficPurchase.expires_at.asc())
+    )
+    whitelist_purchases_data = []
+    for purchase in whitelist_purchases_result.scalars().all():
+        time_remaining = purchase.expires_at - now
+        days_remaining = max(0, int(time_remaining.total_seconds() / 86400))
+        total_duration_seconds = (purchase.expires_at - purchase.created_at).total_seconds()
+        elapsed_seconds = (now - purchase.created_at).total_seconds()
+        progress_percent = min(
+            100.0, max(0.0, (elapsed_seconds / total_duration_seconds * 100) if total_duration_seconds > 0 else 0)
+        )
+        whitelist_purchases_data.append(
+            {
+                'id': purchase.id,
+                'traffic_gb': purchase.traffic_gb,
+                'expires_at': purchase.expires_at,
+                'created_at': purchase.created_at,
+                'days_remaining': days_remaining,
+                'progress_percent': round(progress_percent, 1),
+            }
+        )
+
     subscription_data = _subscription_to_response(
-        subscription, servers, tariff_name, traffic_purchases_data, user=fresh_user
+        subscription,
+        servers,
+        tariff_name,
+        traffic_purchases_data,
+        whitelist_traffic_purchases=whitelist_purchases_data,
+        user=fresh_user,
     )
     return SubscriptionStatusResponse(has_subscription=True, subscription=subscription_data)
 
@@ -141,7 +172,7 @@ async def get_connection_link(
             detail='No subscription found',
         )
 
-    subscription_url = subscription.subscription_url
+    subscription_url = settings.normalize_subscription_url(subscription.subscription_url)
     if not subscription_url:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -426,7 +457,7 @@ async def get_app_config(
     subscription_url = None
     subscription_crypto_link = None
     if subscription:
-        subscription_url = subscription.subscription_url
+        subscription_url = settings.normalize_subscription_url(subscription.subscription_url)
         subscription_crypto_link = subscription.subscription_crypto_link
 
     # Generate crypto link on the fly if subscription_url exists but crypto link is missing.

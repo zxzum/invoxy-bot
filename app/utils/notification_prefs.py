@@ -14,9 +14,9 @@ from app.database.models import User
 # Defaults match the frontend and cabinet/routes/notifications.py
 _DEFAULTS: dict[str, Any] = {
     'subscription_expiry_enabled': True,
-    'subscription_expiry_days': 3,
+    'subscription_expiry_days': 7,
     'traffic_warning_enabled': True,
-    'traffic_warning_percent': 80,
+    'traffic_warning_percent': 50,
     'balance_low_enabled': False,
     'balance_low_threshold': 100,  # kopeks
     'news_enabled': True,
@@ -44,7 +44,7 @@ def get_subscription_expiry_days(user: User) -> int:
     try:
         return max(1, int(value))
     except (TypeError, ValueError):
-        return 3
+        return 7
 
 
 def is_traffic_warning_enabled(user: User) -> bool:
@@ -58,7 +58,7 @@ def get_traffic_warning_percent(user: User) -> int:
     try:
         return max(50, min(99, int(value)))
     except (TypeError, ValueError):
-        return 80
+        return 50
 
 
 def is_balance_low_enabled(user: User) -> bool:

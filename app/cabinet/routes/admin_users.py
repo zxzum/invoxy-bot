@@ -454,7 +454,11 @@ async def _sync_subscription_to_panel(
                 and not settings.is_multi_tariff_enabled()
                 and user.telegram_id
             ):
-                existing_users = await api.find_users_by_telegram_id(user.telegram_id)
+                existing_users = [
+                    candidate
+                    for candidate in await api.find_users_by_telegram_id(user.telegram_id)
+                    if settings.is_remnawave_user_owned(candidate.username)
+                ]
                 if existing_users:
                     panel_user_id = existing_users[0].id
                     user.remnawave_id = panel_user_id
@@ -467,7 +471,11 @@ async def _sync_subscription_to_panel(
                 and not settings.is_multi_tariff_enabled()
                 and user.email
             ):
-                existing_users = await api.find_users_by_email(user.email)
+                existing_users = [
+                    candidate
+                    for candidate in await api.find_users_by_email(user.email)
+                    if settings.is_remnawave_user_owned(candidate.username)
+                ]
                 if existing_users:
                     panel_user_id = existing_users[0].id
                     user.remnawave_id = panel_user_id
@@ -1028,13 +1036,21 @@ async def get_user_panel_info(
                 and not settings.is_multi_tariff_enabled()
                 and user.telegram_id
             ):
-                panel_users = await api.find_users_by_telegram_id(user.telegram_id)
+                panel_users = [
+                    candidate
+                    for candidate in await api.find_users_by_telegram_id(user.telegram_id)
+                    if settings.is_remnawave_user_owned(candidate.username)
+                ]
                 if panel_users:
                     panel_user = panel_users[0]
 
             # Fallback: search by email (single-tariff, OAuth users)
             if not panel_user and subscription_id is None and not settings.is_multi_tariff_enabled() and user.email:
-                panel_users_by_email = await api.find_users_by_email(user.email)
+                panel_users_by_email = [
+                    candidate
+                    for candidate in await api.find_users_by_email(user.email)
+                    if settings.is_remnawave_user_owned(candidate.username)
+                ]
                 if panel_users_by_email:
                     panel_user = panel_users_by_email[0]
 
@@ -3794,13 +3810,21 @@ async def get_user_sync_status(
 
                 # Fallback: search by telegram_id
                 if not panel_user and user.telegram_id:
-                    panel_users = await api.find_users_by_telegram_id(user.telegram_id)
+                    panel_users = [
+                        candidate
+                        for candidate in await api.find_users_by_telegram_id(user.telegram_id)
+                        if settings.is_remnawave_user_owned(candidate.username)
+                    ]
                     if panel_users:
                         panel_user = panel_users[0]
 
                 # Fallback: search by email (OAuth users)
                 if not panel_user and user.email:
-                    panel_users_by_email = await api.find_users_by_email(user.email)
+                    panel_users_by_email = [
+                        candidate
+                        for candidate in await api.find_users_by_email(user.email)
+                        if settings.is_remnawave_user_owned(candidate.username)
+                    ]
                     if panel_users_by_email:
                         panel_user = panel_users_by_email[0]
 
@@ -3970,9 +3994,17 @@ async def sync_user_from_panel(
                     linked_ids = {s.remnawave_id for s in from_subs if s.id != selected_sub.id and s.remnawave_id}
                     candidates = []
                     if user.telegram_id:
-                        candidates = list(await api.find_users_by_telegram_id(user.telegram_id) or [])
+                        candidates = [
+                            candidate
+                            for candidate in await api.find_users_by_telegram_id(user.telegram_id) or []
+                            if settings.is_remnawave_user_owned(candidate.username)
+                        ]
                     if not candidates and user.email:
-                        candidates = list(await api.find_users_by_email(user.email) or [])
+                        candidates = [
+                            candidate
+                            for candidate in await api.find_users_by_email(user.email) or []
+                            if settings.is_remnawave_user_owned(candidate.username)
+                        ]
                     orphans = [pu for pu in candidates if pu.id not in linked_ids]
                     if len(orphans) == 1:
                         panel_user = orphans[0]
@@ -4002,12 +4034,20 @@ async def sync_user_from_panel(
                 panel_user = await api.get_user_by_id(user.remnawave_id)
 
             if not panel_user and user.telegram_id:
-                panel_users = await api.find_users_by_telegram_id(user.telegram_id)
+                panel_users = [
+                    candidate
+                    for candidate in await api.find_users_by_telegram_id(user.telegram_id)
+                    if settings.is_remnawave_user_owned(candidate.username)
+                ]
                 if panel_users:
                     panel_user = panel_users[0]
 
             if not panel_user and user.email:
-                panel_users_by_email = await api.find_users_by_email(user.email)
+                panel_users_by_email = [
+                    candidate
+                    for candidate in await api.find_users_by_email(user.email)
+                    if settings.is_remnawave_user_owned(candidate.username)
+                ]
                 if panel_users_by_email:
                     panel_user = panel_users_by_email[0]
 
@@ -4331,7 +4371,11 @@ async def sync_user_to_panel(
 
             # Fallback: search by telegram_id (single-tariff only)
             if not panel_user_id and not settings.is_multi_tariff_enabled() and user.telegram_id:
-                existing_users = await api.find_users_by_telegram_id(user.telegram_id)
+                existing_users = [
+                    candidate
+                    for candidate in await api.find_users_by_telegram_id(user.telegram_id)
+                    if settings.is_remnawave_user_owned(candidate.username)
+                ]
                 if existing_users:
                     panel_user_id = existing_users[0].id
                     user.remnawave_id = panel_user_id
@@ -4339,7 +4383,11 @@ async def sync_user_to_panel(
 
             # Fallback: search by email (single-tariff, OAuth users)
             if not panel_user_id and not settings.is_multi_tariff_enabled() and user.email:
-                existing_users = await api.find_users_by_email(user.email)
+                existing_users = [
+                    candidate
+                    for candidate in await api.find_users_by_email(user.email)
+                    if settings.is_remnawave_user_owned(candidate.username)
+                ]
                 if existing_users:
                     panel_user_id = existing_users[0].id
                     user.remnawave_id = panel_user_id

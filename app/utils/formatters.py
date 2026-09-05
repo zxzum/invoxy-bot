@@ -255,6 +255,21 @@ def format_traffic_usage(used_gb: float, limit_gb: int, language: str = 'ru') ->
     return f'{used_gb:.1f} GB / {limit_gb} GB ({percentage:.1f}%)'
 
 
+def format_whitelist_traffic(used_bytes: int | None, limit_gb: int | None) -> str:
+    """Format whitelist quota from its byte counter with a text progress bar."""
+    limit = max(0, limit_gb or 0)
+    if limit <= 0:
+        return ''
+
+    used_gb = max(0, used_bytes or 0) / (1024**3)
+    percent = min(100.0, used_gb / limit * 100)
+    filled = min(10, int(round(percent / 100 * 10)))
+    if filled == 0 and used_gb > 0:
+        filled = 1
+    bar = '[' + '█' * filled + '░' * (10 - filled) + ']'
+    return f'{used_gb:.1f} / {limit} ГБ {bar} {percent:.0f}%'
+
+
 def format_boolean(value: bool, language: str = 'ru') -> str:
     language_code = (language or 'ru').split('-')[0].lower()
     if language_code in {'ru', 'fa'}:

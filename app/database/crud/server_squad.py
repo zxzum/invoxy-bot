@@ -113,7 +113,7 @@ async def get_server_squad_by_id(db: AsyncSession, server_id: int) -> ServerSqua
 
 
 async def get_all_server_squads(
-    db: AsyncSession, available_only: bool = False, page: int = 1, limit: int = 50
+    db: AsyncSession, available_only: bool = False, page: int = 1, limit: int = 10_000
 ) -> tuple[list[ServerSquad], int]:
     query = select(ServerSquad)
 
@@ -335,7 +335,7 @@ async def sync_with_remnawave(db: AsyncSession, remnawave_squads: list[dict]) ->
                 display_name=original_name,
                 original_name=original_name,
                 price_kopeks=1000,
-                is_available=False,
+                is_available=True,
             )
             created += 1
 
@@ -681,20 +681,14 @@ async def get_server_squads_by_uuids(db: AsyncSession, squad_uuids: list[str]) -
 
 async def ensure_servers_synced(db: AsyncSession) -> None:
     """
-    Проверяет и синхронизирует серверы при запуске.
-    Если серверов нет в БД, загружает их из RemnaWave.
+    Синхронизирует серверы при запуске.
+
+    Повторная синхронизация нужна и при непустой БД: панель может получить
+    новые сквады или удалить старые после первого запуска.
     Вызывается при старте бота.
     """
     try:
-        # Проверяем есть ли серверы в БД
-        result = await db.execute(select(func.count(ServerSquad.id)))
-        server_count = result.scalar() or 0
-
-        if server_count > 0:
-            logger.info('✅ В базе уже есть серверов, пропускаем синхронизацию', server_count=server_count)
-            return
-
-        logger.info('🔄 Серверов в БД нет, начинаем синхронизацию с RemnaWave...')
+        logger.info('🔄 Синхронизируем серверы с RemnaWave...')
 
         # Импортируем сервис здесь чтобы избежать циклических импортов
         from app.services.subscription_service import SubscriptionService

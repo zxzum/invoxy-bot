@@ -1,15 +1,7 @@
 name: BedolagaBot
 
 on:
-  push:
-    branches:
-      - main
-      - dev
-    tags:
-      - 'v*'
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   build:

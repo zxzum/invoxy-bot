@@ -614,11 +614,19 @@ class SubscriptionService:
                 existing_users = [adopted]
 
         if not existing_users and user.telegram_id:
-            existing_users = await api.find_users_by_telegram_id(user.telegram_id)
+            existing_users = [
+                candidate
+                for candidate in await api.find_users_by_telegram_id(user.telegram_id)
+                if settings.is_remnawave_user_owned(candidate.username)
+            ]
 
         if not existing_users and user.email:
             try:
-                existing_users = await api.find_users_by_email(user.email)
+                existing_users = [
+                    candidate
+                    for candidate in await api.find_users_by_email(user.email)
+                    if settings.is_remnawave_user_owned(candidate.username)
+                ]
             except Exception:
                 pass
 

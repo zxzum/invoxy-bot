@@ -46,7 +46,7 @@ from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.user_message import get_random_active_message
 from app.database.models import User
 from app.localization.texts import Texts
-from app.utils.formatters import format_username_link
+from app.utils.formatters import format_username_link, format_whitelist_traffic
 from app.utils.miniapp_buttons import build_miniapp_startapp_url
 from app.utils.promo_offer import build_promo_offer_hint, build_test_access_hint
 from app.utils.rich_buttons import render_keyboard_as_rich_html
@@ -339,7 +339,7 @@ def _connect_url(subscription) -> str:
             return redirect_link
     if settings.should_hide_subscription_link():
         return ''
-    return getattr(subscription, 'subscription_url', None) or ''
+    return settings.normalize_subscription_url(getattr(subscription, 'subscription_url', None)) or ''
 
 
 def _connect_link(subscription, texts) -> str:
@@ -420,6 +420,12 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
         # colspan-строка видна всегда.
         if actual_status in {'active', 'trial', 'limited'}:
             usage_parts = [f'📊 {html.escape(_traffic_usage_text(subscription, texts))}']
+            whitelist_traffic = format_whitelist_traffic(
+                getattr(subscription, 'whitelist_traffic_used_bytes', 0),
+                getattr(subscription, 'whitelist_traffic_limit_gb', 0),
+            )
+            if whitelist_traffic:
+                usage_parts.append(f'<b>🔐 Белый интернет: {html.escape(whitelist_traffic)}</b>')
             device_limit = getattr(subscription, 'device_limit', None)
             if device_limit is not None:
                 # 0 — безлимит (HWID выключен), а не «нет устройств»: строку не прячем
@@ -482,6 +488,12 @@ async def _build_single_subscription_block(user: User, texts, db: AsyncSession) 
         lines.append(
             _rich_text(traffic_template).replace('{traffic}', html.escape(_traffic_usage_text(subscription, texts)))
         )
+        whitelist_traffic = format_whitelist_traffic(
+            getattr(subscription, 'whitelist_traffic_used_bytes', 0),
+            getattr(subscription, 'whitelist_traffic_limit_gb', 0),
+        )
+        if whitelist_traffic:
+            lines.append(f'<b>🔐 Белый интернет: {html.escape(whitelist_traffic)}</b>')
         device_limit = getattr(subscription, 'device_limit', None)
         if device_limit is not None:
             devices_template = texts.t('MAIN_MENU_RICH_DEVICES', '📱 Устройства: {devices}')

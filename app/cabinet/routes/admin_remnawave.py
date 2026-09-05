@@ -631,7 +631,7 @@ async def list_squads(
     rw_squads = await service.get_all_squads()
 
     # Get local squads from DB
-    local_squads, _ = await get_all_server_squads(db, page=1, limit=1000)
+    local_squads, _ = await get_all_server_squads(db, page=1, limit=10_000)
     local_by_uuid = {s.squad_uuid: s for s in local_squads}
 
     items = []

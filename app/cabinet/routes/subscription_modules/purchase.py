@@ -277,6 +277,7 @@ async def _build_tariff_response(
         'tier_level': tariff.tier_level,
         'traffic_limit_gb': tariff.traffic_limit_gb,
         'traffic_limit_label': traffic_label,
+        'whitelist_traffic_limit_gb': tariff.whitelist_traffic_limit_gb or 0,
         'is_unlimited_traffic': tariff.traffic_limit_gb == 0,
         'device_limit': actual_device_limit,
         'base_device_limit': tariff.device_limit,

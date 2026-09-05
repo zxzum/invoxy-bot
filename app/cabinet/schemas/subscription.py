@@ -1,6 +1,7 @@
 """Subscription schemas for cabinet."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -50,6 +51,10 @@ class SubscriptionData(BaseModel):
     is_expired: bool
     is_limited: bool = False
     traffic_purchases: list[TrafficPurchaseInfo] = []
+    whitelist_traffic_limit_gb: int = 0
+    whitelist_traffic_used_gb: float = 0.0
+    whitelist_traffic_used_percent: float = 0.0
+    whitelist_traffic_purchases: list[TrafficPurchaseInfo] = []
     # Daily tariff fields
     is_daily: bool = False
     is_daily_paused: bool = False
@@ -112,6 +117,7 @@ class TrafficPackageResponse(BaseModel):
     """
 
     gb: int
+    scope: Literal['regular', 'whitelist'] = 'regular'
     price_kopeks: int
     price_rubles: float
     is_unlimited: bool = False
@@ -124,6 +130,10 @@ class TrafficPurchaseRequest(BaseModel):
     """Request to purchase additional traffic."""
 
     gb: int = Field(..., ge=0, le=100_000, description='GB to purchase (0 = unlimited)')
+    scope: Literal['regular', 'whitelist'] = Field(
+        'regular',
+        description='regular = RemnaWave traffic, whitelist = local WHITELIST traffic',
+    )
     # See PurchasePreviewRequest.yandex_cid (#558449).
     yandex_cid: str | None = Field(
         None,

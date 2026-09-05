@@ -106,6 +106,7 @@ def _subscription_to_response(
     servers: list[ServerInfo] | None = None,
     tariff_name: str | None = None,
     traffic_purchases: list[dict[str, Any]] | None = None,
+    whitelist_traffic_purchases: list[dict[str, Any]] | None = None,
     user: User | None = None,
 ) -> SubscriptionResponse:
     """Convert Subscription model to response."""
@@ -151,6 +152,15 @@ def _subscription_to_response(
         traffic_used_percent = min(100, (traffic_used_gb / traffic_limit_gb) * 100)
     else:
         traffic_used_percent = 0
+
+    whitelist_traffic_limit_gb = getattr(subscription, 'whitelist_traffic_limit_gb', 0) or 0
+    whitelist_traffic_used_bytes = getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0
+    whitelist_traffic_used_gb = whitelist_traffic_used_bytes / (1024**3)
+    whitelist_traffic_used_percent = (
+        min(100, (whitelist_traffic_used_gb / whitelist_traffic_limit_gb) * 100)
+        if whitelist_traffic_limit_gb > 0
+        else 0
+    )
 
     # Check if this is a daily tariff
     is_daily_paused = getattr(subscription, 'is_daily_paused', False) or False
@@ -218,12 +228,16 @@ def _subscription_to_response(
         servers=servers or [],
         autopay_enabled=subscription.autopay_enabled or False,
         autopay_days_before=subscription.autopay_days_before or 3,
-        subscription_url=subscription.subscription_url,
+        subscription_url=settings.normalize_subscription_url(subscription.subscription_url),
         hide_subscription_link=hide_link,
         is_active=is_active,
         is_expired=is_expired,
         is_limited=is_limited,
         traffic_purchases=traffic_purchases or [],
+        whitelist_traffic_limit_gb=whitelist_traffic_limit_gb,
+        whitelist_traffic_used_gb=round(whitelist_traffic_used_gb, 2),
+        whitelist_traffic_used_percent=round(whitelist_traffic_used_percent, 1),
+        whitelist_traffic_purchases=whitelist_traffic_purchases or [],
         is_daily=is_daily,
         is_daily_paused=is_daily_paused,
         daily_price_kopeks=daily_price_kopeks,

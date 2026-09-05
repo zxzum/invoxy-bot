@@ -379,7 +379,7 @@ async def test_multi_tariff_gate_updates_existing_panel_user_instead_of_creating
     ветку создания и завёл второго панельного юзера поверх живого.
     """
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
-    existing = SimpleNamespace(id=5001)
+    existing = SimpleNamespace(id=5001, username='invoxy_100_ab12cd')
     api = AsyncMock()
     api.get_user_by_id.return_value = existing
     api.update_user.return_value = SimpleNamespace(id=5001)
@@ -450,7 +450,7 @@ async def test_single_tariff_gate_updates_by_user_panel_id_without_searching(mon
     """
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
     api = AsyncMock()
-    api.get_user_by_id.return_value = SimpleNamespace(id=777)
+    api.get_user_by_id.return_value = SimpleNamespace(id=777, username='invoxy_100')
     api.update_user.return_value = SimpleNamespace(id=777)
 
     result = await SubscriptionService()._create_or_update_remnawave_user_single(
@@ -473,7 +473,7 @@ async def test_single_tariff_gate_falls_back_to_stream_search_before_creating(mo
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
     user = _gate_user(remnawave_id=None)
     api = AsyncMock()
-    api.find_users_by_telegram_id.return_value = [SimpleNamespace(id=888)]
+    api.find_users_by_telegram_id.return_value = [SimpleNamespace(id=888, username='invoxy_100')]
     api.update_user.return_value = SimpleNamespace(id=888)
 
     result = await SubscriptionService()._create_or_update_remnawave_user_single(
@@ -704,7 +704,12 @@ async def test_multi_tariff_adopts_panel_user_by_short_uuid_instead_of_duplicati
     аккаунт, а оплаченный оригинал осиротел бы, продолжая занимать лицензию.
     """
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
-    existing = SimpleNamespace(id=8812, subscription_url='https://sub.example/aBcD12', happ_crypto_link=None)
+    existing = SimpleNamespace(
+        id=8812,
+        username='invoxy_100_sid11',
+        subscription_url='https://sub.example/aBcD12',
+        happ_crypto_link=None,
+    )
     api = AsyncMock()
     api.get_user_by_short_uuid.return_value = existing
     api.update_user.return_value = existing
@@ -981,9 +986,15 @@ async def test_single_mode_prefers_exact_keys_over_ambiguous_telegram_search(mon
     subscription.subscription_url = ''
     subscription.subscription_crypto_link = ''
 
-    right = SimpleNamespace(id=555, short_uuid='exact', subscription_url='https://s/ok', happ_crypto_link=None)
-    wrong_a = SimpleNamespace(id=901, short_uuid='a', subscription_url='https://s/a', happ_crypto_link=None)
-    wrong_b = SimpleNamespace(id=902, short_uuid='b', subscription_url='https://s/b', happ_crypto_link=None)
+    right = SimpleNamespace(
+        id=555, username='invoxy_100', short_uuid='exact', subscription_url='https://s/ok', happ_crypto_link=None
+    )
+    wrong_a = SimpleNamespace(
+        id=901, username='other_100_a', short_uuid='a', subscription_url='https://s/a', happ_crypto_link=None
+    )
+    wrong_b = SimpleNamespace(
+        id=902, username='other_100_b', short_uuid='b', subscription_url='https://s/b', happ_crypto_link=None
+    )
 
     api = AsyncMock()
     api.get_user_by_short_uuid.return_value = right
@@ -1033,11 +1044,15 @@ async def test_single_mode_uses_the_subscription_own_panel_id(monkeypatch):
     subscription.subscription_url = ''
     subscription.subscription_crypto_link = ''
 
-    right = SimpleNamespace(id=606, short_uuid='s606', subscription_url='https://s/ok', happ_crypto_link=None)
+    right = SimpleNamespace(
+        id=606, username='invoxy_100', short_uuid='s606', subscription_url='https://s/ok', happ_crypto_link=None
+    )
     api = AsyncMock()
     api.get_user_by_id.return_value = right
     api.find_users_by_telegram_id.return_value = [
-        SimpleNamespace(id=901, short_uuid='a', subscription_url='https://s/a', happ_crypto_link=None)
+        SimpleNamespace(
+            id=901, username='other_100', short_uuid='a', subscription_url='https://s/a', happ_crypto_link=None
+        )
     ]
     api.update_user.return_value = right
 
@@ -1197,7 +1212,9 @@ async def test_degraded_short_uuid_endpoint_does_not_abort_a_resolvable_sync(mon
     subscription.subscription_url = ''
     subscription.subscription_crypto_link = ''
 
-    only = SimpleNamespace(id=555, short_uuid='exact', subscription_url='https://s/ok', happ_crypto_link=None)
+    only = SimpleNamespace(
+        id=555, username='invoxy_100', short_uuid='exact', subscription_url='https://s/ok', happ_crypto_link=None
+    )
     api = AsyncMock()
     api.get_user_by_short_uuid.side_effect = RemnaWaveAPIError('panel restarting', 503, {})
     api.find_users_by_telegram_id.return_value = [only]

@@ -2,6 +2,7 @@ import asyncio
 import html
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -10,6 +11,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.types import FSInputFile
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1352,13 +1354,15 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                         ],
                     ]
                 )
-                await message.answer(
-                    texts.t(
-                        'WEB_AUTH_CONFIRM_PROMPT',
-                        '🔐 Подтвердите вход в личный кабинет. Если вы не запрашивали вход — нажмите «Нет».',
-                    ),
-                    reply_markup=keyboard,
+                prompt = texts.t(
+                    'WEB_AUTH_CONFIRM_PROMPT',
+                    '🔐 Подтвердите вход в личный кабинет. Если вы не запрашивали вход — нажмите «Нет».',
                 )
+                banner_path = Path('/app/accept_login.png')
+                if banner_path.is_file():
+                    await message.answer_photo(FSInputFile(banner_path), caption=prompt, reply_markup=keyboard)
+                else:
+                    await message.answer(prompt, reply_markup=keyboard)
             else:
                 logger.warning('Web auth attempt from unregistered user', telegram_id=message.from_user.id)
                 await message.answer('❌ Сначала зарегистрируйтесь в боте, затем попробуйте войти в кабинет.')

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import math
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query as QueryParam, status
@@ -53,6 +53,7 @@ async def get_traffic_packages(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
     subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+    scope: Literal['regular', 'whitelist'] = 'regular',
 ):
     """Get available traffic packages."""
     from app.database.crud.tariff import get_tariff_by_id
@@ -89,6 +90,7 @@ async def get_traffic_packages(
         has_discount = percent > 0
         return TrafficPackageResponse(
             gb=gb,
+            scope=scope,
             price_kopeks=final_price,
             price_rubles=final_price / 100,
             is_unlimited=is_unlimited,
@@ -103,15 +105,22 @@ async def get_traffic_packages(
         if not tariff:
             return []
 
-        # Проверяем, разрешена ли докупка для этого тарифа
-        if not getattr(tariff, 'traffic_topup_enabled', False):
-            return []
+        if scope == 'whitelist':
+            if not getattr(tariff, 'whitelist_traffic_topup_enabled', False):
+                return []
+            if (getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0) <= 0:
+                return []
+            packages = tariff.get_whitelist_traffic_topup_packages()
+        else:
+            # Проверяем, разрешена ли докупка для этого тарифа
+            if not getattr(tariff, 'traffic_topup_enabled', False):
+                return []
 
-        # Проверяем безлимит
-        if tariff.traffic_limit_gb == 0:
-            return []
+            # Проверяем безлимит
+            if tariff.traffic_limit_gb == 0:
+                return []
 
-        packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
+            packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
         result = []
 
         for gb, price in packages.items():
@@ -120,6 +129,9 @@ async def get_traffic_packages(
             result.append(_package_response(gb, price, is_unlimited=False))
 
         return sorted(result, key=lambda x: x.gb)
+
+    if scope == 'whitelist':
+        return []
 
     # Classic режим - глобальные настройки
     if not settings.is_traffic_topup_enabled():
@@ -183,34 +195,47 @@ async def purchase_traffic(
                 detail='Tariff not found',
             )
 
-        # Проверяем, разрешена ли докупка
-        if not getattr(tariff, 'traffic_topup_enabled', False):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Traffic top-up is disabled for this tariff',
-            )
-
-        # Проверяем безлимит
-        if tariff.traffic_limit_gb == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Cannot add traffic to unlimited subscription',
-            )
-
-        # Проверяем лимит докупки
-        max_topup_limit = getattr(tariff, 'max_topup_traffic_gb', 0) or 0
-        if max_topup_limit > 0:
-            current_traffic = subscription.traffic_limit_gb or 0
-            new_traffic = current_traffic + request.gb
-            if new_traffic > max_topup_limit:
-                available_gb = max(0, max_topup_limit - current_traffic)
+        if request.scope == 'whitelist':
+            if not getattr(tariff, 'whitelist_traffic_topup_enabled', False):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f'Traffic limit exceeded. Max: {max_topup_limit} GB, available: {available_gb} GB',
+                    detail='WHITELIST traffic top-up is disabled for this tariff',
+                )
+            if (getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0) <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='WHITELIST traffic is not included in this tariff',
+                )
+            packages = tariff.get_whitelist_traffic_topup_packages()
+        else:
+            # Проверяем, разрешена ли докупка
+            if not getattr(tariff, 'traffic_topup_enabled', False):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Traffic top-up is disabled for this tariff',
                 )
 
-        # Получаем цену из тарифа
-        packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
+            # Проверяем безлимит
+            if tariff.traffic_limit_gb == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Cannot add traffic to unlimited subscription',
+                )
+
+            # Проверяем лимит докупки
+            max_topup_limit = getattr(tariff, 'max_topup_traffic_gb', 0) or 0
+            if max_topup_limit > 0:
+                current_traffic = subscription.traffic_limit_gb or 0
+                new_traffic = current_traffic + request.gb
+                if new_traffic > max_topup_limit:
+                    available_gb = max(0, max_topup_limit - current_traffic)
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f'Traffic limit exceeded. Max: {max_topup_limit} GB, available: {available_gb} GB',
+                    )
+
+            # Получаем цену из тарифа
+            packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
         if request.gb not in packages:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -223,6 +248,11 @@ async def purchase_traffic(
                 detail=f'Traffic package {request.gb}GB has no price configured',
             )
 
+    elif request.scope == 'whitelist':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='WHITELIST traffic is available only with a tariff',
+        )
     else:
         # Classic режим
         if not settings.is_traffic_topup_enabled():
@@ -292,11 +322,16 @@ async def purchase_traffic(
             'cart_mode': 'add_traffic',
             'subscription_id': subscription.id,
             'traffic_gb': request.gb,
+            'scope': request.scope,
+            'traffic_scope': request.scope,
             'price_kopeks': final_price,
             'base_price_kopeks': prorated_price,
             'discount_percent': traffic_discount_percent,
             'source': 'cabinet',
-            'description': f'Докупка {request.gb} ГБ трафика',
+            'description': (
+                f'Докупка {request.gb} ГБ трафика'
+                + (' по WHITELIST' if request.scope == 'whitelist' else '')
+            ),
         }
 
         try:
@@ -322,10 +357,11 @@ async def purchase_traffic(
         )
 
     # Формируем описание
+    scope_label = ' по WHITELIST' if request.scope == 'whitelist' else ''
     if traffic_discount_percent > 0:
-        traffic_description = f'Докупка {request.gb} ГБ трафика (скидка {traffic_discount_percent}%)'
+        traffic_description = f'Докупка {request.gb} ГБ трафика{scope_label} (скидка {traffic_discount_percent}%)'
     else:
-        traffic_description = f'Докупка {request.gb} ГБ трафика'
+        traffic_description = f'Докупка {request.gb} ГБ трафика{scope_label}'
 
     # Списываем баланс
     success = await subtract_user_balance(db, user, final_price, traffic_description)
@@ -335,48 +371,51 @@ async def purchase_traffic(
             detail='Failed to charge balance',
         )
 
-    # Добавляем трафик (add_subscription_traffic обновляет purchased_traffic_gb, traffic_reset_at и коммитит)
-    await add_subscription_traffic(db, subscription, request.gb)
+    if request.scope == 'whitelist':
+        from app.database.crud.subscription import add_whitelist_subscription_traffic
 
-    # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
-    from app.database.crud.subscription import reactivate_subscription
+        await add_whitelist_subscription_traffic(db, subscription, request.gb)
+    else:
+        # Добавляем трафик (add_subscription_traffic обновляет purchased_traffic_gb, traffic_reset_at и коммитит)
+        await add_subscription_traffic(db, subscription, request.gb)
 
-    await reactivate_subscription(db, subscription)
+        # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
+        from app.database.crud.subscription import reactivate_subscription
 
-    # Синхронизируем с RemnaWave с ограничением по времени: товар (трафик) уже
-    # зафиксирован в БД выше, и медленная/недоступная панель не должна держать
-    # HTTP-ответ открытым (из-за чего кнопка оплаты в кабинете крутится «бесконечно»).
-    # Если синк не уложился в бюджет — отдаём ответ сразу, а синк уходит в
-    # remnawave_retry_queue (та же ветка обработки, что и при ошибке).
-    try:
-        subscription_service = SubscriptionService()
-        if settings.is_multi_tariff_enabled():
-            _should_create = not subscription.remnawave_id
-        else:
-            _should_create = not getattr(user, 'remnawave_id', None)
+        await reactivate_subscription(db, subscription)
 
-        async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
-            if _should_create:
-                await subscription_service.create_remnawave_user(db, subscription)
+        # Синхронизируем с RemnaWave с ограничением по времени: товар (трафик) уже
+        # зафиксирован в БД выше, и медленная/недоступная панель не должна держать
+        # HTTP-ответ открытым.
+        try:
+            subscription_service = SubscriptionService()
+            if settings.is_multi_tariff_enabled():
+                _should_create = not subscription.remnawave_id
             else:
-                await subscription_service.update_remnawave_user(db, subscription)
-                if subscription.status == 'active':
-                    _enable_panel_user_id = (
-                        subscription.remnawave_id
-                        if settings.is_multi_tariff_enabled()
-                        else getattr(user, 'remnawave_id', None)
-                    )
-                    if _enable_panel_user_id:
-                        await subscription_service.enable_remnawave_user(_enable_panel_user_id)
-    except Exception as e:
-        logger.error('Failed to sync traffic with RemnaWave', error=e)
-        from app.services.remnawave_retry_queue import remnawave_retry_queue
+                _should_create = not getattr(user, 'remnawave_id', None)
 
-        remnawave_retry_queue.enqueue(
-            subscription_id=subscription.id,
-            user_id=user.id,
-            action='create' if _should_create else 'update',
-        )
+            async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
+                if _should_create:
+                    await subscription_service.create_remnawave_user(db, subscription)
+                else:
+                    await subscription_service.update_remnawave_user(db, subscription)
+                    if subscription.status == 'active':
+                        _enable_panel_user_id = (
+                            subscription.remnawave_id
+                            if settings.is_multi_tariff_enabled()
+                            else getattr(user, 'remnawave_id', None)
+                        )
+                        if _enable_panel_user_id:
+                            await subscription_service.enable_remnawave_user(_enable_panel_user_id)
+        except Exception as e:
+            logger.error('Failed to sync traffic with RemnaWave', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=user.id,
+                action='create' if _should_create else 'update',
+            )
 
     # Создаём транзакцию
     await create_transaction(
@@ -399,16 +438,17 @@ async def purchase_traffic(
             bot = create_bot()
             try:
                 notification_service = AdminNotificationService(bot)
-                old_traffic = subscription.traffic_limit_gb - request.gb
-                await notification_service.send_subscription_update_notification(
-                    db=db,
-                    user=user,
-                    subscription=subscription,
-                    update_type='traffic',
-                    old_value=old_traffic,
-                    new_value=subscription.traffic_limit_gb,
-                    price_paid=final_price,
-                )
+                if request.scope == 'regular':
+                    old_traffic = subscription.traffic_limit_gb - request.gb
+                    await notification_service.send_subscription_update_notification(
+                        db=db,
+                        user=user,
+                        subscription=subscription,
+                        update_type='traffic',
+                        old_value=old_traffic,
+                        new_value=subscription.traffic_limit_gb,
+                        price_paid=final_price,
+                    )
             finally:
                 await bot.session.close()
     except Exception as e:
@@ -430,8 +470,11 @@ async def purchase_traffic(
     response: dict[str, Any] = {
         'success': True,
         'message': 'Traffic purchased successfully',
+        'scope': request.scope,
         'gb_added': request.gb,
         'new_traffic_limit_gb': subscription.traffic_limit_gb,
+        'new_whitelist_traffic_limit_gb': getattr(subscription, 'whitelist_traffic_limit_gb', 0) or 0,
+        'whitelist_traffic_used_bytes': getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0,
         'amount_paid_kopeks': final_price,
         'new_balance_kopeks': user.balance_kopeks,
     }
@@ -473,7 +516,7 @@ async def save_traffic_cart(
             detail='Докупка трафика недоступна на пробном периоде',
         )
 
-    if subscription.traffic_limit_gb == 0:
+    if request.scope == 'regular' and subscription.traffic_limit_gb == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='У вас уже безлимитный трафик',
@@ -484,6 +527,12 @@ async def save_traffic_cart(
     base_price_kopeks = 0
     is_tariff_mode = settings.is_tariffs_mode() and subscription.tariff_id
 
+    if request.scope == 'whitelist' and not is_tariff_mode:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='WHITELIST traffic доступен только с тарифом',
+        )
+
     if is_tariff_mode:
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
         if not tariff:
@@ -492,13 +541,26 @@ async def save_traffic_cart(
                 detail='Тариф не найден',
             )
 
-        if not getattr(tariff, 'traffic_topup_enabled', False):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Докупка трафика недоступна на вашем тарифе',
-            )
+        if request.scope == 'whitelist':
+            if not getattr(tariff, 'whitelist_traffic_topup_enabled', False):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Докупка WHITELIST-трафика недоступна на вашем тарифе',
+                )
+            if (getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0) <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='WHITELIST-трафик не входит в ваш тариф',
+                )
+            packages = tariff.get_whitelist_traffic_topup_packages()
+        else:
+            if not getattr(tariff, 'traffic_topup_enabled', False):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Докупка трафика недоступна на вашем тарифе',
+                )
 
-        packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
+            packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
         if request.gb not in packages:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -525,11 +587,15 @@ async def save_traffic_cart(
     from app.utils.pricing_utils import calculate_prorated_price as _calc_prorated
 
     now = datetime.now(UTC)
-    days_left = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
-    prorated_price, _ = _calc_prorated(
-        base_price_kopeks,
-        subscription.end_date,
-    )
+    if is_tariff_mode:
+        days_left = 30
+        prorated_price = base_price_kopeks
+    else:
+        days_left = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
+        prorated_price, _ = _calc_prorated(
+            base_price_kopeks,
+            subscription.end_date,
+        )
     discount_result = _apply_addon_discount(user, 'traffic', prorated_price, days_left)
     final_price = discount_result['discounted']
     traffic_discount_percent = discount_result['percent']
@@ -539,11 +605,16 @@ async def save_traffic_cart(
         'cart_mode': 'add_traffic',
         'subscription_id': subscription.id,
         'traffic_gb': request.gb,
+        'scope': request.scope,
+        'traffic_scope': request.scope,
         'price_kopeks': final_price,
         'base_price_kopeks': base_price_kopeks,
         'discount_percent': traffic_discount_percent,
         'source': 'cabinet',
-        'description': f'Докупка {request.gb} ГБ трафика',
+        'description': (
+            f'Докупка {request.gb} ГБ трафика'
+            + (' по WHITELIST' if request.scope == 'whitelist' else '')
+        ),
     }
     await user_cart_service.save_user_cart(user.id, cart_data)
     logger.info('Cart saved for traffic purchase (cabinet save-cart) user +', user_id=user.id, gb=request.gb)
@@ -563,6 +634,12 @@ async def switch_traffic_package(
 ) -> dict[str, Any]:
     """Switch to a different traffic package (change limit)."""
     from app.utils.pricing_utils import calculate_prorated_price
+
+    if request.scope == 'whitelist':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='WHITELIST traffic is purchased as a separate top-up',
+        )
 
     subscription = await resolve_subscription(db, user, subscription_id)
 

@@ -782,6 +782,21 @@ async def test_usage_traffic_and_devices_displayed(monkeypatch):
     assert '📱 Устройства: 3' in html_out
 
 
+async def test_whitelist_quota_displayed_in_single_mode(monkeypatch):
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False)
+
+    now = datetime.now(UTC)
+    subscription = _make_subscription(now)
+    subscription.whitelist_traffic_limit_gb = 5
+    subscription.whitelist_traffic_used_bytes = 2 * 1024**3
+
+    html_out = await rich_menu.build_main_menu_rich_html(_make_user(subscription), DummyTexts(), AsyncMock())
+
+    assert '<b>🔐 Белый интернет: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in html_out
+
+
 async def test_usage_row_in_multi_tariff_table(monkeypatch):
     _patch_content_sources(monkeypatch)
     monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
@@ -800,6 +815,25 @@ async def test_usage_row_in_multi_tariff_table(monkeypatch):
     # колонка не влезала на мобильных: таблица уезжала за край экрана).
     assert '<td colspan="3">📊 12.5 ГБ / 100 ГБ · 📱 3 · ' in html_out
     assert '<td colspan="4"' not in html_out
+
+
+async def test_whitelist_quota_displayed_in_multi_tariff_table(monkeypatch):
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+
+    now = datetime.now(UTC)
+    subscription = _make_subscription(now)
+    subscription.whitelist_traffic_limit_gb = 5
+    subscription.whitelist_traffic_used_bytes = 2 * 1024**3
+
+    async def fake_get_all(db, user_id):
+        return [subscription]
+
+    monkeypatch.setattr(rich_menu, 'get_all_subscriptions_by_user_id', fake_get_all)
+
+    html_out = await rich_menu.build_main_menu_rich_html(_make_user(subscription), DummyTexts(), AsyncMock())
+
+    assert '<b>🔐 Белый интернет: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in html_out
 
 
 async def test_send_passes_message_effect(monkeypatch):

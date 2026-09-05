@@ -421,6 +421,7 @@ class MonitoringService:
                 await self._check_trial_channel_subscriptions(db)
                 await self._check_expired_subscription_followups(db)
                 await self._check_traffic_warnings(db)
+                await self._send_referral_broadcast_if_due(db)
                 await self._check_low_balance_alerts(db)
                 await self._retry_stuck_guest_purchases(db)
                 await self._cleanup_expired_refresh_tokens(db)
@@ -749,7 +750,6 @@ class MonitoringService:
 
         try:
             warning_days = settings.get_autopay_warning_days()
-            all_processed_users = set()
 
             for days in warning_days:
                 expiring_subscriptions = await self._get_expiring_paid_subscriptions(db, days)
@@ -764,10 +764,7 @@ class MonitoringService:
 
                         users_with_cards = await get_user_ids_with_active_payment_methods(db, autopay_user_ids)
 
-                from app.utils.notification_prefs import (
-                    get_subscription_expiry_days,
-                    is_subscription_expiry_enabled,
-                )
+                from app.utils.notification_prefs import is_subscription_expiry_enabled
 
                 for subscription in expiring_subscriptions:
                     user = await get_user_by_id(db, subscription.user_id)
@@ -778,18 +775,10 @@ class MonitoringService:
                     if not is_subscription_expiry_enabled(user):
                         continue
 
-                    # Check if user's preferred days threshold matches this check
-                    user_expiry_days = get_subscription_expiry_days(user)
-                    if days > user_expiry_days:
-                        continue
-
-                    # Use user.id + subscription.id for key to support multiple subscriptions per user
-                    sub_key = f'user_{user.id}_sub_{subscription.id}_today'
                     user_identifier = user.telegram_id or f'email:{user.id}'
 
                     if (
                         await notification_sent(db, user.id, subscription.id, 'expiring', days)
-                        or sub_key in all_processed_users
                     ):
                         logger.debug(
                             'Уведомление уже отправлено, пропускаем',
@@ -800,23 +789,6 @@ class MonitoringService:
 
                     has_saved_card = subscription.autopay_enabled and user.id in users_with_cards
 
-                    should_send = True
-                    for other_days in warning_days:
-                        if other_days < days:
-                            other_subs = await self._get_expiring_paid_subscriptions(db, other_days)
-                            if any(s.id == subscription.id for s in other_subs):
-                                should_send = False
-                                logger.debug(
-                                    '🎯 Пропускаем уведомление на дней для пользователя есть более срочное на дней',
-                                    days=days,
-                                    user_identifier=user_identifier,
-                                    other_days=other_days,
-                                )
-                                break
-
-                    if not should_send:
-                        continue
-
                     # Handle email-only users via notification delivery service
                     if not user.telegram_id:
                         success = await notification_delivery_service.notify_subscription_expiring(
@@ -826,7 +798,6 @@ class MonitoringService:
                         )
                         if success:
                             await record_notification(db, user.id, subscription.id, 'expiring', days)
-                            all_processed_users.add(sub_key)
                             sent_count += 1
                             logger.info(
                                 '✅ Email-пользователю отправлено уведомление об истечении подписки через дней',
@@ -835,23 +806,24 @@ class MonitoringService:
                             )
                         continue
 
-                    if self.bot:
-                        success = await self._send_subscription_expiring_notification(
-                            user, subscription, days, has_saved_card=has_saved_card
+                    if not self.bot:
+                        continue
+
+                    success = await self._send_subscription_expiring_notification(
+                        user, subscription, days, has_saved_card=has_saved_card
+                    )
+                    if success:
+                        await record_notification(db, user.id, subscription.id, 'expiring', days)
+                        sent_count += 1
+                        logger.info(
+                            '✅ Пользователю отправлено уведомление об истечении подписки через дней',
+                            telegram_id=user.telegram_id,
+                            days=days,
                         )
-                        if success:
-                            await record_notification(db, user.id, subscription.id, 'expiring', days)
-                            all_processed_users.add(sub_key)
-                            sent_count += 1
-                            logger.info(
-                                '✅ Пользователю отправлено уведомление об истечении подписки через дней',
-                                telegram_id=user.telegram_id,
-                                days=days,
-                            )
-                        else:
-                            logger.warning(
-                                '❌ Не удалось отправить уведомление пользователю', telegram_id=user.telegram_id
-                            )
+                    else:
+                        logger.warning(
+                            '❌ Не удалось отправить уведомление пользователю', telegram_id=user.telegram_id
+                        )
 
                 if sent_count > 0:
                     await self._log_monitoring_event(
@@ -861,8 +833,63 @@ class MonitoringService:
                         {'days': days, 'count': sent_count},
                     )
 
+            await self._check_expiring_subscription_hours(db, hours=3)
+
         except Exception as e:
             logger.error('Ошибка проверки истекающих подписок', error=e)
+
+    async def _check_expiring_subscription_hours(self, db: AsyncSession, *, hours: int) -> None:
+        """Send one final reminder inside the requested hour window."""
+        now = datetime.now(UTC)
+        result = await db.execute(
+            select(Subscription)
+            .join(User, Subscription.user_id == User.id)
+            .options(selectinload(Subscription.user))
+            .where(
+                Subscription.status == SubscriptionStatus.ACTIVE.value,
+                Subscription.is_trial.is_(False),
+                Subscription.end_date > now,
+                Subscription.end_date <= now + timedelta(hours=hours),
+                User.status == UserStatus.ACTIVE.value,
+            )
+        )
+
+        from app.utils.notification_prefs import is_subscription_expiry_enabled
+
+        for subscription in result.scalars().all():
+            user = subscription.user
+            if not user or not is_subscription_expiry_enabled(user):
+                continue
+            if await notification_sent(db, user.id, subscription.id, 'expiring_hours', hours):
+                continue
+
+            expires_at = format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M')
+            if (getattr(user, 'language', 'ru') or 'ru').lower().startswith('en'):
+                message = (
+                    '⚠️ <b>Your subscription expires in less than 3 hours.</b>\n\n'
+                    f'Expiry time: <b>{expires_at}</b>. Renew it now to keep VPN access.'
+                )
+            else:
+                message = (
+                    '⚠️ <b>Подписка истекает менее чем через 3 часа.</b>\n\n'
+                    f'Окончание: <b>{expires_at}</b>. Продлите её сейчас, чтобы не потерять доступ к VPN.'
+                )
+
+            success = await notification_delivery_service.send_notification(
+                user=user,
+                notification_type=NotificationType.WEBHOOK_SUB_EXPIRING,
+                context={'expires_at': expires_at, 'hours_left': hours, 'days_left': 0},
+                bot=self.bot,
+                telegram_message=message,
+            )
+            if success:
+                await record_notification(db, user.id, subscription.id, 'expiring_hours', hours, commit=False)
+                logger.info(
+                    'Отправлено финальное уведомление об истечении подписки',
+                    user_id=user.id,
+                    subscription_id=subscription.id,
+                    hours=hours,
+                )
 
     async def _check_trial_expiring_soon(self, db: AsyncSession):
         if not NotificationSettingsService.are_notifications_globally_enabled():
@@ -2451,24 +2478,27 @@ class MonitoringService:
             logger.error('Error retrying stuck PENDING_ACTIVATION guest purchases', exc_info=True)
 
     async def _check_traffic_warnings(self, db: AsyncSession):
-        """Check subscriptions approaching traffic limit and notify users."""
-        if not self.bot or not NotificationSettingsService.are_notifications_globally_enabled():
+        """Warn once per quota cycle at 50%, 75% and 90% usage."""
+        if not NotificationSettingsService.are_notifications_globally_enabled():
             return
 
         try:
-            from sqlalchemy import select
-            from sqlalchemy.orm import selectinload
+            from app.utils.notification_prefs import is_traffic_warning_enabled
 
-            from app.database.models import Subscription
-            from app.utils.notification_prefs import get_traffic_warning_percent, is_traffic_warning_enabled
-
-            # Get active subscriptions with traffic limits (not unlimited)
             result = await db.execute(
                 select(Subscription)
+                .join(User, Subscription.user_id == User.id)
                 .options(selectinload(Subscription.user))
                 .where(
-                    Subscription.status.in_(['active', 'trial']),
-                    Subscription.traffic_limit_gb > 0,
+                    Subscription.status.in_([
+                        SubscriptionStatus.ACTIVE.value,
+                        SubscriptionStatus.TRIAL.value,
+                    ]),
+                    User.status == UserStatus.ACTIVE.value,
+                    or_(
+                        Subscription.traffic_limit_gb > 0,
+                        Subscription.whitelist_traffic_limit_gb > 0,
+                    ),
                 )
             )
             subscriptions = result.scalars().all()
@@ -2476,70 +2506,164 @@ class MonitoringService:
             sent_count = 0
             for subscription in subscriptions:
                 user = subscription.user
-                if not user or not user.telegram_id:
+                if not user:
                     continue
 
                 if not is_traffic_warning_enabled(user):
                     continue
 
-                traffic_limit = subscription.traffic_limit_gb or 0
-                traffic_used = subscription.traffic_used_gb or 0.0
+                quotas = []
+                regular_limit = subscription.traffic_limit_gb or 0
+                if regular_limit > 0:
+                    quotas.append(('regular', regular_limit, subscription.traffic_used_gb or 0.0))
+                whitelist_limit = subscription.whitelist_traffic_limit_gb or 0
+                if whitelist_limit > 0:
+                    quotas.append(
+                        (
+                            'whitelist',
+                            whitelist_limit,
+                            (subscription.whitelist_traffic_used_bytes or 0) / (1024**3),
+                        )
+                    )
 
-                if traffic_limit <= 0:
-                    continue
-
-                current_percent = (traffic_used / traffic_limit) * 100
-                user_threshold = get_traffic_warning_percent(user)
-
-                if current_percent < user_threshold:
-                    continue
-
-                # Rate-limit: 1 notification per subscription per 24 hours
-                cache_key_str = f'traffic_warn:{subscription.id}'
-                try:
-                    already_sent = await cache.get(cache_key_str)
-                    if already_sent:
+                for scope, traffic_limit, traffic_used in quotas:
+                    current_percent = min(100.0, (traffic_used / traffic_limit) * 100)
+                    notification_type = (
+                        'traffic_warning' if scope == 'regular' else 'whitelist_traffic_warning'
+                    )
+                    threshold = None
+                    for candidate in (90, 75, 50):
+                        if current_percent >= candidate and not await notification_sent(
+                            db, user.id, subscription.id, notification_type, candidate
+                        ):
+                            threshold = candidate
+                            break
+                    if threshold is None:
                         continue
-                except Exception:
-                    pass
 
-                try:
+                    remaining = max(0.0, 100.0 - current_percent)
                     language = getattr(user, 'language', 'ru') or 'ru'
-                    texts = get_texts(language)
-                    message = texts.get(
-                        'TRAFFIC_WARNING_ALERT',
-                        '⚠️ <b>Предупреждение о трафике</b>\n\n'
-                        'Использовано: {used:.1f} / {limit} ГБ ({percent:.0f}%)\n\n'
-                        'Ваш лимит трафика почти исчерпан.',
+                    if language.lower().startswith('en'):
+                        quota_label = 'White Internet' if scope == 'whitelist' else 'traffic'
+                        message = (
+                            f'⚠️ <b>{quota_label} warning</b>\n\n'
+                            f'Only about <b>{remaining:.1f}%</b> remains: '
+                            f'{traffic_used:.1f} / {traffic_limit} GB used.'
+                        )
+                    else:
+                        quota_label = 'Белого интернета' if scope == 'whitelist' else 'трафика'
+                        message = (
+                            f'⚠️ <b>Остаток {quota_label}</b>\n\n'
+                            f'Осталось примерно <b>{remaining:.1f}%</b>: '
+                            f'использовано {traffic_used:.1f} из {traffic_limit} ГБ.'
+                        )
+
+                    success = await notification_delivery_service.send_notification(
+                        user=user,
+                        notification_type=NotificationType.WEBHOOK_SUB_BANDWIDTH_THRESHOLD,
+                        context={
+                            'scope': scope,
+                            'used_gb': traffic_used,
+                            'limit_gb': traffic_limit,
+                            'percent': current_percent,
+                            'remaining_percent': remaining,
+                        },
+                        bot=self.bot,
+                        telegram_message=message,
                     )
-                    message = message.format(
-                        used=traffic_used,
-                        limit=traffic_limit,
-                        percent=current_percent,
-                    )
-                    await self.bot.send_message(
-                        user.telegram_id,
-                        message,
-                        parse_mode='HTML',
-                    )
-                    try:
-                        await cache.set(cache_key_str, '1', expire=86400)
-                    except Exception:
-                        pass
-                    sent_count += 1
-                except Exception as send_error:
-                    logger.debug(
-                        'Failed to send traffic warning',
-                        user_id=user.id,
-                        subscription_id=subscription.id,
-                        error=send_error,
-                    )
+                    if success:
+                        for reached_threshold in (50, 75, 90):
+                            if current_percent < reached_threshold:
+                                break
+                            await record_notification(
+                                db,
+                                user.id,
+                                subscription.id,
+                                notification_type,
+                                reached_threshold,
+                                commit=False,
+                            )
+                        sent_count += 1
 
             if sent_count > 0:
                 logger.info('Traffic warnings sent', sent_count=sent_count)
 
         except Exception as error:
             logger.error('Error checking traffic warnings', error=error)
+
+    async def _send_referral_broadcast_if_due(self, db: AsyncSession):
+        """Send an occasional referral-link message, with a DB-backed cooldown."""
+        if not getattr(settings, 'REFERRAL_BROADCAST_ENABLED', False):
+            return
+        if not self.bot or not NotificationSettingsService.are_notifications_globally_enabled():
+            return
+
+        from app.database.crud.system_setting import get_setting_value, upsert_system_setting
+        from app.utils.notification_prefs import is_promo_offers_enabled
+
+        now = datetime.now(UTC)
+        interval_days = max(1, int(getattr(settings, 'REFERRAL_BROADCAST_INTERVAL_DAYS', 30)))
+        last_sent_value = await get_setting_value(db, 'REFERRAL_BROADCAST_LAST_SENT_AT')
+        if last_sent_value:
+            try:
+                last_sent = datetime.fromisoformat(last_sent_value.replace('Z', '+00:00'))
+                if last_sent.tzinfo is None:
+                    last_sent = last_sent.replace(tzinfo=UTC)
+                if now - last_sent < timedelta(days=interval_days):
+                    return
+            except ValueError:
+                logger.warning('Некорректная дата последней реферальной рассылки')
+
+        # Claim the window before sending so a second bot instance cannot send a duplicate.
+        await upsert_system_setting(db, 'REFERRAL_BROADCAST_LAST_SENT_AT', now.isoformat())
+        await db.commit()
+
+        result = await db.execute(
+            select(User).where(
+                User.status == UserStatus.ACTIVE.value,
+                User.referral_code.isnot(None),
+                or_(
+                    User.telegram_id.isnot(None),
+                    and_(User.email.isnot(None), User.email_verified.is_(True)),
+                ),
+            )
+        )
+        sent_count = 0
+        bot_username = settings.get_bot_username()
+        for user in result.scalars().all():
+            if not is_promo_offers_enabled(user):
+                continue
+            try:
+                referral_link = settings.get_referral_link(user.referral_code, bot_username)
+                safe_link = html.escape(referral_link, quote=True)
+                if (getattr(user, 'language', 'ru') or 'ru').lower().startswith('en'):
+                    message = (
+                        '🎁 <b>Invite friends to Invoxy VPN</b>\n\n'
+                        'Share your personal link and receive referral rewards according to the partner program.\n\n'
+                        f'Your link: <a href="{safe_link}">open Invoxy</a>'
+                    )
+                else:
+                    message = (
+                        '🎁 <b>Приглашай друзей в Invoxy VPN</b>\n\n'
+                        'Поделись своей ссылкой и получай бонусы по правилам партнёрской программы.\n\n'
+                        f'Твоя ссылка: <a href="{safe_link}">открыть Invoxy</a>'
+                    )
+                if await notification_delivery_service.send_notification(
+                    user=user,
+                    notification_type=NotificationType.PROMO_OFFER,
+                    context={
+                        'message_html': message.replace('\n', '<br>'),
+                        'valid_hours': 0,
+                        'discount_percent': 0,
+                    },
+                    bot=self.bot,
+                    telegram_message=message,
+                ):
+                    sent_count += 1
+            except Exception:
+                logger.warning('Не удалось отправить реферальную рассылку', user_id=user.id, exc_info=True)
+
+        logger.info('Реферальная рассылка выполнена', sent_count=sent_count, interval_days=interval_days)
 
     async def _check_low_balance_alerts(self, db: AsyncSession):
         """Check users with autopay enabled who have low balance and notify them.

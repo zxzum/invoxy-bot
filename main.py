@@ -43,6 +43,7 @@ from app.services.system_settings_service import bot_configuration_service
 from app.services.traffic_monitoring_service import traffic_monitoring_scheduler
 from app.services.version_service import version_service
 from app.services.web_api_token_service import ensure_default_web_api_token
+from app.services.whitelist_traffic_service import whitelist_traffic_service
 from app.utils.log_handlers import ExcludePaymentFilter, LevelFilterHandler
 from app.utils.payment_logger import configure_payment_logger
 from app.utils.startup_timeline import StartupTimeline
@@ -174,6 +175,7 @@ async def main():
     maintenance_task = None
     version_check_task = None
     traffic_monitoring_task = None
+    whitelist_traffic_task = None
     daily_subscription_task = None
     polling_task = None
     web_api_server = None
@@ -672,6 +674,18 @@ async def main():
                 stage.skip('Мониторинг трафика отключен настройками')
 
         async with timeline.stage(
+            'Учёт WHITELIST-трафика',
+            '🧾',
+            success_message='Учёт WHITELIST-трафика запущен',
+        ) as stage:
+            if whitelist_traffic_service.is_enabled():
+                whitelist_traffic_task = asyncio.create_task(whitelist_traffic_service.start_monitoring())
+                stage.log(f'Интервал опроса: {whitelist_traffic_service.get_interval_minutes()} мин')
+            else:
+                whitelist_traffic_task = None
+                stage.skip('Учёт WHITELIST-трафика отключен настройками')
+
+        async with timeline.stage(
             'Суточные подписки',
             '💳',
             success_message='Сервис суточных подписок запущен',
@@ -761,6 +775,7 @@ async def main():
             f'Мониторинг: {"Включен" if monitoring_task else "Отключен"}',
             f'Техработы: {"Включен" if maintenance_task else "Отключен"}',
             f'Мониторинг трафика: {"Включен" if traffic_monitoring_task else "Отключен"}',
+            f'Учёт WHITELIST-трафика: {"Включен" if whitelist_traffic_task else "Отключен"}',
             f'Суточные подписки: {"Включен" if daily_subscription_task else "Отключен"}',
             f'Проверка версий: {"Включен" if version_check_task else "Отключен"}',
             f'Отчеты: {"Включен" if reporting_service.is_running() else "Отключен"}',
@@ -815,6 +830,16 @@ async def main():
                             logger.info('🔄 Перезапуск мониторинга трафика...')
                             traffic_monitoring_task = asyncio.create_task(
                                 traffic_monitoring_scheduler.start_monitoring()
+                            )
+
+                if whitelist_traffic_task and whitelist_traffic_task.done():
+                    exception = whitelist_traffic_task.exception()
+                    if exception:
+                        logger.error('Учёт WHITELIST-трафика завершился с ошибкой', error=exception)
+                        if whitelist_traffic_service.is_enabled():
+                            logger.info('🔄 Перезапуск учёта WHITELIST-трафика...')
+                            whitelist_traffic_task = asyncio.create_task(
+                                whitelist_traffic_service.start_monitoring()
                             )
 
                 if daily_subscription_task and daily_subscription_task.done():
@@ -902,6 +927,15 @@ async def main():
             traffic_monitoring_task.cancel()
             try:
                 await traffic_monitoring_task
+            except asyncio.CancelledError:
+                pass
+
+        if whitelist_traffic_task and not whitelist_traffic_task.done():
+            logger.info('ℹ️ Остановка учёта WHITELIST-трафика...')
+            whitelist_traffic_service.stop_monitoring()
+            whitelist_traffic_task.cancel()
+            try:
+                await whitelist_traffic_task
             except asyncio.CancelledError:
                 pass
 

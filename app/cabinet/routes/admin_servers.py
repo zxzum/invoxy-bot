@@ -73,6 +73,7 @@ async def list_servers(
     servers, total = await get_all_server_squads(
         db,
         available_only=not include_unavailable,
+        limit=10_000,
     )
 
     items = []

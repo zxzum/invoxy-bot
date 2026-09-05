@@ -52,7 +52,7 @@ async def _get_tariff_servers(
     db: AsyncSession, allowed_squads: list[str], server_traffic_limits: dict = None
 ) -> list[ServerInfo]:
     """Get server info for tariff."""
-    servers, _ = await get_all_server_squads(db, available_only=False)
+    servers, _ = await get_all_server_squads(db, available_only=False, limit=10_000)
     limits = server_traffic_limits or {}
     result = []
     for server in servers:
@@ -71,7 +71,7 @@ async def _get_tariff_servers(
                 squad_uuid=server.squad_uuid,
                 display_name=server.display_name,
                 country_code=server.country_code,
-                is_selected=server.squad_uuid in allowed_squads,
+                is_selected=not allowed_squads or server.squad_uuid in allowed_squads,
                 traffic_limit_gb=server_limit,
             )
         )
@@ -118,6 +118,7 @@ async def list_tariffs(
 ):
     """Get list of all tariffs."""
     tariffs = await get_all_tariffs(db, include_inactive=include_inactive)
+    _, available_servers_count = await get_all_server_squads(db, available_only=True, limit=1)
 
     items = []
     for tariff in tariffs:
@@ -135,10 +136,11 @@ async def list_tariffs(
                 allow_traffic_topup=tariff.allow_traffic_topup,
                 show_in_gift=tariff.show_in_gift,
                 traffic_limit_gb=tariff.traffic_limit_gb,
+                whitelist_traffic_limit_gb=tariff.whitelist_traffic_limit_gb,
                 device_limit=tariff.device_limit,
                 tier_level=tariff.tier_level,
                 display_order=tariff.display_order,
-                servers_count=len(tariff.allowed_squads or []),
+                servers_count=len(tariff.allowed_squads or []) or available_servers_count,
                 subscriptions_count=subs_count,
                 created_at=tariff.created_at,
             )
@@ -153,7 +155,7 @@ async def get_available_servers(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get list of all servers for tariff selection."""
-    servers, _ = await get_all_server_squads(db, available_only=False)
+    servers, _ = await get_all_server_squads(db, available_only=False, limit=10_000)
     return [
         ServerInfo(
             id=server.id,
@@ -243,7 +245,10 @@ async def get_tariff(
         traffic_topup_enabled=tariff.traffic_topup_enabled,
         traffic_topup_packages=tariff.traffic_topup_packages or {},
         max_topup_traffic_gb=tariff.max_topup_traffic_gb,
+        whitelist_traffic_topup_enabled=tariff.whitelist_traffic_topup_enabled,
+        whitelist_traffic_topup_packages=tariff.whitelist_traffic_topup_packages or {},
         traffic_limit_gb=tariff.traffic_limit_gb,
+        whitelist_traffic_limit_gb=tariff.whitelist_traffic_limit_gb,
         device_limit=tariff.device_limit,
         device_price_kopeks=tariff.device_price_kopeks,
         max_device_limit=tariff.max_device_limit,
@@ -305,6 +310,9 @@ async def create_new_tariff(
         traffic_topup_enabled=request.traffic_topup_enabled,
         traffic_topup_packages=request.traffic_topup_packages,
         max_topup_traffic_gb=request.max_topup_traffic_gb,
+        whitelist_traffic_limit_gb=request.whitelist_traffic_limit_gb,
+        whitelist_traffic_topup_enabled=request.whitelist_traffic_topup_enabled,
+        whitelist_traffic_topup_packages=request.whitelist_traffic_topup_packages,
         traffic_limit_gb=request.traffic_limit_gb,
         device_limit=request.device_limit,
         device_price_kopeks=request.device_price_kopeks,
@@ -380,6 +388,12 @@ async def update_existing_tariff(
         updates['traffic_topup_packages'] = request.traffic_topup_packages
     if request.max_topup_traffic_gb is not None:
         updates['max_topup_traffic_gb'] = request.max_topup_traffic_gb
+    if request.whitelist_traffic_limit_gb is not None:
+        updates['whitelist_traffic_limit_gb'] = request.whitelist_traffic_limit_gb
+    if request.whitelist_traffic_topup_enabled is not None:
+        updates['whitelist_traffic_topup_enabled'] = request.whitelist_traffic_topup_enabled
+    if request.whitelist_traffic_topup_packages is not None:
+        updates['whitelist_traffic_topup_packages'] = request.whitelist_traffic_topup_packages
     if request.traffic_limit_gb is not None:
         updates['traffic_limit_gb'] = request.traffic_limit_gb
     if request.device_limit is not None:

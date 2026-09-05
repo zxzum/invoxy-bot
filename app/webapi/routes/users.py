@@ -85,7 +85,7 @@ def _serialize_subscription(subscription: Subscription | None) -> SubscriptionSu
         device_limit=subscription.device_limit,
         autopay_enabled=subscription.autopay_enabled,
         autopay_days_before=subscription.autopay_days_before,
-        subscription_url=subscription.subscription_url,
+        subscription_url=settings.normalize_subscription_url(subscription.subscription_url),
         subscription_crypto_link=subscription.subscription_crypto_link,
         connected_squads=list(subscription.connected_squads or []),
         tariff_id=subscription.tariff_id,

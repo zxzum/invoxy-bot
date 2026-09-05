@@ -87,6 +87,21 @@ def _normalize_panel_user_id(value: Any) -> int | None:
         return None
 
 
+def _filter_owned_panel_users(
+    panel_users: list[dict[str, Any]], owned_panel_ids: set[int]
+) -> list[dict[str, Any]]:
+    """Keep this bot's users when several bots share one RemnaWave panel."""
+    if not settings.REMNAWAVE_USER_OWNER_PREFIX:
+        return panel_users
+
+    return [
+        panel_user
+        for panel_user in panel_users
+        if _normalize_panel_user_id(panel_user.get('id')) in owned_panel_ids
+        or settings.is_remnawave_user_owned(panel_user.get('username'))
+    ]
+
+
 class _PanelIdMapMutation:
     """Tracks in-memory panel-id map/user changes so they can be rolled back."""
 
@@ -1462,6 +1477,18 @@ class RemnaWaveService:
                 _user_panel_id = _normalize_panel_user_id(getattr(user, 'remnawave_id', None))
                 if _user_panel_id is not None:
                     bot_users_by_panel_id[_user_panel_id] = user
+            owned_panel_ids = set(bot_users_by_panel_id)
+            for user in bot_users:
+                owned_panel_ids.update(
+                    panel_id
+                    for subscription in (getattr(user, 'subscriptions', None) or [])
+                    if (panel_id := _normalize_panel_user_id(getattr(subscription, 'remnawave_id', None))) is not None
+                )
+            unowned_count = len(panel_users)
+            panel_users = _filter_owned_panel_users(panel_users, owned_panel_ids)
+            unowned_count -= len(panel_users)
+            if unowned_count:
+                logger.info('🔒 Пропущены пользователи другого бота', unowned_count=unowned_count)
             # Index users by email for email-only sync
             bot_users_by_email = {user.email.lower(): user for user in bot_users if user.email and user.email_verified}
             # Also index email-only users by their remnawave_id for sync
@@ -2073,6 +2100,13 @@ class RemnaWaveService:
             bot_users_by_tg = {u.telegram_id: u for u in _all_users if u.telegram_id}
             bot_users_by_email = {u.email.lower(): u for u in _all_users if u.email and u.email_verified}
 
+            owned_panel_ids = set(subs_by_panel_id) | set(users_by_panel_id)
+            unowned_count = len(panel_users)
+            panel_users = _filter_owned_panel_users(panel_users, owned_panel_ids)
+            unowned_count -= len(panel_users)
+            if unowned_count:
+                logger.info('🔒 [multi-tariff] Пропущены пользователи другого бота', unowned_count=unowned_count)
+
             logger.info(
                 '📊 [multi-tariff] Подписок с remnawave_id',
                 subs_count=len(subs_by_panel_id),
@@ -2211,7 +2245,7 @@ class RemnaWaveService:
                             remnawave_id=panel_user_id,
                             remnawave_short_id=_short_id,
                             remnawave_short_uuid=panel_user.get('shortUuid'),
-                            subscription_url=panel_user.get('subscriptionUrl', ''),
+                            subscription_url=settings.normalize_subscription_url(panel_user.get('subscriptionUrl', '')) or '',
                             subscription_crypto_link=panel_user.get('subscriptionCryptoLink', ''),
                             tariff_id=_matched_tariff_id,
                         )
@@ -2286,7 +2320,7 @@ class RemnaWaveService:
                     # traffic_limit_gb: bot is source of truth, do not overwrite from panel
 
                     # Update subscription URL
-                    sub_url = panel_user.get('subscriptionUrl')
+                    sub_url = settings.normalize_subscription_url(panel_user.get('subscriptionUrl'))
                     if sub_url and subscription.subscription_url != sub_url:
                         subscription.subscription_url = sub_url
 
@@ -2375,7 +2409,7 @@ class RemnaWaveService:
                 'device_limit': coerce_panel_device_limit(panel_user.get('hwidDeviceLimit')),
                 'connected_squads': squad_uuids,
                 'remnawave_short_uuid': panel_user.get('shortUuid'),
-                'subscription_url': panel_user.get('subscriptionUrl', ''),
+                'subscription_url': settings.normalize_subscription_url(panel_user.get('subscriptionUrl', '')) or '',
                 'subscription_crypto_link': (
                     panel_user.get('subscriptionCryptoLink') or (panel_user.get('happ') or {}).get('cryptoLink', '')
                 ),
@@ -2401,7 +2435,7 @@ class RemnaWaveService:
                     device_limit=1,
                     connected_squads=[],
                     remnawave_short_uuid=panel_user.get('shortUuid'),
-                    subscription_url=panel_user.get('subscriptionUrl', ''),
+                    subscription_url=settings.normalize_subscription_url(panel_user.get('subscriptionUrl', '')) or '',
                     subscription_crypto_link=(
                         panel_user.get('subscriptionCryptoLink') or (panel_user.get('happ') or {}).get('cryptoLink', '')
                     ),
@@ -2593,7 +2627,7 @@ class RemnaWaveService:
                     new_short_uuid=new_short_uuid,
                 )
 
-            panel_url = panel_user.get('subscriptionUrl', '')
+            panel_url = settings.normalize_subscription_url(panel_user.get('subscriptionUrl', '')) or ''
             if panel_url and subscription.subscription_url != panel_url:
                 subscription.subscription_url = panel_url
 
@@ -2722,7 +2756,11 @@ class RemnaWaveService:
                                 # Если нет панельного id в базе, ищем пользователя по telegram_id в панели.
                                 # 3.0.0: маршрут by-telegram-id удалён, поиск живёт как фильтр стрима.
                                 if not panel_user_id and user.telegram_id:
-                                    existing_users = await api.find_users_by_telegram_id(user.telegram_id)
+                                    existing_users = [
+                                        candidate
+                                        for candidate in await api.find_users_by_telegram_id(user.telegram_id)
+                                        if settings.is_remnawave_user_owned(candidate.username)
+                                    ]
                                     if existing_users:
                                         if settings.is_multi_tariff_enabled():
                                             if sub.remnawave_short_id:
@@ -2749,7 +2787,11 @@ class RemnaWaveService:
 
                                 # Fallback: поиск по email (для OAuth юзеров без telegram_id)
                                 if not panel_user_id and user.email:
-                                    existing_users = await api.find_users_by_email(user.email)
+                                    existing_users = [
+                                        candidate
+                                        for candidate in await api.find_users_by_email(user.email)
+                                        if settings.is_remnawave_user_owned(candidate.username)
+                                    ]
                                     if existing_users:
                                         if settings.is_multi_tariff_enabled():
                                             if sub.remnawave_short_id:
@@ -2940,7 +2982,11 @@ class RemnaWaveService:
     async def get_user_traffic_stats(self, telegram_id: int) -> dict[str, Any] | None:
         try:
             async with self.get_api_client() as api:
-                users = await api.find_users_by_telegram_id(telegram_id)
+                users = [
+                    candidate
+                    for candidate in await api.find_users_by_telegram_id(telegram_id)
+                    if settings.is_remnawave_user_owned(candidate.username)
+                ]
 
                 if not users:
                     return None

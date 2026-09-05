@@ -1878,6 +1878,12 @@ class Tariff(Base):
     # Максимальный лимит трафика после докупки (0 = без ограничений)
     max_topup_traffic_gb = Column(Integer, default=0, nullable=False)
 
+    # Отдельный локальный лимит для трафика, прошедшего через WHITELIST-ноды.
+    # Он не отправляется в RemnaWave и не влияет на её штатный trafficLimitBytes.
+    whitelist_traffic_limit_gb = Column(Integer, default=0, nullable=False)
+    whitelist_traffic_topup_enabled = Column(Boolean, default=False, nullable=False)
+    whitelist_traffic_topup_packages = Column(JSON, default=dict)
+
     # Суточный тариф - ежедневное списание
     is_daily = Column(Boolean, default=False, nullable=False)  # Является ли тариф суточным
     daily_price_kopeks = Column(Integer, default=0, nullable=False)  # Цена за день в копейках
@@ -2014,6 +2020,11 @@ class Tariff(Base):
         """Возвращает цену в копейках для указанного пакета трафика."""
         packages = self.get_traffic_topup_packages()
         return packages.get(gb)
+
+    def get_whitelist_traffic_topup_packages(self) -> dict[int, int]:
+        """Возвращает отдельные пакеты локального WHITELIST-трафика."""
+        packages = self.whitelist_traffic_topup_packages or {}
+        return {int(gb): int(price) for gb, price in packages.items()}
 
     def get_available_traffic_packages(self) -> list[int]:
         """Возвращает список доступных пакетов трафика в ГБ."""
@@ -2329,6 +2340,13 @@ class Subscription(Base):
         AwareDateTime(), nullable=True
     )  # Дата сброса докупленного трафика (30 дней после первой докупки)
 
+    # Локальный счётчик трафика по WHITELIST-нодам. RemnaWave о нём не знает:
+    # штатный лимит панели остаётся в traffic_limit_gb/traffic_used_gb.
+    whitelist_traffic_limit_gb = Column(Integer, default=0, nullable=False)
+    whitelist_traffic_used_bytes = Column(BigInteger, default=0, nullable=False)
+    whitelist_traffic_purchased_gb = Column(Integer, default=0, nullable=False)
+    whitelist_traffic_reset_at = Column(AwareDateTime(), nullable=True)
+
     subscription_url = Column(String, nullable=True)
     subscription_crypto_link = Column(String, nullable=True)
 
@@ -2384,6 +2402,12 @@ class Subscription(Base):
     )
     traffic_purchases = relationship(
         'TrafficPurchase', back_populates='subscription', passive_deletes=True, cascade='all, delete-orphan'
+    )
+    whitelist_traffic_purchases = relationship(
+        'WhitelistTrafficPurchase',
+        back_populates='subscription',
+        passive_deletes=True,
+        cascade='all, delete-orphan',
     )
     grace_access_sessions = relationship(
         'GraceAccessSessionModel', back_populates='subscription', passive_deletes=True, lazy='noload'
@@ -2677,6 +2701,51 @@ class TrafficPurchase(Base):
     def is_expired(self) -> bool:
         """Проверяет, истекла ли докупка."""
         return datetime.now(UTC) >= _aware(self.expires_at)
+
+
+class WhitelistTrafficPurchase(Base):
+    """Докупка локального трафика для WHITELIST-нod."""
+
+    __tablename__ = 'whitelist_traffic_purchases'
+    __table_args__ = (
+        Index('ix_whitelist_traffic_purchases_created_at', 'created_at'),
+        Index('ix_whitelist_traffic_purchases_sub_expires', 'subscription_id', 'expires_at'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False)
+    traffic_gb = Column(Integer, nullable=False)
+    expires_at = Column(AwareDateTime(), nullable=False, index=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+
+    subscription = relationship('Subscription', back_populates='whitelist_traffic_purchases')
+
+    @property
+    def is_expired(self) -> bool:
+        return datetime.now(UTC) >= _aware(self.expires_at)
+
+
+class WhitelistTrafficUsageSnapshot(Base):
+    """Последний месячный срез трафика пользователя на WHITELIST-нодах.
+
+    Сохраняем cumulative значение панели, чтобы начислять только дельту между
+    опросами и не трогать штатный счётчик RemnaWave.
+    """
+
+    __tablename__ = 'whitelist_traffic_usage_snapshots'
+    __table_args__ = (
+        UniqueConstraint('subscription_id', 'period_key', name='uq_whitelist_usage_sub_period'),
+        Index('ix_whitelist_usage_period_sampled', 'period_key', 'sampled_at'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False)
+    panel_user_id = Column(BigInteger, nullable=False)
+    period_key = Column(String(7), nullable=False)
+    measured_bytes = Column(BigInteger, nullable=False, default=0)
+    sampled_at = Column(AwareDateTime(), default=func.now(), nullable=False)
+
+    subscription = relationship('Subscription', backref=backref('whitelist_usage_snapshots', passive_deletes=True))
 
 
 class Transaction(Base):

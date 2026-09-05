@@ -57,6 +57,7 @@ class TariffListItem(BaseModel):
     allow_traffic_topup: bool = True
     show_in_gift: bool = True
     traffic_limit_gb: int
+    whitelist_traffic_limit_gb: int = 0
     device_limit: int
     tier_level: int
     display_order: int
@@ -87,7 +88,10 @@ class TariffDetailResponse(BaseModel):
     traffic_topup_enabled: bool = False
     traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
     max_topup_traffic_gb: int = 0
+    whitelist_traffic_topup_enabled: bool = False
+    whitelist_traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
     traffic_limit_gb: int
+    whitelist_traffic_limit_gb: int = Field(0, ge=0)
     device_limit: int
     device_price_kopeks: int | None = None
     max_device_limit: int | None = None
@@ -147,6 +151,9 @@ class TariffCreateRequest(BaseModel):
     traffic_topup_enabled: bool = False
     traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
     max_topup_traffic_gb: int = Field(0, ge=0)
+    whitelist_traffic_limit_gb: int = Field(0, ge=0)
+    whitelist_traffic_topup_enabled: bool = False
+    whitelist_traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
     traffic_limit_gb: int = Field(0, ge=0, description='0 = unlimited')
     device_limit: int = Field(1, ge=1)
     device_price_kopeks: int | None = Field(None, ge=0)
@@ -191,6 +198,9 @@ class TariffUpdateRequest(BaseModel):
     traffic_topup_enabled: bool | None = None
     traffic_topup_packages: dict[str, int] | None = None
     max_topup_traffic_gb: int | None = Field(None, ge=0)
+    whitelist_traffic_limit_gb: int | None = Field(None, ge=0)
+    whitelist_traffic_topup_enabled: bool | None = None
+    whitelist_traffic_topup_packages: dict[str, int] | None = None
     traffic_limit_gb: int | None = Field(None, ge=0)
     device_limit: int | None = Field(None, ge=1)
     device_price_kopeks: int | None = Field(None, ge=0)

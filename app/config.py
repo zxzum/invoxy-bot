@@ -223,10 +223,12 @@ class Settings(BaseSettings):
     REMNAWAVE_AUTH_TYPE: str = 'api_key'  # api_key, basic, bearer, cookies, caddy
     REMNAWAVE_USER_DESCRIPTION_TEMPLATE: str = 'Bot user: {full_name} {username}'
     REMNAWAVE_USER_USERNAME_TEMPLATE: str = 'user_{telegram_id}'
+    REMNAWAVE_USER_OWNER_PREFIX: str | None = None
     REMNAWAVE_USER_DELETE_MODE: str = 'delete'  # "delete" или "disable"
     REMNAWAVE_AUTO_SYNC_ENABLED: bool = False
     REMNAWAVE_AUTO_SYNC_TIMES: str = '03:00'
     CABINET_REMNA_SUB_CONFIG: str | None = None  # UUID конфига страницы подписки из RemnaWave
+    REMNAWAVE_SUBSCRIPTION_PUBLIC_URL: str | None = None
 
     # RemnaWave incoming webhooks (real-time event delivery from backend)
     REMNAWAVE_WEBHOOK_ENABLED: bool = False
@@ -273,8 +275,8 @@ class Settings(BaseSettings):
     WEBHOOK_NOTIFY_TORRENT_DETECTED: bool = True
 
     TRIAL_DURATION_DAYS: int = 3
-    TRIAL_TRAFFIC_LIMIT_GB: int = 10
-    TRIAL_DEVICE_LIMIT: int = 2
+    TRIAL_TRAFFIC_LIMIT_GB: int = 5
+    TRIAL_DEVICE_LIMIT: int = 1
     TRIAL_ADD_REMAINING_DAYS_TO_PAID: bool = False
     TRIAL_PAYMENT_ENABLED: bool = False
     TRIAL_ACTIVATION_PRICE: int = 0
@@ -493,11 +495,21 @@ class Settings(BaseSettings):
     TRAFFIC_CHECK_CONCURRENCY: int = 10  # Параллельных запросов
     TRAFFIC_NOTIFICATION_COOLDOWN_MINUTES: int = 60  # Кулдаун уведомлений (минуты)
     TRAFFIC_SNAPSHOT_TTL_HOURS: int = 24  # TTL для snapshot трафика в Redis (часы)
+
+    # Локальный учёт трафика по нодам WHITELIST (только read-only запросы к панели)
+    WHITELIST_TRAFFIC_ACCOUNTING_ENABLED: bool = False
+    WHITELIST_TRAFFIC_SYNC_INTERVAL_MINUTES: int = 15
+    WHITELIST_SQUAD_UUID: str = ''
+
     # Настройки суточных подписок
     DAILY_SUBSCRIPTIONS_ENABLED: bool = True  # Включить автоматическое списание для суточных тарифов
     DAILY_SUBSCRIPTIONS_CHECK_INTERVAL_MINUTES: int = 30  # Интервал проверки в минутах
 
-    AUTOPAY_WARNING_DAYS: str = '3,1'
+    AUTOPAY_WARNING_DAYS: str = '7,3,1'
+
+    # Периодическая персональная рассылка с реферальной ссылкой
+    REFERRAL_BROADCAST_ENABLED: bool = False
+    REFERRAL_BROADCAST_INTERVAL_DAYS: int = 7
 
     ENABLE_AUTOPAY: bool = False
 
@@ -1923,6 +1935,34 @@ class Settings(BaseSettings):
 
         return result or 'user'
 
+    def is_remnawave_user_owned(self, username: str | None) -> bool:
+        """Return whether a panel username belongs to this bot instance."""
+        prefix = (self.REMNAWAVE_USER_OWNER_PREFIX or '').strip()
+        return not prefix or bool(username and username.startswith(prefix))
+
+    def normalize_subscription_url(self, value: str | None) -> str | None:
+        """Replace the panel's subscription host while preserving its token path."""
+        if not value or not self.REMNAWAVE_SUBSCRIPTION_PUBLIC_URL:
+            return value
+
+        source = urlparse(value)
+        public = urlparse(self.REMNAWAVE_SUBSCRIPTION_PUBLIC_URL.strip())
+        if (
+            source.scheme not in {'http', 'https'}
+            or not source.netloc
+            or public.scheme not in {'http', 'https'}
+            or not public.netloc
+        ):
+            return value
+
+        path = source.path
+        if path == '/sub':
+            path = '/'
+        elif path.startswith('/sub/'):
+            path = path.removeprefix('/sub')
+
+        return source._replace(scheme=public.scheme, netloc=public.netloc, path=path).geturl()
+
     def build_remnawave_subscription_username(
         self,
         *,
@@ -2090,11 +2130,11 @@ class Settings(BaseSettings):
             days = self.AUTOPAY_WARNING_DAYS
             if isinstance(days, str):
                 if not days.strip():
-                    return [3, 1]
+                    return [7, 3, 1]
                 return [int(x.strip()) for x in days.split(',') if x.strip()]
-            return [3, 1]
+            return [7, 3, 1]
         except (ValueError, AttributeError):
-            return [3, 1]
+            return [7, 3, 1]
 
     def is_autopay_enabled_by_default(self) -> bool:
         value = getattr(self, 'DEFAULT_AUTOPAY_ENABLED', True)

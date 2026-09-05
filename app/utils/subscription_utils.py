@@ -49,7 +49,7 @@ def get_display_subscription_link(subscription: Subscription | None) -> str | No
     if not subscription:
         return None
 
-    base_link = getattr(subscription, 'subscription_url', None)
+    base_link = settings.normalize_subscription_url(getattr(subscription, 'subscription_url', None))
 
     if settings.is_happ_cryptolink_mode():
         crypto_link = getattr(subscription, 'subscription_crypto_link', None)

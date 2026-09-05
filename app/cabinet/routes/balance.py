@@ -421,7 +421,7 @@ async def _create_payment_link(
             bot_username = settings.get_bot_username() or 'bot'
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Telegram Stars payments are only available through the bot. Please use @{bot_username}',
+                detail=f'Оплата Telegram Stars доступна только через бота. Используйте @{bot_username}',
             )
 
         elif payment_method == 'platega':

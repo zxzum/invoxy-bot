@@ -49,7 +49,7 @@ CALLBACK_TO_CABINET_PATH: dict[str, str] = {
     'subscription_connect': '/subscription',
     'subscription_resume_checkout': '/subscription',
     'return_to_saved_cart': '/subscription',
-    'menu_buy': '/subscription',
+    'menu_buy': '/subscription/purchase',
     'buy_traffic': '/subscription',
     'menu_referrals': '/referral',
     'menu_referral': '/referral',

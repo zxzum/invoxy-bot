@@ -1385,7 +1385,7 @@ class RemnaWaveWebhookService:
                     changed = True
 
         # Sync subscription URL (validate to prevent stored XSS)
-        subscription_url = data.get('subscriptionUrl')
+        subscription_url = settings.normalize_subscription_url(data.get('subscriptionUrl'))
         if (
             subscription_url
             and self._is_valid_url(subscription_url)
@@ -1680,7 +1680,7 @@ class RemnaWaveWebhookService:
             logger.info('Webhook user.revoked: подписка не найдена в БД, пропуск', user_id=user.id)
             return
 
-        new_url = data.get('subscriptionUrl')
+        new_url = settings.normalize_subscription_url(data.get('subscriptionUrl'))
         new_crypto_link = data.get('subscriptionCryptoLink') or (data.get('happ') or {}).get('cryptoLink', '')
         changed = False
 

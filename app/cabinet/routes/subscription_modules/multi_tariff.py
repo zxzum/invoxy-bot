@@ -27,6 +27,8 @@ router = APIRouter(prefix='/subscriptions', tags=['Cabinet Multi-Tariff'], redir
 
 
 class SubscriptionListItem(BaseModel):
+    whitelist_traffic_limit_gb: int = 0
+    whitelist_traffic_used_gb: float = 0.0
     id: int
     status: str
     tariff_id: int | None = None
@@ -55,6 +57,8 @@ def _subscription_to_list_item(sub) -> SubscriptionListItem:
         tariff_name = sub.tariff.name
 
     return SubscriptionListItem(
+        whitelist_traffic_limit_gb=getattr(sub, 'whitelist_traffic_limit_gb', 0) or 0,
+        whitelist_traffic_used_gb=(getattr(sub, 'whitelist_traffic_used_bytes', 0) or 0) / (1024**3),
         id=sub.id,
         status=sub.actual_status,
         tariff_id=sub.tariff_id,
@@ -63,7 +67,7 @@ def _subscription_to_list_item(sub) -> SubscriptionListItem:
         traffic_used_gb=sub.traffic_used_gb or 0.0,
         device_limit=sub.device_limit or 1,
         end_date=sub.end_date.isoformat() if sub.end_date else None,
-        subscription_url=sub.subscription_url,
+        subscription_url=settings.normalize_subscription_url(sub.subscription_url),
         subscription_crypto_link=sub.subscription_crypto_link,
         is_trial=sub.is_trial or False,
         is_daily=bool(sub.tariff and getattr(sub.tariff, 'is_daily', False)),

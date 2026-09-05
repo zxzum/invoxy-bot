@@ -3,6 +3,7 @@ import math
 import secrets
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
+from inspect import isawaitable
 
 import structlog
 from sqlalchemy import and_, case, delete, func, select
@@ -22,6 +23,8 @@ from app.database.models import (
     TransactionType,
     User,
     UserStatus,
+    WhitelistTrafficPurchase,
+    WhitelistTrafficUsageSnapshot,
 )
 from app.utils.timezone import format_local_datetime
 
@@ -44,6 +47,20 @@ _ALIVE_SUBSCRIPTION_STATUSES_TUPLE: tuple[str, ...] = tuple(ALIVE_SUBSCRIPTION_S
 # Имя частичного уникального индекса, конфликт по которому мы ожидаем
 # при гонке создания триальной подписки.
 UQ_TRIAL_CONSTRAINT = 'uq_subscriptions_user_tariff_active'
+
+
+async def _get_tariff_whitelist_limit(db: AsyncSession, tariff_id: int | None) -> int:
+    """Return the tariff's local WHITELIST base limit without touching the panel."""
+    if tariff_id is None:
+        return 0
+    result = await db.execute(select(Tariff.whitelist_traffic_limit_gb).where(Tariff.id == tariff_id))
+    value = result.scalar_one_or_none()
+    if isawaitable(value):
+        close = getattr(value, 'close', None)
+        if close:
+            close()
+        return 0
+    return max(0, int(value or 0))
 
 
 def _is_trial_unique_violation(exc: IntegrityError) -> bool:
@@ -184,6 +201,8 @@ async def create_trial_subscription(
     if device_limit is None:
         device_limit = settings.TRIAL_DEVICE_LIMIT
 
+    whitelist_traffic_limit_gb = await _get_tariff_whitelist_limit(db, tariff_id)
+
     # Если переданы connected_squads, используем их.
     # Иначе используем squad_uuid или все доступные сквады по умолчанию.
     final_squads = []
@@ -224,6 +243,10 @@ async def create_trial_subscription(
         existing.start_date = datetime.now(UTC)
         existing.end_date = end_date
         existing.traffic_limit_gb = traffic_limit_gb
+        existing.whitelist_traffic_limit_gb = whitelist_traffic_limit_gb
+        existing.whitelist_traffic_used_bytes = 0
+        existing.whitelist_traffic_purchased_gb = 0
+        existing.whitelist_traffic_reset_at = None
         existing.device_limit = device_limit
         existing.connected_squads = final_squads
         existing.tariff_id = tariff_id
@@ -264,6 +287,7 @@ async def create_trial_subscription(
         start_date=datetime.now(UTC),
         end_date=end_date,
         traffic_limit_gb=traffic_limit_gb,
+        whitelist_traffic_limit_gb=whitelist_traffic_limit_gb,
         device_limit=device_limit,
         connected_squads=final_squads,
         autopay_enabled=False,
@@ -335,6 +359,7 @@ async def _revive_paid_subscription(
     *,
     duration_days: int,
     traffic_limit_gb: int,
+    whitelist_traffic_limit_gb: int = 0,
     device_limit: int | None,
     connected_squads: list[str] | None,
     update_server_counters: bool,
@@ -349,10 +374,28 @@ async def _revive_paid_subscription(
     """
     now = datetime.now(UTC)
     was_alive = subscription.end_date is not None and subscription.end_date > now
+    old_whitelist_limit = getattr(subscription, 'whitelist_traffic_limit_gb', 0)
+    old_whitelist_purchased = getattr(subscription, 'whitelist_traffic_purchased_gb', 0)
+    had_whitelist_quota = any(
+        isinstance(value, (int, float)) and value > 0
+        for value in (old_whitelist_limit, old_whitelist_purchased)
+    )
 
     subscription.is_trial = False
     subscription.status = SubscriptionStatus.ACTIVE.value
     subscription.traffic_limit_gb = traffic_limit_gb
+    subscription.whitelist_traffic_limit_gb = whitelist_traffic_limit_gb
+    subscription.whitelist_traffic_purchased_gb = 0
+    subscription.whitelist_traffic_reset_at = None
+    if whitelist_traffic_limit_gb > 0 or had_whitelist_quota:
+        await db.execute(
+            delete(WhitelistTrafficPurchase).where(WhitelistTrafficPurchase.subscription_id == subscription.id)
+        )
+        await db.execute(
+            delete(WhitelistTrafficUsageSnapshot).where(
+                WhitelistTrafficUsageSnapshot.subscription_id == subscription.id
+            )
+        )
     if device_limit is not None:
         subscription.device_limit = device_limit
     if connected_squads:
@@ -362,6 +405,7 @@ async def _revive_paid_subscription(
     if not was_alive:
         subscription.start_date = now
         subscription.traffic_used_gb = 0.0
+        subscription.whitelist_traffic_used_bytes = 0
     subscription.end_date = base_date + timedelta(days=duration_days)
     subscription.updated_at = now
 
@@ -567,6 +611,8 @@ async def create_paid_subscription(
     commit: bool = True,
     conversion_trial: Subscription | None = None,
 ) -> Subscription:
+    whitelist_traffic_limit_gb = await _get_tariff_whitelist_limit(db, tariff_id)
+
     # Multi-tariff invariant: at most ONE subscription per (user, tariff). If a
     # subscription for this tariff has EXPIRED, revive it in place instead of
     # inserting a duplicate — the partial unique index only guards the alive
@@ -586,6 +632,7 @@ async def create_paid_subscription(
                 _existing,
                 duration_days=duration_days,
                 traffic_limit_gb=traffic_limit_gb,
+                whitelist_traffic_limit_gb=whitelist_traffic_limit_gb,
                 device_limit=device_limit,
                 connected_squads=connected_squads,
                 update_server_counters=update_server_counters,
@@ -637,6 +684,7 @@ async def create_paid_subscription(
         start_date=datetime.now(UTC),
         end_date=end_date,
         traffic_limit_gb=traffic_limit_gb,
+        whitelist_traffic_limit_gb=whitelist_traffic_limit_gb,
         device_limit=device_limit,
         connected_squads=final_squads,
         autopay_enabled=settings.is_autopay_enabled_by_default(),
@@ -759,6 +807,18 @@ async def replace_subscription(
     subscription.end_date = current_time + timedelta(days=duration_days)
     subscription.traffic_limit_gb = traffic_limit_gb
     subscription.traffic_used_gb = 0.0
+    old_whitelist_limit = getattr(subscription, 'whitelist_traffic_limit_gb', 0)
+    old_whitelist_purchased = getattr(subscription, 'whitelist_traffic_purchased_gb', 0)
+    had_whitelist_quota = any(
+        isinstance(value, (int, float)) and value > 0
+        for value in (old_whitelist_limit, old_whitelist_purchased)
+    )
+    new_whitelist_limit = await _get_tariff_whitelist_limit(
+        db,
+        tariff_id if tariff_id is not None else subscription.tariff_id,
+    )
+    subscription.whitelist_traffic_limit_gb = new_whitelist_limit
+    subscription.whitelist_traffic_used_bytes = 0
 
     # Удаляем записи TrafficPurchase перед сбросом purchased_traffic_gb.
     # synchronize_session='fetch' — корректно инвалидирует ORM identity map
@@ -772,6 +832,17 @@ async def replace_subscription(
     )
     subscription.purchased_traffic_gb = 0  # Сбрасываем докупленный трафик при замене подписки
     subscription.traffic_reset_at = None  # Сбрасываем дату сброса трафика
+    if new_whitelist_limit > 0 or had_whitelist_quota:
+        await db.execute(
+            delete(WhitelistTrafficPurchase).where(WhitelistTrafficPurchase.subscription_id == subscription.id)
+        )
+        await db.execute(
+            delete(WhitelistTrafficUsageSnapshot).where(
+                WhitelistTrafficUsageSnapshot.subscription_id == subscription.id
+            )
+        )
+    subscription.whitelist_traffic_purchased_gb = 0
+    subscription.whitelist_traffic_reset_at = None
     subscription.device_limit = device_limit
     subscription.connected_squads = list(new_squads)
     subscription.subscription_url = None
@@ -841,7 +912,18 @@ async def _lock_subscription_row(db: AsyncSession, subscription: Subscription) -
     """
     await db.execute(select(Subscription.id).where(Subscription.id == subscription.id).with_for_update())
     # Подтягиваем поля, которые могут быть обновлены конкурентным add_subscription_traffic
-    await db.refresh(subscription, ['traffic_limit_gb', 'purchased_traffic_gb', 'traffic_reset_at'])
+    await db.refresh(
+        subscription,
+        [
+            'traffic_limit_gb',
+            'purchased_traffic_gb',
+            'traffic_reset_at',
+            'whitelist_traffic_limit_gb',
+            'whitelist_traffic_purchased_gb',
+            'whitelist_traffic_reset_at',
+            'whitelist_traffic_used_bytes',
+        ],
+    )
 
 
 async def _housekeep_expired_purchases(
@@ -998,6 +1080,77 @@ async def _apply_base_limit_preserving_active_purchases(
     return purchased_gb, subscription.traffic_limit_gb
 
 
+async def housekeep_whitelist_traffic_purchases(
+    db: AsyncSession,
+    subscription: Subscription,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Remove expired local packages and restore base + active package invariant."""
+    now = now or datetime.now(UTC)
+    await _lock_subscription_row(db, subscription)
+
+    old_purchased = subscription.whitelist_traffic_purchased_gb or 0
+    base_limit = max((subscription.whitelist_traffic_limit_gb or 0) - old_purchased, 0)
+    await db.execute(
+        delete(WhitelistTrafficPurchase)
+        .where(
+            WhitelistTrafficPurchase.subscription_id == subscription.id,
+            WhitelistTrafficPurchase.expires_at <= now,
+        )
+        .execution_options(synchronize_session='fetch')
+    )
+    active_result = await db.execute(
+        select(WhitelistTrafficPurchase).where(
+            WhitelistTrafficPurchase.subscription_id == subscription.id,
+            WhitelistTrafficPurchase.expires_at > now,
+        )
+    )
+    active_packages = active_result.scalars().all()
+    purchased_gb = sum(p.traffic_gb for p in active_packages) if active_packages else 0
+    subscription.whitelist_traffic_limit_gb = base_limit + purchased_gb
+    subscription.whitelist_traffic_purchased_gb = purchased_gb
+    subscription.whitelist_traffic_reset_at = min(
+        (p.expires_at for p in active_packages),
+        default=None,
+    )
+    return purchased_gb
+
+
+async def _apply_whitelist_base_limit_preserving_active_purchases(
+    db: AsyncSession,
+    subscription: Subscription,
+    base_limit_gb: int,
+    *,
+    now: datetime,
+) -> tuple[int, int]:
+    """Set a local base quota while preserving separately purchased packages."""
+    await _lock_subscription_row(db, subscription)
+    await db.execute(
+        delete(WhitelistTrafficPurchase)
+        .where(
+            WhitelistTrafficPurchase.subscription_id == subscription.id,
+            WhitelistTrafficPurchase.expires_at <= now,
+        )
+        .execution_options(synchronize_session='fetch')
+    )
+    active_result = await db.execute(
+        select(WhitelistTrafficPurchase).where(
+            WhitelistTrafficPurchase.subscription_id == subscription.id,
+            WhitelistTrafficPurchase.expires_at > now,
+        )
+    )
+    active_packages = active_result.scalars().all()
+    purchased_gb = sum(p.traffic_gb for p in active_packages) if active_packages else 0
+    subscription.whitelist_traffic_limit_gb = max(0, base_limit_gb) + purchased_gb
+    subscription.whitelist_traffic_purchased_gb = purchased_gb
+    subscription.whitelist_traffic_reset_at = min(
+        (p.expires_at for p in active_packages),
+        default=None,
+    )
+    return purchased_gb, subscription.whitelist_traffic_limit_gb
+
+
 def should_carry_trial_remaining_days() -> bool:
     """Переносить ли остаток триальных дней на платную подписку при переходе.
 
@@ -1090,6 +1243,12 @@ async def extend_subscription(
     # Определяем, происходит ли СМЕНА тарифа (а не продление того же)
     # Включает переход из классического режима (tariff_id=None) в тарифный
     is_tariff_change = tariff_id is not None and (subscription.tariff_id is None or tariff_id != subscription.tariff_id)
+
+    whitelist_base_limit = None
+    if tariff_id is not None:
+        whitelist_base_limit = await _get_tariff_whitelist_limit(db, tariff_id)
+    elif subscription.tariff_id is not None:
+        whitelist_base_limit = await _get_tariff_whitelist_limit(db, subscription.tariff_id)
 
     # Флаг: была ли housekeeping-ветка вызвана. Если нет — в конце прогоним
     # _housekeep_expired_purchases как fallback, чтобы истёкшие пакеты не копились
@@ -1336,6 +1495,38 @@ async def extend_subscription(
             )
             _housekeeping_done = True
 
+    # Локальный WHITELIST-счётчик живёт отдельно от RemnaWave trafficLimitBytes.
+    # При платном продлении/смене тарифа обновляем базу, сохраняя активные
+    # отдельные покупки, и сбрасываем текущий расход вместе с месячным baseline.
+    if days > 0 and subscription.tariff_id is not None and whitelist_base_limit is not None:
+        should_reset_whitelist_usage = (
+            (is_tariff_change and settings.RESET_TRAFFIC_ON_TARIFF_SWITCH)
+            or (not is_tariff_change and settings.RESET_TRAFFIC_ON_PAYMENT)
+        )
+        current_whitelist_limit = getattr(subscription, 'whitelist_traffic_limit_gb', 0)
+        current_whitelist_purchased = getattr(subscription, 'whitelist_traffic_purchased_gb', 0)
+        has_existing_whitelist_quota = any(
+            isinstance(value, (int, float)) and value > 0
+            for value in (current_whitelist_limit, current_whitelist_purchased)
+        )
+        if (
+            whitelist_base_limit > 0
+            or has_existing_whitelist_quota
+        ):
+            await _apply_whitelist_base_limit_preserving_active_purchases(
+                db,
+                subscription,
+                whitelist_base_limit,
+                now=current_time,
+            )
+            if should_reset_whitelist_usage:
+                subscription.whitelist_traffic_used_bytes = 0
+                await db.execute(
+                    delete(WhitelistTrafficUsageSnapshot).where(
+                        WhitelistTrafficUsageSnapshot.subscription_id == subscription.id
+                    )
+                )
+
     # Fallback housekeeping: для путей renewal в multi-tariff (например,
     # SubscriptionRenewalService) ни одна из веток выше не сработала, но просрочка
     # пакетов всё равно копится. Здесь подчищаем истёкшие TrafficPurchase и
@@ -1464,6 +1655,41 @@ async def add_subscription_traffic(db: AsyncSession, subscription: Subscription,
 
     await sync_recurrent_bindings_after_price_change(db, subscription.id)
 
+    return subscription
+
+
+async def add_whitelist_subscription_traffic(
+    db: AsyncSession,
+    subscription: Subscription,
+    gb: int,
+) -> Subscription:
+    """Add a local WHITELIST package without making a RemnaWave request."""
+    if gb <= 0:
+        raise ValueError('Whitelist traffic package must be positive')
+
+    now = datetime.now(UTC)
+    await housekeep_whitelist_traffic_purchases(db, subscription, now=now)
+    expires_at = now + timedelta(days=30)
+    db.add(
+        WhitelistTrafficPurchase(
+            subscription_id=subscription.id,
+            traffic_gb=gb,
+            expires_at=expires_at,
+        )
+    )
+    subscription.whitelist_traffic_purchased_gb = (
+        subscription.whitelist_traffic_purchased_gb or 0
+    ) + gb
+    subscription.whitelist_traffic_limit_gb = (
+        subscription.whitelist_traffic_limit_gb or 0
+    ) + gb
+    subscription.whitelist_traffic_reset_at = min(
+        expires_at,
+        subscription.whitelist_traffic_reset_at or expires_at,
+    )
+    subscription.updated_at = now
+    await db.commit()
+    await db.refresh(subscription)
     return subscription
 
 

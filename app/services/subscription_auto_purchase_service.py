@@ -1901,13 +1901,19 @@ async def _auto_add_traffic(
     """Auto-purchase traffic from saved cart after balance topup."""
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    from app.database.crud.subscription import add_subscription_traffic, get_subscription_by_user_id
+    from app.database.crud.subscription import (
+        add_subscription_traffic,
+        add_whitelist_subscription_traffic,
+        get_subscription_by_user_id,
+    )
     from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
     from app.database.models import PaymentMethod
     from app.utils.pricing_utils import calculate_prorated_price
 
     traffic_gb = _safe_int(cart_data.get('traffic_gb'))
     cart_price_kopeks = _safe_int(cart_data.get('price_kopeks'))
+    traffic_scope = cart_data.get('scope') or cart_data.get('traffic_scope') or 'regular'
+    is_whitelist = traffic_scope == 'whitelist'
 
     if traffic_gb <= 0 or cart_price_kopeks <= 0:
         logger.warning(
@@ -1986,7 +1992,7 @@ async def _auto_add_traffic(
         await _delete_cart_for_subscription(user.id, cart_data)
         return False
 
-    if subscription.traffic_limit_gb == 0:
+    if not is_whitelist and subscription.traffic_limit_gb == 0:
         logger.warning(
             '🔁 Автопокупка трафика: у пользователя уже безлимитный трафик', format_user_id=_format_user_id(user)
         )
@@ -1998,12 +2004,29 @@ async def _auto_add_traffic(
 
     # Recompute base price from tariff/settings (config may have changed since cart was saved)
     tariff = None
+    if is_whitelist and not (settings.is_tariffs_mode() and subscription.tariff_id):
+        logger.warning(
+            'Автопокупка WHITELIST-трафика: нужен тариф',
+            format_user_id=_format_user_id(user),
+        )
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return False
+
     if settings.is_tariffs_mode() and subscription.tariff_id:
         from app.database.crud.tariff import get_tariff_by_id
 
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
 
-    if tariff and tariff.can_topup_traffic():
+    if is_whitelist:
+        if not tariff or not getattr(tariff, 'whitelist_traffic_topup_enabled', False):
+            logger.warning(
+                'Автопокупка WHITELIST-трафика: докупка выключена',
+                format_user_id=_format_user_id(user),
+            )
+            await _delete_cart_for_subscription(user.id, cart_data)
+            return False
+        base_price = tariff.get_whitelist_traffic_topup_packages().get(traffic_gb, 0)
+    elif tariff and tariff.can_topup_traffic():
         base_price = tariff.get_traffic_topup_price(traffic_gb) or 0
     else:
         base_price = settings.get_traffic_topup_price(traffic_gb)
@@ -2060,7 +2083,7 @@ async def _auto_add_traffic(
         return False
 
     # Deduct balance
-    description = f'Докупка {traffic_gb} ГБ трафика'
+    description = f'Докупка {traffic_gb} ГБ трафика' + (' по WHITELIST' if is_whitelist else '')
     try:
         success = await subtract_user_balance(
             db,
@@ -2086,9 +2109,14 @@ async def _auto_add_traffic(
         return False
 
     # Add traffic
-    old_traffic_limit = subscription.traffic_limit_gb or 0
+    old_traffic_limit = (
+        subscription.whitelist_traffic_limit_gb if is_whitelist else subscription.traffic_limit_gb
+    ) or 0
     try:
-        await add_subscription_traffic(db, subscription, traffic_gb)
+        if is_whitelist:
+            await add_whitelist_subscription_traffic(db, subscription, traffic_gb)
+        else:
+            await add_subscription_traffic(db, subscription, traffic_gb)
         await db.commit()
         await db.refresh(subscription)
     except Exception as error:
@@ -2125,37 +2153,38 @@ async def _auto_add_traffic(
             )
         return False
 
-    # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
-    from app.database.crud.subscription import reactivate_subscription
+    if not is_whitelist:
+        # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
+        from app.database.crud.subscription import reactivate_subscription
 
-    await reactivate_subscription(db, subscription)
+        await reactivate_subscription(db, subscription)
 
-    # Sync with RemnaWave
-    try:
-        subscription_service = SubscriptionService()
-        await subscription_service.update_remnawave_user(db, subscription)
-        # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        _panel_user_id = (
-            subscription.remnawave_id
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_id is not None
-            else getattr(user, 'remnawave_id', None)
-        )
-        if _panel_user_id is not None and subscription.status == 'active':
-            await subscription_service.enable_remnawave_user(_panel_user_id)
-    except Exception as error:
-        logger.warning(
-            '⚠️ Автопокупка трафика: не удалось обновить Remnawave для пользователя',
-            format_user_id=_format_user_id(user),
-            error=error,
-        )
-        from app.services.remnawave_retry_queue import remnawave_retry_queue
-
-        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
-            remnawave_retry_queue.enqueue(
-                subscription_id=subscription.id,
-                user_id=subscription.user_id,
-                action='update',
+        # Sync with RemnaWave
+        try:
+            subscription_service = SubscriptionService()
+            await subscription_service.update_remnawave_user(db, subscription)
+            # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
+            _panel_user_id = (
+                subscription.remnawave_id
+                if settings.is_multi_tariff_enabled() and subscription.remnawave_id is not None
+                else getattr(user, 'remnawave_id', None)
             )
+            if _panel_user_id is not None and subscription.status == 'active':
+                await subscription_service.enable_remnawave_user(_panel_user_id)
+        except Exception as error:
+            logger.warning(
+                '⚠️ Автопокупка трафика: не удалось обновить Remnawave для пользователя',
+                format_user_id=_format_user_id(user),
+                error=error,
+            )
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+                remnawave_retry_queue.enqueue(
+                    subscription_id=subscription.id,
+                    user_id=subscription.user_id,
+                    action='update',
+                )
 
     # Clear cart (transaction already created in subtract_user_balance)
     await _delete_cart_for_subscription(user.id, cart_data)
@@ -2169,18 +2198,19 @@ async def _auto_add_traffic(
         price_kopeks=price_kopeks,
     )
 
-    # WebSocket notification for cabinet
-    try:
-        from app.cabinet.routes.websocket import notify_user_traffic_purchased
+    # WebSocket notification for the regular RemnaWave quota only.
+    if not is_whitelist:
+        try:
+            from app.cabinet.routes.websocket import notify_user_traffic_purchased
 
-        await notify_user_traffic_purchased(
-            user_id=user.id,
-            traffic_gb_added=traffic_gb,
-            new_traffic_limit_gb=subscription.traffic_limit_gb or 0,
-            amount_kopeks=price_kopeks,
-        )
-    except Exception as ws_error:
-        logger.warning('⚠️ Автопокупка трафика: не удалось отправить WebSocket уведомление', ws_error=ws_error)
+            await notify_user_traffic_purchased(
+                user_id=user.id,
+                traffic_gb_added=traffic_gb,
+                new_traffic_limit_gb=subscription.traffic_limit_gb or 0,
+                amount_kopeks=price_kopeks,
+            )
+        except Exception as ws_error:
+            logger.warning('⚠️ Автопокупка трафика: не удалось отправить WebSocket уведомление', ws_error=ws_error)
 
     # User notification
     if bot and user.telegram_id and settings.is_notifications_enabled():
@@ -2196,7 +2226,11 @@ async def _auto_add_traffic(
                 ),
             ).format(
                 traffic_gb=traffic_gb,
-                new_limit=subscription.traffic_limit_gb,
+                new_limit=(
+                    subscription.whitelist_traffic_limit_gb
+                    if is_whitelist
+                    else subscription.traffic_limit_gb
+                ),
                 price=texts.format_price(price_kopeks),
             )
 
@@ -2229,7 +2263,7 @@ async def _auto_add_traffic(
             )
 
     # Admin notification
-    if bot:
+    if bot and not is_whitelist:
         try:
             notification_service = AdminNotificationService(bot)
             await notification_service.send_subscription_update_notification(

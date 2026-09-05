@@ -7,6 +7,8 @@ Only active when MULTI_TARIFF_ENABLED=True.
 
 from __future__ import annotations
 
+import html
+
 import structlog
 from aiogram import Router, types
 from aiogram.fsm.context import FSMContext
@@ -21,6 +23,7 @@ from app.database.crud.subscription import (
 from app.database.models import Subscription, SubscriptionStatus, User
 from app.localization.texts import Texts, get_texts
 from app.services.subscription_service import SubscriptionService
+from app.utils.formatters import format_whitelist_traffic
 
 
 logger = structlog.get_logger(__name__)
@@ -63,6 +66,11 @@ def _format_subscription_line(sub, idx: int) -> str:
         used = f'{sub.traffic_used_gb:.1f}' if sub.traffic_used_gb else '0'
         traffic = f'{used}/{sub.traffic_limit_gb} ГБ'
 
+    whitelist_traffic = format_whitelist_traffic(
+        getattr(sub, 'whitelist_traffic_used_bytes', 0),
+        getattr(sub, 'whitelist_traffic_limit_gb', 0),
+    )
+
     # Devices
     devices = f'{Texts.format_device_limit(sub.device_limit)} устр.' if sub.device_limit is not None else ''
 
@@ -71,6 +79,8 @@ def _format_subscription_line(sub, idx: int) -> str:
 
     parts = [f'{emoji} <b>{idx}. {tariff_name}</b>{label}']
     parts.append(f'   📊 Трафик: {traffic}')
+    if whitelist_traffic:
+        parts.append(f'   🔐 <b>Белый интернет: {html.escape(whitelist_traffic)}</b>')
     if devices:
         parts.append(f'   📱 Устройства: {devices}')
     parts.append(f'   📅 До: {end_date}')
@@ -235,6 +245,14 @@ async def show_subscription_detail(
         used = f'{subscription.traffic_used_gb:.1f}' if subscription.traffic_used_gb else '0'
         traffic = f'{used} / {subscription.traffic_limit_gb} ГБ'
 
+    whitelist_traffic = format_whitelist_traffic(
+        getattr(subscription, 'whitelist_traffic_used_bytes', 0),
+        getattr(subscription, 'whitelist_traffic_limit_gb', 0),
+    )
+    whitelist_line = (
+        f'🔐 <b>Белый интернет: {html.escape(whitelist_traffic)}</b>\n' if whitelist_traffic else ''
+    )
+
     end_date = subscription.end_date.strftime('%d.%m.%Y %H:%M') if subscription.end_date else '—'
     status = subscription.status_display
 
@@ -242,12 +260,14 @@ async def show_subscription_detail(
         f'📋 <b>{tariff_name}</b>\n\n'
         f'Статус: {status}\n'
         f'📊 Трафик: {traffic}\n'
+        f'{whitelist_line}'
         f'📱 Устройства: {Texts.format_device_limit(subscription.device_limit)}\n'
         f'📅 До: {end_date}\n'
     )
 
-    if subscription.subscription_url and not settings.should_hide_subscription_link():
-        text += f'\n🔗 <code>{subscription.subscription_url}</code>'
+    subscription_link = settings.normalize_subscription_url(subscription.subscription_url)
+    if subscription_link and not settings.should_hide_subscription_link():
+        text += f'\n🔗 <code>{subscription_link}</code>'
 
     keyboard = _build_subscription_detail_keyboard(sub_id, sub=subscription)
 

@@ -432,7 +432,11 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
         async with service.get_api_client() as api:
             # Try to find user by email in panel.
             # 3.0.0 удалил GET /api/users/by-email — поиск живёт фильтром стрима.
-            panel_users = await api.find_users_by_email(user.email)
+            panel_users = [
+                candidate
+                for candidate in await api.find_users_by_email(user.email)
+                if settings.is_remnawave_user_owned(candidate.username)
+            ]
 
             if not panel_users:
                 logger.debug('No subscription found in panel for email', email=user.email)

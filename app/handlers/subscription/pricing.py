@@ -295,7 +295,9 @@ async def get_subscription_info_text(subscription, texts, db_user, db: AsyncSess
     countries_info = await _get_countries_info(subscription.connected_squads)
     ', '.join([c['name'] for c in countries_info]) if countries_info else 'Нет'
 
-    subscription_url = getattr(subscription, 'subscription_url', None) or 'Генерируется...'
+    subscription_url = (
+        settings.normalize_subscription_url(getattr(subscription, 'subscription_url', None)) or 'Генерируется...'
+    )
 
     if subscription.is_trial:
         status_text = '🎁 Тестовая'
