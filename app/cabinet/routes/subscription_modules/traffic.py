@@ -199,12 +199,12 @@ async def purchase_traffic(
             if not getattr(tariff, 'whitelist_traffic_topup_enabled', False):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='WHITELIST traffic top-up is disabled for this tariff',
+                    detail='Докупка Белого интернета недоступна на этом тарифе',
                 )
             if (getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0) <= 0:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='WHITELIST traffic is not included in this tariff',
+                    detail='Белый интернет не входит в этот тариф',
                 )
             packages = tariff.get_whitelist_traffic_topup_packages()
         else:
@@ -251,7 +251,7 @@ async def purchase_traffic(
     elif request.scope == 'whitelist':
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='WHITELIST traffic is available only with a tariff',
+            detail='Белый интернет доступен только с тарифом',
         )
     else:
         # Classic режим
@@ -330,7 +330,7 @@ async def purchase_traffic(
             'source': 'cabinet',
             'description': (
                 f'Докупка {request.gb} ГБ трафика'
-                + (' по WHITELIST' if request.scope == 'whitelist' else '')
+                + (' по Белому интернету' if request.scope == 'whitelist' else '')
             ),
         }
 
@@ -357,7 +357,7 @@ async def purchase_traffic(
         )
 
     # Формируем описание
-    scope_label = ' по WHITELIST' if request.scope == 'whitelist' else ''
+    scope_label = ' по Белому интернету' if request.scope == 'whitelist' else ''
     if traffic_discount_percent > 0:
         traffic_description = f'Докупка {request.gb} ГБ трафика{scope_label} (скидка {traffic_discount_percent}%)'
     else:
@@ -530,7 +530,7 @@ async def save_traffic_cart(
     if request.scope == 'whitelist' and not is_tariff_mode:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='WHITELIST traffic доступен только с тарифом',
+            detail='Белый интернет доступен только с тарифом',
         )
 
     if is_tariff_mode:
@@ -545,12 +545,12 @@ async def save_traffic_cart(
             if not getattr(tariff, 'whitelist_traffic_topup_enabled', False):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Докупка WHITELIST-трафика недоступна на вашем тарифе',
+                    detail='Докупка Белого интернета недоступна на вашем тарифе',
                 )
             if (getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0) <= 0:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='WHITELIST-трафик не входит в ваш тариф',
+                    detail='Белый интернет не входит в ваш тариф',
                 )
             packages = tariff.get_whitelist_traffic_topup_packages()
         else:
@@ -613,7 +613,7 @@ async def save_traffic_cart(
         'source': 'cabinet',
         'description': (
             f'Докупка {request.gb} ГБ трафика'
-            + (' по WHITELIST' if request.scope == 'whitelist' else '')
+            + (' по Белому интернету' if request.scope == 'whitelist' else '')
         ),
     }
     await user_cart_service.save_user_cart(user.id, cart_data)
@@ -638,7 +638,7 @@ async def switch_traffic_package(
     if request.scope == 'whitelist':
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='WHITELIST traffic is purchased as a separate top-up',
+            detail='Белый интернет покупается отдельным пакетом',
         )
 
     subscription = await resolve_subscription(db, user, subscription_id)

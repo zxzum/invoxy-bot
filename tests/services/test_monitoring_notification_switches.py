@@ -1,8 +1,11 @@
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from sqlalchemy import select
 
+from app.config import settings
+from app.database.crud import system_setting
 from app.database.crud.notification import record_notification as record_notification_crud
 from app.database.models import SentNotification
 from app.services import monitoring_service
@@ -177,3 +180,42 @@ async def test_record_notification_is_idempotent_for_repeated_threshold(monkeypa
         rows = (await db.execute(select(SentNotification))).scalars().all()
 
     assert len(rows) == 1
+
+
+async def test_referral_broadcast_uses_seven_day_cooldown(monkeypatch):
+    monkeypatch.setattr(settings, 'REFERRAL_BROADCAST_ENABLED', True)
+    monkeypatch.setattr(settings, 'REFERRAL_BROADCAST_INTERVAL_DAYS', 7)
+    monkeypatch.setattr(
+        NotificationSettingsService,
+        'are_notifications_globally_enabled',
+        classmethod(lambda cls: True),
+    )
+
+    result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=list))
+    db = SimpleNamespace(execute=AsyncMock(return_value=result), commit=AsyncMock())
+    upsert = AsyncMock()
+    monkeypatch.setattr(
+        system_setting,
+        'get_setting_value',
+        AsyncMock(return_value=(datetime.now(UTC) - timedelta(days=6)).isoformat()),
+    )
+    monkeypatch.setattr(system_setting, 'upsert_system_setting', upsert)
+
+    service = _service()
+    await service._send_referral_broadcast_if_due(db)
+
+    upsert.assert_not_awaited()
+    db.commit.assert_not_awaited()
+    db.execute.assert_not_awaited()
+
+    monkeypatch.setattr(
+        system_setting,
+        'get_setting_value',
+        AsyncMock(return_value=(datetime.now(UTC) - timedelta(days=8)).isoformat()),
+    )
+
+    await service._send_referral_broadcast_if_due(db)
+
+    upsert.assert_awaited_once()
+    db.commit.assert_awaited_once()
+    db.execute.assert_awaited_once()

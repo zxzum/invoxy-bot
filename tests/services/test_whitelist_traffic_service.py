@@ -1,10 +1,51 @@
+import importlib.util
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import pytest
+
+from app.database.models import Tariff
 from app.services.whitelist_traffic_service import (
     _effective_whitelist_squads,
     _panel_squad_ids,
     _usage_by_user,
 )
+
+
+BOOTSTRAP_PATH = Path(__file__).resolve().parents[3] / 'deploy' / 'bootstrap_invoxy.py'
+
+
+def _load_bootstrap():
+    spec = importlib.util.spec_from_file_location('invoxy_bootstrap', BOOTSTRAP_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError('Could not load Invoxy bootstrap')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _Result:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class _BootstrapDb:
+    def __init__(self, tariffs):
+        self.tariffs = tariffs
+
+    async def execute(self, query):
+        entity = query.column_descriptions[0]['entity']
+        return _Result([] if entity.__name__ == 'PromoGroup' else self.tariffs)
+
+    async def refresh(self, *_args):
+        return None
 
 
 def test_panel_squad_ids_accepts_uuid_and_name_forms():
@@ -40,3 +81,43 @@ def test_effective_whitelist_squads_removes_and_restores_access():
 
     subscription.whitelist_traffic_limit_gb = 10
     assert _effective_whitelist_squads(subscription, 'white-list') == ['regular', 'WHITE-LIST']
+
+
+@pytest.mark.asyncio
+async def test_production_seed_uses_scoped_one_gb_prices_and_exact_device_caps(monkeypatch):
+    bootstrap = _load_bootstrap()
+    monkeypatch.setattr(bootstrap, 'upsert_system_setting', AsyncMock())
+    tariffs = [
+        Tariff(id=1, name='Стандарт 🛡️'),
+        Tariff(id=2, name='Стандарт 🌐 Белый интернет'),
+        Tariff(id=3, name='Премиум 💎 Белый интернет'),
+        Tariff(id=4, name='Пробный период'),
+    ]
+    db = _BootstrapDb(tariffs)
+
+    await bootstrap._ensure_tariffs(db)
+    await bootstrap._ensure_tariffs(db)
+
+    by_name = {tariff.name: tariff for tariff in tariffs}
+    basic = by_name['Стандарт 🛡️']
+    standard_white = by_name['Стандарт 🌐 Белый интернет']
+    premium_white = by_name['Премиум 💎 Белый интернет']
+    trial = by_name['Пробный период']
+
+    assert basic.get_traffic_topup_packages() == {1: 50}
+    assert standard_white.get_traffic_topup_packages() == {1: 50}
+    assert standard_white.get_whitelist_traffic_topup_packages() == {1: 300}
+    assert premium_white.get_traffic_topup_packages() == {1: 50}
+    assert premium_white.get_whitelist_traffic_topup_packages() == {1: 300}
+    assert (basic.device_limit, basic.device_price_kopeks, basic.max_device_limit) == (3, 3000, 10)
+    assert (standard_white.device_limit, standard_white.device_price_kopeks, standard_white.max_device_limit) == (
+        5,
+        5000,
+        10,
+    )
+    assert (premium_white.device_limit, premium_white.device_price_kopeks, premium_white.max_device_limit) == (
+        10,
+        5000,
+        15,
+    )
+    assert (trial.traffic_limit_gb, trial.whitelist_traffic_limit_gb) == (10, 5)

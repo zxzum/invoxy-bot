@@ -2602,7 +2602,7 @@ class MonitoringService:
         from app.utils.notification_prefs import is_promo_offers_enabled
 
         now = datetime.now(UTC)
-        interval_days = max(1, int(getattr(settings, 'REFERRAL_BROADCAST_INTERVAL_DAYS', 30)))
+        interval_days = max(1, int(getattr(settings, 'REFERRAL_BROADCAST_INTERVAL_DAYS', 7)))
         last_sent_value = await get_setting_value(db, 'REFERRAL_BROADCAST_LAST_SENT_AT')
         if last_sent_value:
             try:
