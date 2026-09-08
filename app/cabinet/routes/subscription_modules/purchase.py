@@ -580,7 +580,7 @@ async def submit_purchase(
             logger.error('Failed to send admin notification for subscription purchase', error=e)
 
         if user.telegram_id:
-            from app.localization.loader import get_texts
+            from app.localization.texts import get_texts
 
             texts = get_texts(getattr(user, 'language', 'ru'))
             await notify_telegram_user_about_cabinet_purchase(
@@ -1375,7 +1375,7 @@ async def purchase_tariff(
             logger.error('Failed to send admin notification for tariff purchase', error=e)
 
         if user.telegram_id:
-            from app.localization.loader import get_texts
+            from app.localization.texts import get_texts
 
             texts = get_texts(getattr(user, 'language', 'ru'))
             await notify_telegram_user_about_cabinet_purchase(

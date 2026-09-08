@@ -498,7 +498,7 @@ async def purchase_traffic(
     except Exception as e:
         logger.error('Failed to send admin notification for traffic purchase', error=e)
 
-    from app.localization.loader import get_texts
+    from app.localization.texts import get_texts
 
     texts = get_texts(getattr(user, 'language', 'ru'))
     traffic_kind = (

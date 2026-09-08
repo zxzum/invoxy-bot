@@ -333,6 +333,9 @@ class BotConfigurationService:
         'RESET_TRAFFIC_ON_TARIFF_SWITCH': 'TRAFFIC',
         'TRAFFIC_SELECTION_MODE': 'TRAFFIC',
         'FIXED_TRAFFIC_LIMIT_GB': 'TRAFFIC',
+        'WHITELIST_TRAFFIC_ACCOUNTING_ENABLED': 'TRAFFIC',
+        'WHITELIST_TRAFFIC_SYNC_INTERVAL_MINUTES': 'TRAFFIC',
+        'WHITELIST_SQUAD_UUID': 'TRAFFIC',
         'AVAILABLE_SUBSCRIPTION_PERIODS': 'PERIODS',
         'AVAILABLE_RENEWAL_PERIODS': 'PERIODS',
         'PRICE_14_DAYS': 'SUBSCRIPTION_PRICES',
@@ -713,6 +716,12 @@ class BotConfigurationService:
                 'после перезапуска. С true и незаполненными сквадами бот запустится с выключенным grace.'
             ),
             'dependencies': 'GRACE_ACCESS_EXPIRED_SQUAD_UUID, GRACE_ACCESS_LIMITED_SQUAD_UUID, GRACE_ACCESS_TRAFFIC_GB',
+        },
+        'WHITELIST_SQUAD_UUID': {
+            'description': 'Сквад RemnaWave, трафик которого учитывается как Белый интернет.',
+            'format': 'UUID внутреннего сквада из панели RemnaWave.',
+            'example': '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+            'warning': 'После изменения перезапустите бота; сквад должен быть разрешён в тарифах Белого интернета.',
         },
         'GRACE_ACCESS_EXPIRED_SQUAD_UUID': {
             'description': 'Сквад, в который переводится пользователь с истёкшей подпиской на время grace-доступа.',

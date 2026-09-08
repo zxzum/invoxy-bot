@@ -57,7 +57,7 @@ router = APIRouter()
 
 
 async def _notify_device_purchase_user(user: User, added: int, new_limit: int, price: int) -> None:
-    from app.localization.loader import get_texts
+    from app.localization.texts import get_texts
 
     texts = get_texts(getattr(user, 'language', 'ru'))
     await notify_telegram_user_about_cabinet_purchase(
