@@ -1,7 +1,7 @@
 """выделение самого тарифа в списке
 
-Revision ID: 0118
-Revises: 0117
+Revision ID: 0126
+Revises: 0125
 Create Date: 2026-09-08
 
 Периоды внутри тарифа выделять уже можно (0117), но список тарифов — отдельный
@@ -14,8 +14,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = '0118'
-down_revision: Union[str, None] = '0117'
+revision: str = '0126'
+down_revision: Union[str, None] = '0125'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -1,7 +1,7 @@
 """выделение периода тарифа как самого выгодного
 
-Revision ID: 0117
-Revises: 0116
+Revision ID: 0125
+Revises: 0124
 Create Date: 2026-09-08
 
 Оператор выбирает один из периодов тарифа, и он показывается выделенным —
@@ -16,8 +16,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = '0117'
-down_revision: Union[str, None] = '0116'
+revision: str = '0125'
+down_revision: Union[str, None] = '0124'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

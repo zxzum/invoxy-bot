@@ -1,7 +1,7 @@
 """reachability batches: проверка многих серверов одной кнопкой
 
-Revision ID: 0116
-Revises: 0115
+Revision ID: 0124
+Revises: 0123
 Create Date: 2026-09-07
 
 """
@@ -11,8 +11,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0116'
-down_revision: Union[str, None] = '0115'
+revision: str = '0124'
+down_revision: Union[str, None] = '0123'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

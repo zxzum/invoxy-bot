@@ -1,7 +1,7 @@
 """create reachability tables (bschekbot integration)
 
-Revision ID: 0115
-Revises: 0114
+Revision ID: 0123
+Revises: 0122
 Create Date: 2026-09-05
 
 """
@@ -11,8 +11,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0115'
-down_revision: Union[str, None] = '0114'
+revision: str = '0123'
+down_revision: Union[str, None] = '0122'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

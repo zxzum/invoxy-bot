@@ -1,18 +1,20 @@
 """create system_error_events table
 
-Revision ID: 0111
-Revises: 0110
+Revision ID: 0119
+Revises: 0113
 Create Date: 2026-08-28
 
 """
+
+# INVOXY: upstream 0111-0113 collide with deployed Invoxy migrations; shifted to 0119+.
 
 from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0111'
-down_revision: Union[str, None] = '0110'
+revision: str = '0119'
+down_revision: Union[str, None] = '0113'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
