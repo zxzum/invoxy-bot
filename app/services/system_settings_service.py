@@ -155,6 +155,8 @@ class BotConfigurationService:
         'ETOPLATEZHI': '💳 Etoplatezhi',
         'JUPITER': '🪐 Jupiter',
         'CISPAY': '💳 CisPay',
+        'TABPAY': '💳 TabPay',
+        'PARITYPAY': '💳 ParityPay',
         'DONUT': '🍩 Donut',
         'LAVA': '🌋 Lava',
         'YOOKASSA': '🟣 YooKassa',
@@ -181,6 +183,7 @@ class BotConfigurationService:
         'CONNECT_BUTTON': '🚀 Кнопка подключения',
         'MINIAPP': '📱 Mini App',
         'HAPP': '🅷 Happ',
+        'INCY': '🅸 INCY',
         'SKIP': '⚡ Быстрый старт',
         'ADDITIONAL': '📱 Дополнительные приложения',
         'DATABASE': '💾 База данных',
@@ -202,6 +205,7 @@ class BotConfigurationService:
         'BAN_NOTIFICATIONS': '🚫 Тексты уведомлений о блокировках',
         'INFO_PAGES': '📄 Инфо-страницы',
         'GRACE_ACCESS': '🛟 Grace-доступ',
+        'BSCHEK': '📶 BSCHEKER (bschekbot)',
     }
 
     CATEGORY_DESCRIPTIONS: dict[str, str] = {
@@ -228,6 +232,8 @@ class BotConfigurationService:
         'ETOPLATEZHI': 'Etoplatezhi: paymentpage.etoplatezhi.ru, оплата картой и через СБП.',
         'JUPITER': 'Jupiter (FPGate P2P v2.1): app.juppiter.tech, эквайринг СБП с HMAC-SHA256.',
         'CISPAY': 'cisPay: api.cispay.app, H2H-оплата картой и СБП на хостинговой странице, вебхуки с HMAC-SHA256.',
+        'TABPAY': 'TabPay: tabpay.org, СБП и карты с 3-D Secure; вебхуки подписаны HMAC-SHA256 (X-Signature-V2).',
+        'PARITYPAY': 'ParityPay: api.paritypay.net v2, СБП и карты; уведомления подписаны HMAC-SHA256 (X-SIGNATURE).',
         'DONUT': 'Donut P2P: gw.donut.business, P2P-оплата картой, СБП по телефону и QR.',
         'LAVA': 'Lava Business: gate.lava.ru, оплата картой и СБП с HMAC-SHA256 и подтверждением через webhook.',
         'PLATEGA': '{platega_name}: merchant ID, секрет, ссылки возврата и методы оплаты.',
@@ -256,6 +262,7 @@ class BotConfigurationService:
         'CONNECT_BUTTON': 'Поведение кнопки «Подключиться» и miniapp.',
         'MINIAPP': 'Mini App и кастомные ссылки.',
         'HAPP': 'Интеграция Happ и связанные ссылки.',
+        'INCY': 'Шифрованные deep links INCY (incy://crypt1/...).',
         'SKIP': 'Настройки быстрого старта и гайд по подключению.',
         'ADDITIONAL': 'Конфигурация deep links и кеша.',
         'DATABASE': 'Режим работы базы данных и пути до файлов.',
@@ -280,6 +287,10 @@ class BotConfigurationService:
             'Временный ограниченный доступ для истёкших и лимитных подписок. '
             'Здесь ключи лежат по отдельности; связанный экран с проверкой конфигурации и состоянием '
             'сессий — в админке кабинета, раздел «Grace-доступ».'
+        ),
+        'BSCHEK': (
+            'Проверка хостов и конфигов глазами мобильных операторов РФ через bschekbot API: '
+            'ключ, эталонная подписка панели, потолок цены одной задачи.'
         ),
     }
 
@@ -490,6 +501,8 @@ class BotConfigurationService:
         'ETOPLATEZHI_': 'ETOPLATEZHI',
         'JUPITER_': 'JUPITER',
         'CISPAY_': 'CISPAY',
+        'TABPAY_': 'TABPAY',
+        'PARITYPAY_': 'PARITYPAY',
         'DONUT_': 'DONUT',
         'LAVA_': 'LAVA',
         'PLATEGA_': 'PLATEGA',
@@ -501,6 +514,7 @@ class BotConfigurationService:
         'SIMPLE_SUBSCRIPTION_': 'SIMPLE_SUBSCRIPTION',
         'CONNECT_BUTTON_HAPP': 'HAPP',
         'HAPP_': 'HAPP',
+        'INCY_': 'INCY',
         'SKIP_': 'SKIP',
         'MINIAPP_': 'MINIAPP',
         'MONITORING_': 'MONITORING',
@@ -517,6 +531,7 @@ class BotConfigurationService:
         'DISPLAY_NAME_': 'MODERATION',
         'BAN_MSG_': 'BAN_NOTIFICATIONS',
         'GRACE_ACCESS_': 'GRACE_ACCESS',
+        'BSCHEK_': 'BSCHEK',
     }
 
     CHOICES: dict[str, list[ChoiceOption]] = {

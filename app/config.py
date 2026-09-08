@@ -453,6 +453,9 @@ class Settings(BaseSettings):
     BLACKLIST_IGNORE_ADMINS: bool = True
 
     DISPOSABLE_EMAIL_CHECK_ENABLED: bool = True
+    # Свои одноразовые домены поверх скачиваемого списка (через запятую, пробел или перенос строки).
+    # Совпадение и по поддоменам: x.mail.tm ловится записью mail.tm. Работает и без скачанного списка.
+    DISPOSABLE_EMAIL_EXTRA_DOMAINS: str = ''
 
     # Настройки перевыпуска подписки (revoke + regenerate link)
     SUBSCRIPTION_REVOKE_ENABLED: bool = True
@@ -645,6 +648,11 @@ class Settings(BaseSettings):
     NALOGO_DEVICE_ID: str | None = None
     NALOGO_STORAGE_PATH: str = './nalogo_tokens.json'
     NALOGO_PROXY_URL: str | None = None  # SOCKS proxy for nalog.ru; falls back to PROXY_URL if not set
+    # Имя файла чека (без расширения) во вложении письма и в Telegram; {uuid} — id чека
+    NALOGO_RECEIPT_FILENAME: str = 'receipt_{uuid}'
+    # Типы писем, которые не отправлять (через запятую). Управляется переключателем
+    # в редакторе email-шаблонов; см. app/cabinet/services/email_type_switch.py
+    EMAIL_DISABLED_TYPES: str = ''
 
     AUTO_PURCHASE_AFTER_TOPUP_ENABLED: bool = False
 
@@ -1046,6 +1054,46 @@ class Settings(BaseSettings):
     CISPAY_SBP_ENABLED: bool = False
     CISPAY_SBP_DISPLAY_NAME: str = 'СБП (CisPay)'
 
+    # TabPay (tabpay.org, СБП и карты с 3-D Secure)
+    TABPAY_ENABLED: bool = False
+    # X-Api-Key магазина (tp_...). Показывается в кабинете один раз, перевыпуск отзывает старый.
+    TABPAY_API_KEY: str | None = None
+    # «Секрет подписи» из вкладки Webhook — ключ HMAC для X-Signature-V2.
+    TABPAY_WEBHOOK_SECRET: str | None = None
+    TABPAY_BASE_URL: str = 'https://tabpay.org/api'
+    TABPAY_DISPLAY_NAME: str = 'TabPay'
+    TABPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
+    TABPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    TABPAY_WEBHOOK_PATH: str = '/tabpay-webhook'
+    # Окно свежести X-Timestamp: защищает от переигрывания перехваченного вебхука.
+    # Требует синхронных часов на сервере (NTP), иначе свежие вебхуки не пройдут.
+    TABPAY_WEBHOOK_MAX_AGE_SECONDS: int = 300
+    # Sub-методы TabPay (поле method в запросе создания платежа)
+    TABPAY_CARD_ENABLED: bool = False
+    TABPAY_CARD_DISPLAY_NAME: str = 'Карта (TabPay)'
+    TABPAY_SBP_ENABLED: bool = False
+    TABPAY_SBP_DISPLAY_NAME: str = 'СБП (TabPay)'
+
+    # ParityPay (api.paritypay.net, v2)
+    PARITYPAY_ENABLED: bool = False
+    PARITYPAY_SHOP_ID: str | None = None  # X-ShopId — UUID кассы
+    PARITYPAY_SECRET_KEY: str | None = None  # X-SecretKey — секретный ключ №1, запросы к API
+    # Секретный ключ №2 — только для проверки подписи HTTP-уведомлений (X-SIGNATURE).
+    # Отдельный от ключа запросов: утечка одного не даёт подделать другое.
+    PARITYPAY_CALLBACK_SECRET: str | None = None
+    PARITYPAY_BASE_URL: str = 'https://api.paritypay.net'
+    PARITYPAY_DISPLAY_NAME: str = 'ParityPay'
+    PARITYPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
+    PARITYPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    PARITYPAY_WEBHOOK_PATH: str = '/paritypay-webhook'
+    # Время жизни счёта в минутах, поле expire; у провайдера по умолчанию 60
+    PARITYPAY_INVOICE_LIFETIME_MINUTES: int = 60
+    # Sub-методы ParityPay (поле service при создании счёта)
+    PARITYPAY_CARD_ENABLED: bool = False
+    PARITYPAY_CARD_DISPLAY_NAME: str = 'Карта (ParityPay)'
+    PARITYPAY_SBP_ENABLED: bool = False
+    PARITYPAY_SBP_DISPLAY_NAME: str = 'СБП (ParityPay)'
+
     # Lava (Lava Business API, api.lava.ru)
     LAVA_ENABLED: bool = False
     LAVA_BASE_URL: str = 'https://api.lava.ru'
@@ -1162,6 +1210,13 @@ class Settings(BaseSettings):
     HAPP_DOWNLOAD_LINK_MACOS: str | None = None
     HAPP_DOWNLOAD_LINK_WINDOWS: str | None = None
     HAPP_DOWNLOAD_LINK_PC: str | None = None
+    # У INCY есть свой формат шифрованных ссылок (incy://crypt1/...) — без него ссылка
+    # подписки уезжает в открытом виде, в отличие от happ-cryptolink. Выключатель на
+    # случай ротации ключа INCY: тогда кнопки вернутся к обычным incy://import/...
+    INCY_CRYPTOLINK_ENABLED: bool = True
+    # Необязательное имя провайдера внутри зашифрованной ссылки (поле "n"): INCY
+    # показывает его пользователю при добавлении подписки.
+    INCY_CRYPTOLINK_PROVIDER_NAME: str | None = None
     HIDE_SUBSCRIPTION_LINK: bool = False
     ENABLE_LOGO_MODE: bool = True
     LOGO_FILE: str = 'vpn_logo.png'
@@ -1403,6 +1458,17 @@ class Settings(BaseSettings):
     CABINET_PASSWORD_RESET_EXPIRE_HOURS: int = 1
     CABINET_EMAIL_CHANGE_CODE_EXPIRE_MINUTES: int = 15  # Email change verification code expiration
     CABINET_EMAIL_AUTH_ENABLED: bool = True  # Enable email registration/login in cabinet
+    # Регистрация по email с одного IP. Минутное окно ловит всплеск; часовое и суточное —
+    # скрипт, который ждёт минуту и продолжает (волна одноразовых почт за триалами). 0 выключает окно.
+    CABINET_EMAIL_REGISTER_LIMIT_PER_MINUTE: int = 5
+    CABINET_EMAIL_REGISTER_LIMIT_PER_HOUR: int = 10
+    CABINET_EMAIL_REGISTER_LIMIT_PER_DAY: int = 30
+    # Повторная отправка письма подтверждения с экрана «Проверьте почту» (без входа).
+    # Лимит по IP защищает от рассылки чужими руками, лимит по адресу — от заваливания
+    # одного ящика письмами с разных адресов. 0 выключает окно.
+    CABINET_EMAIL_RESEND_LIMIT_PER_MINUTE: int = 2
+    CABINET_EMAIL_RESEND_LIMIT_PER_HOUR: int = 10
+    CABINET_EMAIL_RESEND_PER_ADDRESS_PER_HOUR: int = 5
     # Согласие с офертой и политикой при ПЕРВОЙ авторизации в кабинете (для новых юзеров).
     # False — чекбоксы не показываются и ничего не требуется (прежнее поведение).
     # Гейт сам собой отключается, если ни оферта, ни политика не включены для веба:
@@ -1463,6 +1529,14 @@ class Settings(BaseSettings):
     BAN_SYSTEM_API_URL: str | None = None  # e.g., http://ban-server:8000
     BAN_SYSTEM_API_TOKEN: str | None = None
     BAN_SYSTEM_REQUEST_TIMEOUT: int = 30
+
+    # bschekbot — BSCHEKER: проверка хостов глазами мобильных операторов
+    BSCHEK_ENABLED: bool = False
+    BSCHEK_API_URL: str = 'https://bsbord.com/v1'
+    BSCHEK_API_KEY: str | None = None  # bsk_live_…, выпускается вручную в кабинете bschekbot
+    BSCHEK_REQUEST_TIMEOUT: int = 200  # синхронный probe идёт до нескольких минут
+    BSCHEK_REFERENCE_SUBSCRIPTION: str | None = None  # shortUuid эталонной подписки панели
+    BSCHEK_JOB_COST_LIMIT_KOPEKS: int = 0  # потолок цены одной задачи, 0 — без потолка
 
     # SOCKS5 proxy for routing bot traffic to Telegram API
     # Format: socks5://user:password@host:port or socks5://host:port
@@ -2061,6 +2135,11 @@ class Settings(BaseSettings):
         if not value:
             return []
         return [n.strip() for n in value.split(',') if n.strip()]
+
+    def get_email_disabled_types(self) -> set[str]:
+        """Типы писем, отключённые админом в редакторе шаблонов."""
+        raw = (self.EMAIL_DISABLED_TYPES or '').split('#')[0]
+        return {item.strip() for item in raw.split(',') if item.strip()}
 
     def get_traffic_excluded_user_ids(self) -> list[int]:
         """Возвращает список id пользователей панели для исключения из мониторинга
@@ -3138,6 +3217,83 @@ class Settings(BaseSettings):
     def get_cispay_sbp_display_name_html(self) -> str:
         return html.escape(self.get_cispay_sbp_display_name())
 
+    def is_tabpay_configured(self) -> bool:
+        """Есть ли учётные данные провайдера — без учёта флага включения."""
+        return bool(self.TABPAY_API_KEY and self.TABPAY_WEBHOOK_SECRET)
+
+    def is_tabpay_enabled(self) -> bool:
+        # Секрет вебхука обязателен наравне с API-ключом: без него подпись
+        # X-Signature-V2 не проверить, и вебхук пришлось бы принимать вслепую.
+        return bool(self.TABPAY_ENABLED and self.TABPAY_API_KEY and self.TABPAY_WEBHOOK_SECRET)
+
+    def get_tabpay_display_name(self) -> str:
+        name = (self.TABPAY_DISPLAY_NAME or '').strip()
+        return name or 'TabPay'
+
+    def get_tabpay_display_name_html(self) -> str:
+        return html.escape(self.get_tabpay_display_name())
+
+    def is_tabpay_card_enabled(self) -> bool:
+        return self.TABPAY_CARD_ENABLED and self.is_tabpay_enabled()
+
+    def get_tabpay_card_display_name(self) -> str:
+        name = (self.TABPAY_CARD_DISPLAY_NAME or '').strip()
+        return name or 'Карта (TabPay)'
+
+    def get_tabpay_card_display_name_html(self) -> str:
+        return html.escape(self.get_tabpay_card_display_name())
+
+    def is_tabpay_sbp_enabled(self) -> bool:
+        return self.TABPAY_SBP_ENABLED and self.is_tabpay_enabled()
+
+    def get_tabpay_sbp_display_name(self) -> str:
+        name = (self.TABPAY_SBP_DISPLAY_NAME or '').strip()
+        return name or 'СБП (TabPay)'
+
+    def get_tabpay_sbp_display_name_html(self) -> str:
+        return html.escape(self.get_tabpay_sbp_display_name())
+
+    def is_paritypay_configured(self) -> bool:
+        """Есть ли учётные данные провайдера — без учёта флага включения."""
+        return bool(self.PARITYPAY_SHOP_ID and self.PARITYPAY_SECRET_KEY and self.PARITYPAY_CALLBACK_SECRET)
+
+    def is_paritypay_enabled(self) -> bool:
+        # Ключ уведомлений обязателен наравне с ключом запросов: без него подпись
+        # X-SIGNATURE не проверить, и уведомление пришлось бы принимать вслепую.
+        return bool(
+            self.PARITYPAY_ENABLED
+            and self.PARITYPAY_SHOP_ID
+            and self.PARITYPAY_SECRET_KEY
+            and self.PARITYPAY_CALLBACK_SECRET
+        )
+
+    def get_paritypay_display_name(self) -> str:
+        name = (self.PARITYPAY_DISPLAY_NAME or '').strip()
+        return name or 'ParityPay'
+
+    def get_paritypay_display_name_html(self) -> str:
+        return html.escape(self.get_paritypay_display_name())
+
+    def is_paritypay_card_enabled(self) -> bool:
+        return self.PARITYPAY_CARD_ENABLED and self.is_paritypay_enabled()
+
+    def get_paritypay_card_display_name(self) -> str:
+        name = (self.PARITYPAY_CARD_DISPLAY_NAME or '').strip()
+        return name or 'Карта (ParityPay)'
+
+    def get_paritypay_card_display_name_html(self) -> str:
+        return html.escape(self.get_paritypay_card_display_name())
+
+    def is_paritypay_sbp_enabled(self) -> bool:
+        return self.PARITYPAY_SBP_ENABLED and self.is_paritypay_enabled()
+
+    def get_paritypay_sbp_display_name(self) -> str:
+        name = (self.PARITYPAY_SBP_DISPLAY_NAME or '').strip()
+        return name or 'СБП (ParityPay)'
+
+    def get_paritypay_sbp_display_name_html(self) -> str:
+        return html.escape(self.get_paritypay_sbp_display_name())
+
     def is_donut_configured(self) -> bool:
         """Есть ли учётные данные провайдера — без учёта флага включения."""
         return self.DONUT_TOKEN is not None and self.DONUT_SECRET is not None
@@ -3375,6 +3531,10 @@ class Settings(BaseSettings):
     def get_happ_cryptolink_redirect_template(self) -> str | None:
         template = (self.HAPP_CRYPTOLINK_REDIRECT_TEMPLATE or '').strip()
         return template or None
+
+    def get_incy_provider_name(self) -> str | None:
+        name = (self.INCY_CRYPTOLINK_PROVIDER_NAME or '').strip()
+        return name or None
 
     def get_happ_download_link(self, platform: str) -> str | None:
         platform_key = platform.lower()
@@ -4202,6 +4362,16 @@ class Settings(BaseSettings):
 
     def get_ban_system_request_timeout(self) -> int:
         return max(1, self.BAN_SYSTEM_REQUEST_TIMEOUT)
+
+    # bschekbot helpers
+    def is_bschek_enabled(self) -> bool:
+        return bool(self.BSCHEK_ENABLED)
+
+    def is_bschek_configured(self) -> bool:
+        return bool(self.BSCHEK_API_KEY)
+
+    def get_bschek_api_url(self) -> str:
+        return (self.BSCHEK_API_URL or 'https://bsbord.com/v1').rstrip('/')
 
     model_config = {'env_file': '.env', 'env_file_encoding': 'utf-8', 'extra': 'ignore'}
 
