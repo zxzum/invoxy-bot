@@ -28,6 +28,12 @@ from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 from app.utils.cache import RateLimitCache, cache, cache_key
+from app.utils.traffic_topup_limits import (
+    TRAFFIC_TOPUP_MONTHLY_LIMIT_CODE,
+    TRAFFIC_TOPUP_MONTHLY_LIMIT_MESSAGE,
+    TrafficTopupMonthlyLimitExceeded,
+    available_traffic_topup_gb,
+)
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import (
@@ -105,6 +111,7 @@ async def get_traffic_packages(
         if not tariff:
             return []
 
+        available_topup_gb = None
         if scope == 'whitelist':
             if not getattr(tariff, 'whitelist_traffic_topup_enabled', False):
                 return []
@@ -120,11 +127,14 @@ async def get_traffic_packages(
             if tariff.traffic_limit_gb == 0:
                 return []
 
+            available_topup_gb = available_traffic_topup_gb(tariff, subscription.traffic_limit_gb)
             packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
         result = []
 
         for gb, price in packages.items():
             if price <= 0:
+                continue
+            if scope == 'regular' and available_topup_gb is not None and gb > available_topup_gb:
                 continue
             result.append(_package_response(gb, price, is_unlimited=False))
 
@@ -171,7 +181,10 @@ async def purchase_traffic(
             detail='Subscription purchases are restricted for this account',
         )
 
-    from app.database.crud.subscription import add_subscription_traffic
+    from app.database.crud.subscription import (
+        add_subscription_traffic,
+        ensure_traffic_topup_available,
+    )
     from app.database.crud.tariff import get_tariff_by_id
     from app.utils.pricing_utils import calculate_prorated_price
 
@@ -223,16 +236,13 @@ async def purchase_traffic(
                 )
 
             # Проверяем лимит докупки
-            max_topup_limit = getattr(tariff, 'max_topup_traffic_gb', 0) or 0
-            if max_topup_limit > 0:
-                current_traffic = subscription.traffic_limit_gb or 0
-                new_traffic = current_traffic + request.gb
-                if new_traffic > max_topup_limit:
-                    available_gb = max(0, max_topup_limit - current_traffic)
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f'Traffic limit exceeded. Max: {max_topup_limit} GB, available: {available_gb} GB',
-                    )
+            available_gb = available_traffic_topup_gb(tariff, subscription.traffic_limit_gb)
+            if available_gb is not None and request.gb > available_gb:
+                max_topup_limit = getattr(tariff, 'max_topup_traffic_gb', 0) or 0
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f'Traffic limit exceeded. Max: {max_topup_limit} GB, available: {available_gb} GB',
+                )
 
             # Получаем цену из тарифа
             packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
@@ -313,6 +323,17 @@ async def purchase_traffic(
     if traffic_discount_percent < 100 and final_price > 0:
         final_price = max(100, final_price)
 
+    try:
+        await ensure_traffic_topup_available(db, subscription)
+    except TrafficTopupMonthlyLimitExceeded:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                'code': TRAFFIC_TOPUP_MONTHLY_LIMIT_CODE,
+                'message': TRAFFIC_TOPUP_MONTHLY_LIMIT_MESSAGE,
+            },
+        ) from None
+
     # Проверяем баланс
     if final_price > 0 and user.balance_kopeks < final_price:
         missing = final_price - user.balance_kopeks
@@ -364,7 +385,7 @@ async def purchase_traffic(
         traffic_description = f'Докупка {request.gb} ГБ трафика{scope_label}'
 
     # Списываем баланс
-    success = await subtract_user_balance(db, user, final_price, traffic_description)
+    success = await subtract_user_balance(db, user, final_price, traffic_description, commit=False)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -374,10 +395,36 @@ async def purchase_traffic(
     if request.scope == 'whitelist':
         from app.database.crud.subscription import add_whitelist_subscription_traffic
 
-        await add_whitelist_subscription_traffic(db, subscription, request.gb)
+        await create_transaction(
+            db=db,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=final_price,
+            description=traffic_description,
+            commit=False,
+        )
+        await add_whitelist_subscription_traffic(
+            db,
+            subscription,
+            request.gb,
+            enforce_monthly_limit=True,
+        )
     else:
         # Добавляем трафик (add_subscription_traffic обновляет purchased_traffic_gb, traffic_reset_at и коммитит)
-        await add_subscription_traffic(db, subscription, request.gb)
+        await create_transaction(
+            db=db,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=final_price,
+            description=traffic_description,
+            commit=False,
+        )
+        await add_subscription_traffic(
+            db,
+            subscription,
+            request.gb,
+            enforce_monthly_limit=True,
+        )
 
         # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
         from app.database.crud.subscription import reactivate_subscription
@@ -416,15 +463,6 @@ async def purchase_traffic(
                 user_id=user.id,
                 action='create' if _should_create else 'update',
             )
-
-    # Создаём транзакцию
-    await create_transaction(
-        db=db,
-        user_id=user.id,
-        type=TransactionType.SUBSCRIPTION_PAYMENT,
-        amount_kopeks=final_price,
-        description=traffic_description,
-    )
 
     await db.refresh(user)
     await db.refresh(subscription)
@@ -558,6 +596,13 @@ async def save_traffic_cart(
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail='Докупка трафика недоступна на вашем тарифе',
+                )
+
+            available_gb = available_traffic_topup_gb(tariff, subscription.traffic_limit_gb)
+            if available_gb is not None and request.gb > available_gb:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f'Лимит докупки трафика превышен. Доступно: {available_gb} ГБ',
                 )
 
             packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}

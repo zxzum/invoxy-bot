@@ -27,6 +27,10 @@ from app.database.models import (
     WhitelistTrafficUsageSnapshot,
 )
 from app.utils.timezone import format_local_datetime
+from app.utils.traffic_topup_limits import (
+    TrafficTopupMonthlyLimitExceeded,
+    is_current_calendar_month,
+)
 
 
 logger = structlog.get_logger(__name__)
@@ -935,12 +939,29 @@ async def _lock_subscription_row(db: AsyncSession, subscription: Subscription) -
             'traffic_limit_gb',
             'purchased_traffic_gb',
             'traffic_reset_at',
+            'traffic_topup_last_purchased_at',
             'whitelist_traffic_limit_gb',
             'whitelist_traffic_purchased_gb',
             'whitelist_traffic_reset_at',
             'whitelist_traffic_used_bytes',
         ],
     )
+
+
+def _assert_traffic_topup_monthly_limit(subscription: Subscription, *, now: datetime) -> None:
+    if is_current_calendar_month(getattr(subscription, 'traffic_topup_last_purchased_at', None), now=now):
+        raise TrafficTopupMonthlyLimitExceeded
+
+
+async def ensure_traffic_topup_available(
+    db: AsyncSession,
+    subscription: Subscription,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Lock subscription and reject a second paid top-up in this calendar month."""
+    await _lock_subscription_row(db, subscription)
+    _assert_traffic_topup_monthly_limit(subscription, now=now or datetime.now(UTC))
 
 
 async def _housekeep_expired_purchases(
@@ -1616,19 +1637,32 @@ async def extend_subscription(
     return subscription
 
 
-async def add_subscription_traffic(db: AsyncSession, subscription: Subscription, gb: int) -> Subscription:
+async def add_subscription_traffic(
+    db: AsyncSession,
+    subscription: Subscription,
+    gb: int,
+    *,
+    enforce_monthly_limit: bool = False,
+    commit: bool = True,
+) -> Subscription:
     # Lock subscription row — защита от lost-update гонки с housekeeping в extend_subscription
     # (см. _apply_base_limit_preserving_active_purchases / _housekeep_expired_purchases).
     # Без lock'а одновременный renewal + topup могут затереть друг друга.
     await _lock_subscription_row(db, subscription)
 
+    purchase_time = datetime.now(UTC)
+    if enforce_monthly_limit and gb > 0:
+        _assert_traffic_topup_monthly_limit(subscription, now=purchase_time)
+
     subscription.add_traffic(gb)
-    subscription.updated_at = datetime.now(UTC)
+    subscription.updated_at = purchase_time
+    if enforce_monthly_limit and gb > 0:
+        subscription.traffic_topup_last_purchased_at = purchase_time
 
     # Создаём новую запись докупки с индивидуальной датой истечения (30 дней)
     from app.database.models import TrafficPurchase
 
-    new_expires_at = datetime.now(UTC) + timedelta(days=30)
+    new_expires_at = purchase_time + timedelta(days=30)
     new_purchase = TrafficPurchase(subscription_id=subscription.id, traffic_gb=gb, expires_at=new_expires_at)
     db.add(new_purchase)
 
@@ -1655,8 +1689,11 @@ async def add_subscription_traffic(db: AsyncSession, subscription: Subscription,
         # Первая докупка
         subscription.traffic_reset_at = new_expires_at
 
-    await db.commit()
-    await db.refresh(subscription)
+    if commit:
+        await db.commit()
+        await db.refresh(subscription)
+    else:
+        await db.flush()
 
     logger.info(
         '📈 К подписке пользователя добавлено ГБ трафика (истекает )',
@@ -1680,6 +1717,9 @@ async def add_whitelist_subscription_traffic(
     db: AsyncSession,
     subscription: Subscription,
     gb: int,
+    *,
+    enforce_monthly_limit: bool = False,
+    commit: bool = True,
 ) -> Subscription:
     """Add a local WHITELIST package without making a RemnaWave request."""
     if gb <= 0:
@@ -1687,6 +1727,8 @@ async def add_whitelist_subscription_traffic(
 
     now = datetime.now(UTC)
     await housekeep_whitelist_traffic_purchases(db, subscription, now=now)
+    if enforce_monthly_limit:
+        _assert_traffic_topup_monthly_limit(subscription, now=now)
     expires_at = now + timedelta(days=30)
     db.add(
         WhitelistTrafficPurchase(
@@ -1705,9 +1747,14 @@ async def add_whitelist_subscription_traffic(
         expires_at,
         subscription.whitelist_traffic_reset_at or expires_at,
     )
+    if enforce_monthly_limit:
+        subscription.traffic_topup_last_purchased_at = now
     subscription.updated_at = now
-    await db.commit()
-    await db.refresh(subscription)
+    if commit:
+        await db.commit()
+        await db.refresh(subscription)
+    else:
+        await db.flush()
     return subscription
 
 

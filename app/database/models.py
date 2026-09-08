@@ -2497,6 +2497,7 @@ class Subscription(Base):
     traffic_reset_at = Column(
         AwareDateTime(), nullable=True
     )  # Дата сброса докупленного трафика (30 дней после первой докупки)
+    traffic_topup_last_purchased_at = Column(AwareDateTime(), nullable=True)
 
     # Локальный счётчик трафика по WHITELIST-нодам. RemnaWave о нём не знает:
     # штатный лимит панели остаётся в traffic_limit_gb/traffic_used_gb.

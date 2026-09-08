@@ -162,6 +162,44 @@ async def test_traffic_packages_apply_discount_in_tariff_mode(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_traffic_packages_hide_packages_over_tariff_topup_limit(monkeypatch):
+    """Packages above the tariff's remaining top-up capacity are not offered."""
+    settings_cls = type(traffic_route.settings)
+    monkeypatch.setattr(settings_cls, 'is_tariffs_mode', lambda self: True)
+
+    class _FakeTariff:
+        traffic_topup_enabled = True
+        traffic_limit_gb = 200
+        max_topup_traffic_gb = 250
+
+        def get_traffic_topup_packages(self):
+            return {50: 10000, 100: 18000}
+
+    async def _fake_get_tariff(db, tariff_id):
+        return _FakeTariff()
+
+    import app.database.crud.tariff as tariff_crud
+
+    monkeypatch.setattr(tariff_crud, 'get_tariff_by_id', _fake_get_tariff)
+
+    sub = _make_subscription()
+    sub.tariff_id = 5
+
+    async def _fake_resolve(db, user, subscription_id):
+        return sub
+
+    monkeypatch.setattr(traffic_route, 'resolve_subscription', _fake_resolve)
+
+    result = await traffic_route.get_traffic_packages(
+        user=_make_user(traffic_discount_percent=0),
+        db=object(),
+        subscription_id=None,
+    )
+
+    assert [pkg.gb for pkg in result] == [50]
+
+
+@pytest.mark.asyncio
 async def test_traffic_packages_floor_displayed_price_at_one_ruble(monkeypatch):
     """An extreme discount never displays below 1₽ — matching POST's max(100,...) floor."""
     settings_cls = type(traffic_route.settings)

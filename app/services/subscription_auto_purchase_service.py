@@ -58,6 +58,10 @@ from app.services.user_cart_service import user_cart_service
 from app.utils.formatters import format_days_declension
 from app.utils.pricing_utils import format_period_description
 from app.utils.timezone import format_email_datetime, format_local_datetime
+from app.utils.traffic_topup_limits import (
+    TrafficTopupMonthlyLimitExceeded,
+    available_traffic_topup_gb,
+)
 
 
 logger = structlog.get_logger(__name__)
@@ -1904,6 +1908,7 @@ async def _auto_add_traffic(
     from app.database.crud.subscription import (
         add_subscription_traffic,
         add_whitelist_subscription_traffic,
+        ensure_traffic_topup_available,
         get_subscription_by_user_id,
     )
     from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
@@ -2001,6 +2006,17 @@ async def _auto_add_traffic(
 
     # Lock user BEFORE price computation to prevent TOCTOU on promo-offer/group discount
     user = await lock_user_for_pricing(db, user.id)
+    try:
+        await ensure_traffic_topup_available(db, subscription)
+    except TrafficTopupMonthlyLimitExceeded:
+        logger.info(
+            'Автопокупка трафика: месячный лимит уже использован, корзина удалена',
+            format_user_id=_format_user_id(user),
+            subscription_id=subscription.id,
+        )
+        await _delete_cart_for_subscription(user.id, cart_data)
+        await db.rollback()
+        return False
 
     # Recompute base price from tariff/settings (config may have changed since cart was saved)
     tariff = None
@@ -2027,6 +2043,16 @@ async def _auto_add_traffic(
             return False
         base_price = tariff.get_whitelist_traffic_topup_packages().get(traffic_gb, 0)
     elif tariff and tariff.can_topup_traffic():
+        available_gb = available_traffic_topup_gb(tariff, subscription.traffic_limit_gb)
+        if available_gb is not None and traffic_gb > available_gb:
+            logger.warning(
+                'Автопокупка трафика: превышен лимит докупки, корзина удалена',
+                format_user_id=_format_user_id(user),
+                traffic_gb=traffic_gb,
+                available_gb=available_gb,
+            )
+            await _delete_cart_for_subscription(user.id, cart_data)
+            return False
         base_price = tariff.get_traffic_topup_price(traffic_gb) or 0
     else:
         base_price = settings.get_traffic_topup_price(traffic_gb)
@@ -2093,6 +2119,7 @@ async def _auto_add_traffic(
             create_transaction=True,
             payment_method=PaymentMethod.BALANCE,
             transaction_type=TransactionType.SUBSCRIPTION_PAYMENT,
+            commit=False,
         )
         if not success:
             logger.warning(
@@ -2114,11 +2141,19 @@ async def _auto_add_traffic(
     ) or 0
     try:
         if is_whitelist:
-            await add_whitelist_subscription_traffic(db, subscription, traffic_gb)
+            await add_whitelist_subscription_traffic(
+                db,
+                subscription,
+                traffic_gb,
+                enforce_monthly_limit=True,
+            )
         else:
-            await add_subscription_traffic(db, subscription, traffic_gb)
-        await db.commit()
-        await db.refresh(subscription)
+            await add_subscription_traffic(
+                db,
+                subscription,
+                traffic_gb,
+                enforce_monthly_limit=True,
+            )
     except Exception as error:
         logger.error(
             '❌ Автопокупка трафика: ошибка добавления трафика пользователю',
@@ -2127,30 +2162,6 @@ async def _auto_add_traffic(
             exc_info=True,
         )
         await db.rollback()
-        # Compensating refund: balance was already committed by subtract_user_balance
-        try:
-            from app.database.crud.user import add_user_balance
-
-            await add_user_balance(
-                db,
-                user,
-                price_kopeks,
-                'Возврат: ошибка автопокупки трафика',
-                create_transaction=True,
-                transaction_type=TransactionType.REFUND,
-            )
-            logger.info(
-                '💰 Автопокупка трафика: возврат средств после ошибки добавления трафика',
-                format_user_id=_format_user_id(user),
-                refund_kopeks=price_kopeks,
-            )
-        except Exception as refund_error:
-            logger.critical(
-                'CRITICAL: Автопокупка трафика: не удалось вернуть средства',
-                format_user_id=_format_user_id(user),
-                price_kopeks=price_kopeks,
-                refund_error=refund_error,
-            )
         return False
 
     if not is_whitelist:
