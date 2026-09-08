@@ -111,6 +111,21 @@ async def test_traffic_packages_no_discount_when_group_has_none(classic_mode):
 
 
 @pytest.mark.asyncio
+async def test_traffic_packages_expose_monthly_lock(classic_mode, monkeypatch):
+    async def _fake_resolve(db, user, subscription_id):
+        subscription = _make_subscription()
+        subscription.traffic_topup_last_purchased_at = datetime.now(UTC)
+        return subscription
+
+    monkeypatch.setattr(traffic_route, 'resolve_subscription', _fake_resolve)
+    result = await traffic_route.get_traffic_packages(
+        user=_make_user(traffic_discount_percent=0), db=object(), subscription_id=None
+    )
+    assert all(not package.is_available for package in result)
+    assert all(package.next_available_at is not None for package in result)
+
+
+@pytest.mark.asyncio
 async def test_traffic_packages_respect_apply_discounts_to_addons_flag(classic_mode):
     """When the promo group opts out of addon discounts, traffic stays full price."""
     user = _make_user(traffic_discount_percent=30, apply_to_addons=False)

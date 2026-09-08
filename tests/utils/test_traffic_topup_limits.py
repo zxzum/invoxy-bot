@@ -8,6 +8,7 @@ from app.utils import traffic_topup_limits
 from app.utils.traffic_topup_limits import (
     TrafficTopupMonthlyLimitExceeded,
     is_current_calendar_month,
+    next_traffic_topup_at,
 )
 
 
@@ -21,6 +22,19 @@ def test_calendar_month_limit_resets_on_the_first_day(monkeypatch) -> None:
         datetime(2026, 9, 30, 20, 59, tzinfo=UTC),
         now=datetime(2026, 9, 30, 21, 0, tzinfo=UTC),
     ) is False
+
+
+def test_next_topup_is_first_day_of_next_local_month(monkeypatch) -> None:
+    monkeypatch.setattr(
+        traffic_topup_limits,
+        'get_local_timezone',
+        lambda: timezone(timedelta(hours=3)),
+    )
+    result = next_traffic_topup_at(
+        datetime(2026, 9, 1, tzinfo=UTC),
+        now=datetime(2026, 9, 9, 12, tzinfo=UTC),
+    )
+    assert result == datetime(2026, 9, 30, 21, tzinfo=UTC)
 
 
 @pytest.mark.asyncio

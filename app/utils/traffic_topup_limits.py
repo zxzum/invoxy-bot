@@ -37,6 +37,15 @@ def is_current_calendar_month(value: datetime | None, *, now: datetime | None = 
     return (value_local.year, value_local.month) == (current_local.year, current_local.month)
 
 
+def next_traffic_topup_at(value: datetime | None, *, now: datetime | None = None) -> datetime | None:
+    """Return the next local calendar-month boundary when a top-up is blocked."""
+    if not is_current_calendar_month(value, now=now):
+        return None
+    current = (now or datetime.now(UTC)).astimezone(get_local_timezone())
+    year, month = (current.year + 1, 1) if current.month == 12 else (current.year, current.month + 1)
+    return datetime(year, month, 1, tzinfo=get_local_timezone()).astimezone(UTC)
+
+
 def available_traffic_topup_gb(tariff: object, current_traffic_gb: int | None) -> int | None:
     """Return remaining tariff top-up capacity; ``None`` means unlimited."""
     maximum = int(getattr(tariff, 'max_topup_traffic_gb', 0) or 0)

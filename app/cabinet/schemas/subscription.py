@@ -126,6 +126,9 @@ class TrafficPackageResponse(BaseModel):
     discount_percent: int = 0
     base_price_kopeks: int | None = None
     discount_kopeks: int | None = None
+    is_available: bool = True
+    unavailable_reason: str | None = None
+    next_available_at: datetime | None = None
 
 
 class TrafficPurchaseRequest(BaseModel):

@@ -36,6 +36,7 @@ from app.utils.traffic_topup_limits import (
     TRAFFIC_TOPUP_MONTHLY_LIMIT_MESSAGE,
     TrafficTopupMonthlyLimitExceeded,
     available_traffic_topup_gb,
+    next_traffic_topup_at,
 )
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
@@ -83,6 +84,13 @@ async def get_traffic_packages(
     else:
         period_hint_days = 30
 
+    last_purchased_at = (
+        subscription.whitelist_traffic_topup_last_purchased_at
+        if scope == 'whitelist'
+        else subscription.traffic_topup_last_purchased_at
+    )
+    next_available_at = next_traffic_topup_at(last_purchased_at)
+
     def _package_response(gb: int, base_price_kopeks: int, is_unlimited: bool) -> TrafficPackageResponse:
         """Build a package response with the promo-group traffic discount applied.
 
@@ -106,6 +114,9 @@ async def get_traffic_packages(
             discount_percent=percent,
             base_price_kopeks=base_price_kopeks if has_discount else None,
             discount_kopeks=(base_price_kopeks - final_price) if has_discount else None,
+            is_available=next_available_at is None,
+            unavailable_reason=(TRAFFIC_TOPUP_MONTHLY_LIMIT_MESSAGE if next_available_at else None),
+            next_available_at=next_available_at,
         )
 
     # Режим тарифов - берём пакеты из тарифа
