@@ -34,6 +34,9 @@ from app.database.crud.user_device_alias import (
     set_alias,
 )
 from app.database.models import Subscription, TransactionType, User
+from app.services.cabinet_purchase_notification_service import (
+    notify_telegram_user_about_cabinet_purchase,
+)
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 
@@ -51,6 +54,28 @@ logger = structlog.get_logger(__name__)
 REMNAWAVE_SYNC_TIMEOUT = 10.0
 
 router = APIRouter()
+
+
+async def _notify_device_purchase_user(user: User, added: int, new_limit: int, price: int) -> None:
+    from app.localization.loader import get_texts
+
+    texts = get_texts(getattr(user, 'language', 'ru'))
+    await notify_telegram_user_about_cabinet_purchase(
+        user,
+        texts.t(
+            'CABINET_DEVICES_PURCHASE_SUCCESS',
+            (
+                '✅ <b>Устройства успешно добавлены!</b>\n\n'
+                '📱 Добавлено: {added}\n'
+                '📊 Новый лимит: {new_limit}\n'
+                '💰 Списано: {price}'
+            ),
+        ).format(
+            added=added,
+            new_limit=new_limit,
+            price=texts.format_price(price),
+        ),
+    )
 
 
 def _resolve_panel_user_id(subscription: Subscription | None, user: User) -> int | None:
@@ -318,6 +343,8 @@ async def purchase_devices_legacy(
                 await bot.session.close()
     except Exception as e:
         logger.error('Failed to send admin notification for device purchase', error=e)
+
+    await _notify_device_purchase_user(user, request.devices, actual_new, total_price)
 
     response: dict[str, Any] = {
         'message': 'Devices added successfully',
@@ -609,6 +636,13 @@ async def purchase_devices(
                     await bot.session.close()
         except Exception as e:
             logger.error('Failed to send admin notification for device purchase', error=e)
+
+        await _notify_device_purchase_user(
+            user,
+            request.devices,
+            subscription.device_limit,
+            price_kopeks,
+        )
 
         # Yandex.Metrika offline conversion (#558449).
         try:

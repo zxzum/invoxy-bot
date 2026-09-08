@@ -23,6 +23,9 @@ from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import TransactionType, User
+from app.services.cabinet_purchase_notification_service import (
+    notify_telegram_user_about_cabinet_purchase,
+)
 from app.services.pricing_engine import pricing_engine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
@@ -324,7 +327,7 @@ async def purchase_traffic(
         final_price = max(100, final_price)
 
     try:
-        await ensure_traffic_topup_available(db, subscription)
+        await ensure_traffic_topup_available(db, subscription, scope=request.scope)
     except TrafficTopupMonthlyLimitExceeded:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -476,21 +479,55 @@ async def purchase_traffic(
             bot = create_bot()
             try:
                 notification_service = AdminNotificationService(bot)
-                if request.scope == 'regular':
-                    old_traffic = subscription.traffic_limit_gb - request.gb
-                    await notification_service.send_subscription_update_notification(
-                        db=db,
-                        user=user,
-                        subscription=subscription,
-                        update_type='traffic',
-                        old_value=old_traffic,
-                        new_value=subscription.traffic_limit_gb,
-                        price_paid=final_price,
-                    )
+                new_traffic = (
+                    subscription.whitelist_traffic_limit_gb
+                    if request.scope == 'whitelist'
+                    else subscription.traffic_limit_gb
+                )
+                await notification_service.send_subscription_update_notification(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                    update_type='traffic',
+                    old_value=new_traffic - request.gb,
+                    new_value=new_traffic,
+                    price_paid=final_price,
+                )
             finally:
                 await bot.session.close()
     except Exception as e:
         logger.error('Failed to send admin notification for traffic purchase', error=e)
+
+    from app.localization.loader import get_texts
+
+    texts = get_texts(getattr(user, 'language', 'ru'))
+    traffic_kind = (
+        texts.t('WHITE_INTERNET', 'Белый интернет')
+        if request.scope == 'whitelist'
+        else texts.t('MAIN_TRAFFIC', 'Основной трафик')
+    )
+    await notify_telegram_user_about_cabinet_purchase(
+        user,
+        texts.t(
+            'CABINET_TRAFFIC_PURCHASE_SUCCESS',
+            (
+                '✅ <b>Трафик успешно добавлен!</b>\n\n'
+                '📊 Тип: {traffic_kind}\n'
+                '📈 Добавлено: {traffic_gb} ГБ\n'
+                '📊 Новый лимит: {new_limit} ГБ\n'
+                '💰 Списано: {price}'
+            ),
+        ).format(
+            traffic_kind=traffic_kind,
+            traffic_gb=request.gb,
+            new_limit=(
+                subscription.whitelist_traffic_limit_gb
+                if request.scope == 'whitelist'
+                else subscription.traffic_limit_gb
+            ),
+            price=texts.format_price(final_price),
+        ),
+    )
 
     # Yandex.Metrika offline conversion (#558449).
     try:

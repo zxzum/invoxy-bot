@@ -2007,7 +2007,11 @@ async def _auto_add_traffic(
     # Lock user BEFORE price computation to prevent TOCTOU on promo-offer/group discount
     user = await lock_user_for_pricing(db, user.id)
     try:
-        await ensure_traffic_topup_available(db, subscription)
+        await ensure_traffic_topup_available(
+            db,
+            subscription,
+            scope='whitelist' if is_whitelist else 'regular',
+        )
     except TrafficTopupMonthlyLimitExceeded:
         logger.info(
             'Автопокупка трафика: месячный лимит уже использован, корзина удалена',

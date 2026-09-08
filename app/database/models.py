@@ -2505,6 +2505,7 @@ class Subscription(Base):
     whitelist_traffic_used_bytes = Column(BigInteger, default=0, nullable=False)
     whitelist_traffic_purchased_gb = Column(Integer, default=0, nullable=False)
     whitelist_traffic_reset_at = Column(AwareDateTime(), nullable=True)
+    whitelist_traffic_topup_last_purchased_at = Column(AwareDateTime(), nullable=True)
 
     subscription_url = Column(String, nullable=True)
     subscription_crypto_link = Column(String, nullable=True)

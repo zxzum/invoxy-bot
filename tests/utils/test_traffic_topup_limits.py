@@ -39,3 +39,33 @@ async def test_monthly_limit_is_checked_after_subscription_lock(monkeypatch) -> 
         await subscription_crud.ensure_traffic_topup_available(object(), subscription)
 
     assert calls == ['locked']
+
+
+@pytest.mark.asyncio
+async def test_regular_and_whitelist_monthly_limits_are_independent(monkeypatch) -> None:
+    now = datetime.now(UTC)
+    subscription = SimpleNamespace(
+        traffic_topup_last_purchased_at=now,
+        whitelist_traffic_topup_last_purchased_at=None,
+    )
+
+    async def lock(_db, _subscription) -> None:
+        return None
+
+    monkeypatch.setattr(subscription_crud, '_lock_subscription_row', lock)
+
+    await subscription_crud.ensure_traffic_topup_available(
+        object(),
+        subscription,
+        now=now,
+        scope='whitelist',
+    )
+
+    subscription.traffic_topup_last_purchased_at = None
+    subscription.whitelist_traffic_topup_last_purchased_at = now
+    await subscription_crud.ensure_traffic_topup_available(
+        object(),
+        subscription,
+        now=now,
+        scope='regular',
+    )

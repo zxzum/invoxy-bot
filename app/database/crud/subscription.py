@@ -943,13 +943,24 @@ async def _lock_subscription_row(db: AsyncSession, subscription: Subscription) -
             'whitelist_traffic_limit_gb',
             'whitelist_traffic_purchased_gb',
             'whitelist_traffic_reset_at',
+            'whitelist_traffic_topup_last_purchased_at',
             'whitelist_traffic_used_bytes',
         ],
     )
 
 
-def _assert_traffic_topup_monthly_limit(subscription: Subscription, *, now: datetime) -> None:
-    if is_current_calendar_month(getattr(subscription, 'traffic_topup_last_purchased_at', None), now=now):
+def _assert_traffic_topup_monthly_limit(
+    subscription: Subscription,
+    *,
+    now: datetime,
+    scope: str = 'regular',
+) -> None:
+    field = (
+        'whitelist_traffic_topup_last_purchased_at'
+        if scope == 'whitelist'
+        else 'traffic_topup_last_purchased_at'
+    )
+    if is_current_calendar_month(getattr(subscription, field, None), now=now):
         raise TrafficTopupMonthlyLimitExceeded
 
 
@@ -958,10 +969,15 @@ async def ensure_traffic_topup_available(
     subscription: Subscription,
     *,
     now: datetime | None = None,
+    scope: str = 'regular',
 ) -> None:
     """Lock subscription and reject a second paid top-up in this calendar month."""
     await _lock_subscription_row(db, subscription)
-    _assert_traffic_topup_monthly_limit(subscription, now=now or datetime.now(UTC))
+    _assert_traffic_topup_monthly_limit(
+        subscription,
+        now=now or datetime.now(UTC),
+        scope=scope,
+    )
 
 
 async def _housekeep_expired_purchases(
@@ -1728,7 +1744,7 @@ async def add_whitelist_subscription_traffic(
     now = datetime.now(UTC)
     await housekeep_whitelist_traffic_purchases(db, subscription, now=now)
     if enforce_monthly_limit:
-        _assert_traffic_topup_monthly_limit(subscription, now=now)
+        _assert_traffic_topup_monthly_limit(subscription, now=now, scope='whitelist')
     expires_at = now + timedelta(days=30)
     db.add(
         WhitelistTrafficPurchase(
@@ -1748,7 +1764,7 @@ async def add_whitelist_subscription_traffic(
         subscription.whitelist_traffic_reset_at or expires_at,
     )
     if enforce_monthly_limit:
-        subscription.traffic_topup_last_purchased_at = now
+        subscription.whitelist_traffic_topup_last_purchased_at = now
     subscription.updated_at = now
     if commit:
         await db.commit()

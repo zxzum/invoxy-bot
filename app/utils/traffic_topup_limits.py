@@ -9,7 +9,7 @@ from app.utils.timezone import get_local_timezone
 
 TRAFFIC_TOPUP_MONTHLY_LIMIT_CODE = 'traffic_topup_monthly_limit'
 TRAFFIC_TOPUP_MONTHLY_LIMIT_MESSAGE = (
-    'Можно купить только один пакет трафика на подписку в календарный месяц'
+    'Можно купить только один пакет этого типа трафика на подписку в календарный месяц'
 )
 
 

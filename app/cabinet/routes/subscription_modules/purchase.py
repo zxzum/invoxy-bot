@@ -37,6 +37,9 @@ from app.database.crud.transaction import create_transaction
 from app.database.crud.user import add_user_balance, get_user_by_id, subtract_user_balance
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, Subscription, Tariff, Transaction, TransactionType, User
+from app.services.cabinet_purchase_notification_service import (
+    notify_telegram_user_about_cabinet_purchase,
+)
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
@@ -575,6 +578,25 @@ async def submit_purchase(
                     await bot.session.close()
         except Exception as e:
             logger.error('Failed to send admin notification for subscription purchase', error=e)
+
+        if user.telegram_id:
+            from app.localization.loader import get_texts
+
+            texts = get_texts(getattr(user, 'language', 'ru'))
+            await notify_telegram_user_about_cabinet_purchase(
+                user,
+                texts.t(
+                    'CABINET_SUBSCRIPTION_PURCHASE_SUCCESS',
+                    (
+                        '✅ <b>Подписка успешно оформлена!</b>\n\n'
+                        '📅 Действует до: {expires_at}\n'
+                        '💰 Списано: {price}'
+                    ),
+                ).format(
+                    expires_at=subscription.end_date.strftime('%d.%m.%Y'),
+                    price=texts.format_price(pricing.final_total),
+                ),
+            )
 
         # Refresh expired objects after db.commit() in _record_subscription_event
         await db.refresh(subscription)
@@ -1351,6 +1373,27 @@ async def purchase_tariff(
                     await bot.session.close()
         except Exception as e:
             logger.error('Failed to send admin notification for tariff purchase', error=e)
+
+        if user.telegram_id:
+            from app.localization.loader import get_texts
+
+            texts = get_texts(getattr(user, 'language', 'ru'))
+            await notify_telegram_user_about_cabinet_purchase(
+                user,
+                texts.t(
+                    'CABINET_TARIFF_PURCHASE_SUCCESS',
+                    (
+                        '✅ <b>Тариф успешно куплен!</b>\n\n'
+                        '🏷️ Тариф: <b>{name}</b>\n'
+                        '📅 Действует до: {expires_at}\n'
+                        '💰 Списано: {price}'
+                    ),
+                ).format(
+                    name=tariff.name,
+                    expires_at=subscription.end_date.strftime('%d.%m.%Y'),
+                    price=texts.format_price(price_kopeks),
+                ),
+            )
 
         return response
 
