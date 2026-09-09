@@ -54,7 +54,7 @@ TELEGRAM_OIDC_CLIENT_ID_KEY = 'TELEGRAM_OIDC_CLIENT_ID'
 # Default animation config
 DEFAULT_ANIMATION_CONFIG = {
     'enabled': True,
-    'type': 'aurora',
+    'type': 'liquid-gradient',
     'settings': {},
     'opacity': 1.0,
     'blur': 0,
