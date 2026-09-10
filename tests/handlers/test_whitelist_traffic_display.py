@@ -35,7 +35,7 @@ def test_format_whitelist_traffic_uses_bytes_and_text_bar() -> None:
 def test_multi_subscription_line_displays_whitelist_quota() -> None:
     text = _format_subscription_line(_subscription(), 1)
 
-    assert '🔐 <b>Белый интернет: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in text
+    assert '🔐 <b>LTE сервера: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in text
 
 
 @pytest.mark.anyio('asyncio')
@@ -54,4 +54,4 @@ async def test_single_subscription_detail_displays_whitelist_quota(monkeypatch: 
     await show_subscription_detail(callback, db_user, SimpleNamespace(), state)
 
     text = callback.message.edit_text.await_args.args[0]
-    assert '🔐 <b>Белый интернет: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in text
+    assert '🔐 <b>LTE сервера: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in text

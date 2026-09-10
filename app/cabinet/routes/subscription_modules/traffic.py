@@ -231,7 +231,7 @@ async def purchase_traffic(
             if (getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0) <= 0:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Белый интернет не входит в этот тариф',
+                    detail='LTE не входит в этот тариф',
                 )
             packages = tariff.get_whitelist_traffic_topup_packages()
         else:
@@ -275,7 +275,7 @@ async def purchase_traffic(
     elif request.scope == 'whitelist':
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Белый интернет доступен только с тарифом',
+            detail='LTE доступен только с тарифом',
         )
     else:
         # Classic режим
@@ -513,7 +513,7 @@ async def purchase_traffic(
 
     texts = get_texts(getattr(user, 'language', 'ru'))
     traffic_kind = (
-        texts.t('WHITE_INTERNET', 'Белый интернет')
+        texts.t('WHITE_INTERNET', 'LTE')
         if request.scope == 'whitelist'
         else texts.t('MAIN_TRAFFIC', 'Основной трафик')
     )
@@ -616,7 +616,7 @@ async def save_traffic_cart(
     if request.scope == 'whitelist' and not is_tariff_mode:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Белый интернет доступен только с тарифом',
+            detail='LTE доступен только с тарифом',
         )
 
     if is_tariff_mode:
@@ -636,7 +636,7 @@ async def save_traffic_cart(
             if (getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0) <= 0:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Белый интернет не входит в ваш тариф',
+                    detail='LTE не входит в ваш тариф',
                 )
             packages = tariff.get_whitelist_traffic_topup_packages()
         else:
@@ -731,7 +731,7 @@ async def switch_traffic_package(
     if request.scope == 'whitelist':
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Белый интернет покупается отдельным пакетом',
+            detail='LTE покупается отдельным пакетом',
         )
 
     subscription = await resolve_subscription(db, user, subscription_id)

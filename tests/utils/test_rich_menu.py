@@ -791,7 +791,7 @@ async def test_whitelist_quota_displayed_in_single_mode(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(_make_user(subscription), DummyTexts(), AsyncMock())
 
-    assert '<b>🔐 Белый интернет: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in html_out
+    assert '<b>🔐 LTE сервера: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in html_out
 
 
 async def test_usage_row_in_multi_tariff_table(monkeypatch):
@@ -830,7 +830,7 @@ async def test_whitelist_quota_displayed_in_multi_tariff_table(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(_make_user(subscription), DummyTexts(), AsyncMock())
 
-    assert '<b>🔐 Белый интернет: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in html_out
+    assert '<b>🔐 LTE сервера: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in html_out
 
 
 async def test_send_passes_message_effect(monkeypatch):

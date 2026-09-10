@@ -89,8 +89,8 @@ async def test_production_seed_uses_scoped_package_prices_and_exact_device_caps(
     monkeypatch.setattr(bootstrap, 'upsert_system_setting', AsyncMock())
     tariffs = [
         Tariff(id=1, name='Стандарт 🛡️'),
-        Tariff(id=2, name='Стандарт 🌐 Белый интернет'),
-        Tariff(id=3, name='Премиум 💎 Белый интернет'),
+        Tariff(id=2, name='Стандарт 🌐 LTE'),
+        Tariff(id=3, name='Премиум 💎 LTE'),
         Tariff(id=4, name='Пробный период'),
     ]
     db = _BootstrapDb(tariffs)
@@ -100,8 +100,8 @@ async def test_production_seed_uses_scoped_package_prices_and_exact_device_caps(
 
     by_name = {tariff.name: tariff for tariff in tariffs}
     basic = by_name['Стандарт 🛡️']
-    standard_white = by_name['Стандарт 🌐 Белый интернет']
-    premium_white = by_name['Премиум 💎 Белый интернет']
+    standard_white = by_name['Стандарт 🌐 LTE']
+    premium_white = by_name['Премиум 💎 LTE']
     trial = by_name['Пробный период']
 
     assert basic.get_traffic_topup_packages() == {100: 5000, 300: 15000}

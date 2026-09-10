@@ -718,7 +718,7 @@ class BotConfigurationService:
             'dependencies': 'GRACE_ACCESS_EXPIRED_SQUAD_UUID, GRACE_ACCESS_LIMITED_SQUAD_UUID, GRACE_ACCESS_TRAFFIC_GB',
         },
         'WHITELIST_SQUAD_UUID': {
-            'description': 'Сквад RemnaWave, трафик которого учитывается как Белый интернет.',
+            'description': 'Сквад RemnaWave, трафик которого учитывается как LTE.',
             'format': 'UUID внутреннего сквада из панели RemnaWave.',
             'example': '3fa85f64-5717-4562-b3fc-2c963f66afa6',
             'warning': 'После изменения перезапустите бота; сквад должен быть разрешён в тарифах Белого интернета.',

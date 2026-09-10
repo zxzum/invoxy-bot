@@ -78,7 +78,7 @@ def _format_subscription_line(sub, idx: int) -> str:
     parts = [f'{emoji} <b>{idx}. {tariff_name}</b>{label}']
     parts.append(f'   📊 Трафик: {traffic}')
     if whitelist_traffic:
-        parts.append(f'   🔐 <b>Белый интернет: {html.escape(whitelist_traffic)}</b>')
+        parts.append(f'   🔐 <b>LTE сервера: {html.escape(whitelist_traffic)}</b>')
     if devices:
         parts.append(f'   📱 Устройства: {devices}')
     parts.append(f'   📅 До: {end_date}')
@@ -248,7 +248,7 @@ async def show_subscription_detail(
         getattr(subscription, 'whitelist_traffic_limit_gb', 0),
     )
     whitelist_line = (
-        f'🔐 <b>Белый интернет: {html.escape(whitelist_traffic)}</b>\n' if whitelist_traffic else ''
+        f'🔐 <b>LTE сервера: {html.escape(whitelist_traffic)}</b>\n' if whitelist_traffic else ''
     )
 
     end_date = subscription.end_date.strftime('%d.%m.%Y %H:%M') if subscription.end_date else '—'

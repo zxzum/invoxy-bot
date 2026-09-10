@@ -425,7 +425,7 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
                 getattr(subscription, 'whitelist_traffic_limit_gb', 0),
             )
             if whitelist_traffic:
-                usage_parts.append(f'<b>🔐 Белый интернет: {html.escape(whitelist_traffic)}</b>')
+                usage_parts.append(f'<b>🔐 LTE сервера: {html.escape(whitelist_traffic)}</b>')
             device_limit = getattr(subscription, 'device_limit', None)
             if device_limit is not None:
                 # 0 — безлимит (HWID выключен), а не «нет устройств»: строку не прячем
@@ -493,7 +493,7 @@ async def _build_single_subscription_block(user: User, texts, db: AsyncSession) 
             getattr(subscription, 'whitelist_traffic_limit_gb', 0),
         )
         if whitelist_traffic:
-            lines.append(f'<b>🔐 Белый интернет: {html.escape(whitelist_traffic)}</b>')
+            lines.append(f'<b>🔐 LTE сервера: {html.escape(whitelist_traffic)}</b>')
         device_limit = getattr(subscription, 'device_limit', None)
         if device_limit is not None:
             devices_template = texts.t('MAIN_MENU_RICH_DEVICES', '📱 Устройства: {devices}')
