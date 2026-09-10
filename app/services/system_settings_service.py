@@ -377,6 +377,7 @@ class BotConfigurationService:
         'ADMIN_NOTIFICATIONS_ERRORS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_PROMO_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_PARTNERS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_NEW_USERS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_REPORTS_ENABLED': 'ADMIN_REPORTS',
         'ADMIN_REPORTS_CHAT_ID': 'ADMIN_REPORTS',
         'ADMIN_REPORTS_TOPIC_ID': 'ADMIN_REPORTS',
@@ -467,6 +468,7 @@ class BotConfigurationService:
         'RECURRENT_PAYMENTS_DISPLAY_MODE': 'INFO_PAGES',
         'SERVICE_RULES_DISPLAY_MODE': 'INFO_PAGES',
         'FAQ_DISPLAY_MODE': 'INFO_PAGES',
+        'LEGAL_DOCS_COMPACT_MODE': 'INFO_PAGES',
     }
 
     CATEGORY_PREFIX_OVERRIDES: dict[str, str] = {
@@ -875,6 +877,27 @@ class BotConfigurationService:
             'example': '-1001234567890',
             'warning': 'Бот должен состоять в чате и иметь право отправлять сообщения.',
             'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED',
+        },
+        'ADMIN_NOTIFICATIONS_NEW_USERS_TOPIC_ID': {
+            'description': 'Топик админ-чата для уведомлений о регистрации новых клиентов (бот и кабинет).',
+            'format': 'Числовой ID топика (message_thread_id) супергруппы с включёнными темами.',
+            'example': '42',
+            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED, ADMIN_NOTIFICATIONS_CHAT_ID',
+        },
+        'ADMIN_NOTIFICATIONS_NEW_USERS_ENABLED': {
+            'description': 'Включает уведомления о регистрации новых клиентов в админ-чат.',
+            'format': 'Булево значение.',
+            'example': 'true',
+            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED',
+        },
+        'LEGAL_DOCS_COMPACT_MODE': {
+            'description': (
+                'Компактный показ оферты и политики при регистрации в боте: приветствие и '
+                'ссылочные кнопки на документы в кабинете вместо полного текста.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'false',
+            'warning': 'Требует корректный CABINET_URL: кнопки ведут на {CABINET_URL}/offer и /privacy.',
         },
         'TRAFFIC_PACKAGES_CONFIG': {
             'description': 'Глобальные пакеты докупки обычного VPN-трафика.',

@@ -38,6 +38,7 @@ from app.database.crud.user import (
 )
 from app.database.models import CabinetRefreshToken, User, UserStatus
 from app.services import legal_consent_service
+from app.services.admin_notification_service import notify_new_client_created
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
 from app.services.rbac_bootstrap_service import (
@@ -795,6 +796,9 @@ async def auth_telegram(
     user.cabinet_last_login = datetime.now(UTC)
     await db.commit()
 
+    if is_new_user:
+        await notify_new_client_created(db, user, source='Кабинет (Telegram)')
+
     response = await _create_auth_response(user, db)
 
     # Store refresh token
@@ -967,6 +971,9 @@ async def auth_telegram_widget(
 
     user.cabinet_last_login = datetime.now(UTC)
     await db.commit()
+
+    if is_new_user:
+        await notify_new_client_created(db, user, source='Кабинет (Telegram)')
 
     response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, response.refresh_token)
@@ -1154,6 +1161,9 @@ async def auth_telegram_oidc(
 
     user.cabinet_last_login = datetime.now(UTC)
     await db.commit()
+
+    if is_new_user:
+        await notify_new_client_created(db, user, source='Кабинет (Telegram)')
 
     response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, response.refresh_token)
@@ -1567,6 +1577,7 @@ async def register_email_standalone(
     await legal_consent_service.record_consent(
         db, user, consent_documents, source='cabinet_email', ip_address=client_ip
     )
+    await notify_new_client_created(db, user, source='Кабинет (Email)')
 
     # Сохранить campaign_slug для обработки при верификации email
     if request.campaign_slug:

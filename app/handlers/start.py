@@ -44,7 +44,7 @@ from app.middlewares.channel_checker import (
     delete_pending_payload_from_redis,
     get_pending_payload_from_redis,
 )
-from app.services.admin_notification_service import AdminNotificationService
+from app.services.admin_notification_service import AdminNotificationService, notify_new_client_created
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.channel_subscription_service import channel_subscription_service
 from app.services.coupon_service import (
@@ -1060,8 +1060,7 @@ async def handle_potential_referral_code(message: types.Message, state: FSMConte
             language = data.get('language', DEFAULT_LANGUAGE)
             texts = get_texts(language)
 
-            rules_text = await get_rules(language)
-            await answer_long_text(message, rules_text, reply_markup=get_rules_keyboard(language))
+            await _send_rules_prompt(message, language)
             await state.set_state(RegistrationStates.waiting_for_rules_accept)
             logger.info('📋 Правила отправлены после ввода реферального кода')
         else:
@@ -1095,8 +1094,7 @@ async def handle_potential_referral_code(message: types.Message, state: FSMConte
             language = data.get('language', DEFAULT_LANGUAGE)
             texts = get_texts(language)
 
-            rules_text = await get_rules(language)
-            await answer_long_text(message, rules_text, reply_markup=get_rules_keyboard(language))
+            await _send_rules_prompt(message, language)
             await state.set_state(RegistrationStates.waiting_for_rules_accept)
             logger.info('📋 Правила отправлены после принятия промокода')
         else:
@@ -1183,9 +1181,8 @@ async def _continue_registration_after_language(
                 await _complete_registration_wrapper()
         return
 
-    rules_text = await get_rules(language)
     try:
-        await answer_long_text(target_message, rules_text, reply_markup=get_rules_keyboard(language))
+        await _send_rules_prompt(target_message, language)
     except TelegramForbiddenError:
         logger.warning(
             '⚠️ Пользователь заблокировал бота, пропускаем отправку правил',
@@ -1876,6 +1873,54 @@ async def process_language_selection(
     )
 
 
+def _legal_docs_compact_enabled() -> bool:
+    base = (settings.CABINET_URL or '').strip()
+    return bool(settings.LEGAL_DOCS_COMPACT_MODE and base and 'example.com' not in base)
+
+
+def _get_compact_legal_keyboard(language: str) -> types.InlineKeyboardMarkup:
+    texts = get_texts(language)
+    base = settings.CABINET_URL.rstrip('/')
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('LEGAL_OFFER_BUTTON', '📄 Публичная оферта'),
+                    url=f'{base}/offer',
+                ),
+                types.InlineKeyboardButton(
+                    text=texts.t('LEGAL_PRIVACY_BUTTON', '🔒 Политика конфиденциальности'),
+                    url=f'{base}/privacy',
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('LEGAL_ACCEPT_ALL_BUTTON', '✅ Я прочитал(а) и принимаю'),
+                    callback_data='rules_accept',
+                )
+            ],
+            [types.InlineKeyboardButton(text=texts.RULES_DECLINE, callback_data='rules_decline')],
+        ]
+    )
+
+
+async def _send_rules_prompt(target_message: types.Message, language: str) -> None:
+    """Шаг принятия документов: полный текст правил или компактное приветствие со ссылками."""
+    if _legal_docs_compact_enabled():
+        texts = get_texts(language)
+        greeting = texts.t(
+            'LEGAL_COMPACT_GREETING',
+            '👋 <b>Добро пожаловать!</b>\n\n'
+            'Перед началом работы ознакомьтесь с документами сервиса — они откроются по кнопкам ниже.\n\n'
+            'Нажимая «Я прочитал(а) и принимаю», вы подтверждаете согласие с условиями обоих документов.',
+        )
+        await target_message.answer(greeting, reply_markup=_get_compact_legal_keyboard(language), parse_mode='HTML')
+        return
+
+    rules_text = await get_rules(language)
+    await answer_long_text(target_message, rules_text, reply_markup=get_rules_keyboard(language))
+
+
 async def _show_privacy_policy_after_rules(
     callback: types.CallbackQuery,
     state: FSMContext,
@@ -1998,6 +2043,11 @@ async def process_rules_accept(callback: types.CallbackQuery, state: FSMContext,
 
         if callback.data == 'rules_accept':
             logger.info('✅ Правила приняты пользователем', from_user_id=callback.from_user.id)
+
+            if _legal_docs_compact_enabled():
+                # Компактный режим: кнопка принятия покрывает оферту и политику сразу.
+                await _continue_registration_after_rules(callback, state, db, language)
+                return
 
             # Пытаемся показать политику конфиденциальности
             policy_shown = await _show_privacy_policy_after_rules(callback, state, db, language)
@@ -2512,6 +2562,8 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
 
     await state.clear()
 
+    await notify_new_client_created(db, user, source='Telegram')
+
     if campaign_message:
         try:
             await callback.message.answer(campaign_message)
@@ -2898,6 +2950,8 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
         )
 
     await state.clear()
+
+    await notify_new_client_created(db, user, source='Telegram')
 
     if campaign_message:
         try:
@@ -3291,6 +3345,22 @@ async def required_sub_channel_check(
                 )
                 await state.set_state(RegistrationStates.waiting_for_referral_code)
             else:
+                if _legal_docs_compact_enabled():
+                    greeting = texts.t(
+                        'LEGAL_COMPACT_GREETING',
+                        '👋 <b>Добро пожаловать!</b>\n\n'
+                        'Перед началом работы ознакомьтесь с документами сервиса — они откроются по кнопкам ниже.\n\n'
+                        'Нажимая «Я прочитал(а) и принимаю», вы подтверждаете согласие с условиями обоих документов.',
+                    )
+                    await bot.send_message(
+                        chat_id=query.from_user.id,
+                        text=greeting,
+                        reply_markup=_get_compact_legal_keyboard(language),
+                        parse_mode='HTML',
+                    )
+                    await state.set_state(RegistrationStates.waiting_for_rules_accept)
+                    return None
+
                 rules_text = await get_rules(language)
 
                 if settings.ENABLE_LOGO_MODE and not caption_exceeds_telegram_limit(rules_text):

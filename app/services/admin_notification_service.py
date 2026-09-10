@@ -14,7 +14,7 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramServerError,
 )
-from sqlalchemy import inspect as sa_inspect, select
+from sqlalchemy import func, inspect as sa_inspect, select
 from sqlalchemy.exc import MissingGreenlet, NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +73,7 @@ class NotificationCategory(StrEnum):
     PROMO = 'promo'  # Промокоды, кампании, промогруппы
     PARTNERS = 'partners'  # Партнёрки, выводы, админ-действия
     TICKETS = 'tickets'  # Тикеты (уже существует)
+    NEW_USERS = 'new_users'  # Регистрации новых клиентов
 
 
 logger = structlog.get_logger(__name__)
@@ -121,6 +122,7 @@ class AdminNotificationService:
             NotificationCategory.PROMO: getattr(settings, 'ADMIN_NOTIFICATIONS_PROMO_TOPIC_ID', None),
             NotificationCategory.PARTNERS: getattr(settings, 'ADMIN_NOTIFICATIONS_PARTNERS_TOPIC_ID', None),
             NotificationCategory.TICKETS: self.ticket_topic_id,
+            NotificationCategory.NEW_USERS: getattr(settings, 'ADMIN_NOTIFICATIONS_NEW_USERS_TOPIC_ID', None),
         }
 
         # Per-category enabled flags (default True — backwards compatible)
@@ -2398,3 +2400,93 @@ class AdminNotificationService:
         except Exception as e:
             logger.error('Неожиданная ошибка при отправке уведомления о подозрительной активности', error=e)
             return False
+
+    async def send_new_client_notification(self, db: AsyncSession, user: User, *, source: str) -> bool:
+        """Уведомление о новом клиенте: кто, когда, откуда и идентификаторы.
+
+        Формат повторяет операторский образец: главный идентификатор, email,
+        TG ID/username, внутренний ID, источник, общий счётчик клиентов,
+        время и ссылка на карточку в админке.
+        """
+        total_clients = (
+            await db.execute(select(func.count()).select_from(User))
+        ).scalar_one()
+
+        name = (getattr(user, 'first_name', None) or '').strip()
+        username = getattr(user, 'username', None)
+        email = getattr(user, 'email', None)
+        telegram_id = getattr(user, 'telegram_id', None)
+
+        # Главный идентификатор: то, по кому оператор сразу найдёт клиента.
+        if name:
+            head = f'📝 {html.escape(name)}'
+        elif username:
+            head = f'📝 {format_username_link(username)}'
+        elif email:
+            head = f'📝 {html.escape(email)}'
+        else:
+            head = f'📝 ID {user.id}'
+
+        lines: list[str] = ['👤 <b>Новый клиент</b>', '', head]
+        if username:
+            lines.append(f'📱 Username: {format_username_link(username)}')
+        if email:
+            lines.append(f'📧 Email: {html.escape(email)}')
+        if telegram_id:
+            lines.append(f'🆔 TG ID: <code>{telegram_id}</code>')
+
+        panel_id = getattr(user, 'remnawave_id', None)
+        system_id = f'#{user.id}'
+        if panel_id:
+            system_id += f' · панель: {panel_id}'
+        lines.append(f'🧩 ID в системе: {system_id}')
+
+        referrer_id = getattr(user, 'referred_by_id', None)
+        if referrer_id:
+            lines.append(f'🤝 Партнёр: {await self._get_referrer_info(db, referrer_id)}')
+
+        lines.append(f'🌐 Источник: {html.escape(source)}')
+        lines.append(f'📊 Всего клиентов: <b>{total_clients}</b>')
+        lines.append(f"🕐 {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+        admin_base = (settings.CABINET_URL or '').rstrip('/')
+        keyboard = None
+        if admin_base:
+            keyboard = types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text='🔗 Открыть в админке', url=f'{admin_base}/admin/users/{user.id}'
+                        )
+                    ]
+                ]
+            )
+
+        return await self._send_message(
+            '\n'.join(lines),
+            keyboard,
+            category=NotificationCategory.NEW_USERS,
+        )
+
+
+async def notify_new_client_created(db: AsyncSession, user: User, source: str) -> None:
+    """Уведомление о новом клиенте в топик NEW_USERS. Никогда не поднимает исключение.
+
+    Модульная обёртка для точек создания пользователя, где сервис ещё не собран:
+    сама рассылка управляется ADMIN_NOTIFICATIONS_* настройками.
+    """
+    if not getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+        return
+
+    try:
+        from app.bot_factory import create_bot
+
+        async with create_bot() as bot:
+            service = AdminNotificationService(bot)
+            await service.send_new_client_notification(db, user, source=source)
+    except Exception as error:
+        logger.warning(
+            'Не удалось отправить уведомление о новом клиенте',
+            user_id=getattr(user, 'id', None),
+            error=str(error),
+        )
