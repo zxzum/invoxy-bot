@@ -17,11 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cabinet.auth import email_auth_gate as gate
 from app.cabinet.dependencies import get_cabinet_db
 from app.cabinet.routes.auth import router as auth_router
-from app.database.models import SystemSetting, User
+from app.database.models import PromoGroup, SystemSetting, User
 from tests.fixtures.sqlite_memory import memory_session
 
 
-TABLES = (SystemSetting.__table__, User.__table__)
+TABLES = (SystemSetting.__table__, PromoGroup.__table__, User.__table__)
 
 REGISTER_BODY = {
     'email': 'test@example.org',
@@ -90,3 +90,46 @@ async def test_enabled_in_admin_lets_request_through_the_gate(monkeypatch):
 
         assert login.status_code == 401, login.text
         assert login.json()['detail'] == 'Invalid email or password'
+
+
+@pytest.mark.asyncio
+async def test_configured_test_email_login_auto_creates_verified_user_over_http(monkeypatch):
+    """The staging login seam creates a verified email user without SMTP."""
+    from app.cabinet.routes import auth
+
+    async def not_limited(*_args, **_kwargs):
+        return False
+
+    async def no_roles(*_args, **_kwargs):
+        return [], [], 0
+
+    async def no_bonus(*_args, **_kwargs):
+        return None
+
+    async def no_store(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(gate.settings, 'CABINET_EMAIL_AUTH_ENABLED', True)
+    monkeypatch.setattr(gate.settings, 'TEST_EMAIL', 'staging@example.org')
+    monkeypatch.setattr(gate.settings, 'TEST_EMAIL_PASSWORD', 'Staging-Passw0rd!')
+    monkeypatch.setattr(gate.settings, 'CABINET_JWT_SECRET', 'staging-jwt-secret-' + ('x' * 64))
+    monkeypatch.setattr(auth.RateLimitCache, 'is_ip_rate_limited', not_limited)
+    monkeypatch.setattr(auth, 'ensure_superadmin_role_on_login', no_roles)
+    monkeypatch.setattr(auth.UserRoleCRUD, 'get_user_permissions', no_roles)
+    monkeypatch.setattr(auth, '_process_campaign_bonus', no_bonus)
+    monkeypatch.setattr(auth, '_store_refresh_token', no_store)
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        await _set_flag(db, 'true')
+
+        async with AsyncClient(transport=ASGITransport(app=_app(db)), base_url='http://cabinet') as client:
+            response = await client.post(
+                '/cabinet/auth/email/login',
+                json={'email': 'STAGING@example.org', 'password': 'Staging-Passw0rd!'},
+            )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['user']['email'].lower() == 'staging@example.org'
+        assert response.json()['user']['email_verified'] is True
+        assert response.json()['access_token']
+        assert await _users_count(db) == 1
