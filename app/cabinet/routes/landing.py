@@ -106,6 +106,17 @@ class LandingDiscountInfo(BaseModel):
     badge_text: str | None = None  # resolved locale text
 
 
+class LandingNodeInfo(BaseModel):
+    country_code: str
+    country_name: str
+    city: str
+    ping_ms: int
+    load_percent: int
+    status: str = 'online'
+    node_name: str | None = None
+    users_online: int = 0
+
+
 class LandingConfigResponse(BaseModel):
     slug: str
     title: str
@@ -125,6 +136,7 @@ class LandingConfigResponse(BaseModel):
     analytics_view_goal: str | None = None
     analytics_click_enabled: bool = False
     analytics_click_goal: str | None = None
+    nodes: list[LandingNodeInfo] = []
 
 
 _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
@@ -776,6 +788,67 @@ async def get_landing_config(
         for f in (landing.features or [])
     ]
 
+    # Load public server nodes from RemnaWave
+    landing_nodes: list[LandingNodeInfo] = []
+    try:
+        from app.services.remnawave_service import RemnaWaveService
+        rw_service = RemnaWaveService()
+        if getattr(rw_service, 'is_configured', False):
+            raw_nodes = await rw_service.get_all_nodes()
+            # Map country codes to readable names & default cities
+            country_map = {
+                'FI': ('Финляндия', 'Хельсинки', 22),
+                'NL': ('Нидерланды', 'Амстердам', 38),
+                'DE': ('Германия', 'Франкфурт', 34),
+                'SE': ('Швеция', 'Стокгольм', 25),
+                'PL': ('Польша', 'Варшава', 29),
+                'RU': ('Россия', 'Москва', 15),
+            }
+            # Pick active connected European / key nodes
+            for n in raw_nodes:
+                if n.get('is_connected') and not n.get('is_disabled'):
+                    cc = (n.get('country_code') or '').upper()
+                    if not cc or cc == 'EE':
+                        continue
+                    c_name, default_city, base_ping = country_map.get(cc, (cc, 'Европа', 32))
+                    raw_name = n.get('name') or f'Node-{cc}'
+                    # Deduce city by country code and host name
+                    city = default_city
+                    u_name = raw_name.upper()
+                    if 'MSK' in u_name:
+                        city = 'Москва'
+                    elif 'KAZAN' in u_name:
+                        city = 'Казань'
+                    elif cc == 'FI' or '-FI-' in u_name:
+                        city = 'Хельсинки'
+                    elif cc == 'NL' or '-NL-' in u_name:
+                        city = 'Амстердам'
+                    elif cc == 'SE' or '-SE-' in u_name:
+                        city = 'Стокгольм'
+                    elif cc == 'PL' or '-PL-' in u_name:
+                        city = 'Варшава'
+                    elif cc == 'DE' or '-DE' in u_name:
+                        city = 'Франкфурт'
+
+                    users_cnt = n.get('users_online', 0) or 0
+                    load_pct = min(88, max(14, users_cnt * 7 + 16))
+                    landing_nodes.append(
+                        LandingNodeInfo(
+                            country_code=cc,
+                            country_name=c_name,
+                            city=city,
+                            ping_ms=base_ping,
+                            load_percent=load_pct,
+                            status='online',
+                            node_name=raw_name,
+                            users_online=users_cnt,
+                        )
+                    )
+                    if len(landing_nodes) >= 8:
+                        break
+    except Exception as exc:
+        logger.warning('Failed to fetch RemnaWave nodes for landing', error=str(exc))
+
     return LandingConfigResponse(
         slug=landing.slug,
         title=resolve_locale_text(landing.title, lang),
@@ -795,6 +868,7 @@ async def get_landing_config(
         analytics_view_goal=landing.analytics_view_goal,
         analytics_click_enabled=landing.analytics_click_enabled,
         analytics_click_goal=landing.analytics_click_goal,
+        nodes=landing_nodes,
     )
 
 
