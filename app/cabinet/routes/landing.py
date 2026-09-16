@@ -805,6 +805,8 @@ async def get_landing_config(
                 'RU': ('Россия', 'Москва', 15),
             }
             # Pick active connected European / key nodes
+            # Count nodes per country for clean numbering (e.g. Invoxy Edge NL-1, Invoxy Core FI-2)
+            country_counters: dict[str, int] = {}
             for n in raw_nodes:
                 if n.get('is_connected') and not n.get('is_disabled'):
                     cc = (n.get('country_code') or '').upper()
@@ -830,6 +832,13 @@ async def get_landing_config(
                     elif cc == 'DE' or '-DE' in u_name:
                         city = 'Франкфурт'
 
+                    idx = country_counters.get(cc, 0) + 1
+                    country_counters[cc] = idx
+
+                    # Professional branded node naming (never leak hosting providers)
+                    tier_label = 'Core' if idx == 1 else ('Prime' if idx == 2 else 'Edge')
+                    clean_node_name = f'Invoxy {tier_label} {cc}-{idx}'
+
                     users_cnt = n.get('users_online', 0) or 0
                     load_pct = min(88, max(14, users_cnt * 7 + 16))
                     landing_nodes.append(
@@ -840,7 +849,7 @@ async def get_landing_config(
                             ping_ms=base_ping,
                             load_percent=load_pct,
                             status='online',
-                            node_name=raw_name,
+                            node_name=clean_node_name,
                             users_online=users_cnt,
                         )
                     )
