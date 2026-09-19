@@ -127,6 +127,30 @@ def _warn_bad_logo_url_once(value: str) -> None:
     )
 
 
+def _get_logo_cache_buster() -> str:
+    """INVOXY: Return cache-buster version for bot-logo rich URL."""
+    if settings.LOGO_FILE:
+        p = Path(settings.LOGO_FILE)
+        if p.is_file():
+            try:
+                st = p.stat()
+                return f'{int(st.st_mtime)}_{st.st_size}'
+            except Exception:
+                pass
+    return ''
+
+
+def _append_logo_cache_buster(url: str) -> str:
+    """INVOXY: Append ?v= to bust Telegram Bot API URL-based CDN caching."""
+    if not url or 'v=' in url:
+        return url
+    version = _get_logo_cache_buster()
+    if not version:
+        return url
+    delimiter = '&' if '?' in url else '?'
+    return f'{url}{delimiter}v={version}'
+
+
 def _resolve_rich_logo_url() -> str:
     """Публичный URL логотипа для шапки rich-меню ('' — без логотипа).
 
@@ -151,6 +175,10 @@ def _resolve_rich_logo_url() -> str:
         if not explicit.lower().startswith(('http://', 'https://')):
             _warn_bad_logo_url_once(explicit)
             return ''
+        # INVOXY: telegram aggressively caches rich images by URL. For internal bot-logo,
+        # ensure a cache-buster query parameter is present so new banners reflect immediately.
+        if '/cabinet/branding/bot-logo' in explicit:
+            return _append_logo_cache_buster(explicit)
         return explicit
 
     webhook_url = (settings.WEBHOOK_URL or '').strip()

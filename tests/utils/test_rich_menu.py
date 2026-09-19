@@ -892,6 +892,22 @@ async def test_logo_included_from_explicit_url(monkeypatch):
     assert html_out.startswith('<img src="https://example.com/logo.png"/>')
 
 
+async def test_logo_bot_logo_url_appends_cache_buster(monkeypatch, tmp_path):
+    logo = tmp_path / 'vpn_logo.png'
+    logo.write_bytes(b'fake_png_data')
+    monkeypatch.setattr(settings, 'LOGO_FILE', str(logo), raising=False)
+    monkeypatch.setattr(
+        settings,
+        'MAIN_MENU_RICH_LOGO_URL',
+        'https://invoxy.my/api/cabinet/branding/bot-logo',
+        raising=False,
+    )
+
+    resolved = rich_menu._resolve_rich_logo_url()
+    assert resolved.startswith('https://invoxy.my/api/cabinet/branding/bot-logo?v=')
+    assert str(len(b'fake_png_data')) in resolved
+
+
 async def test_logo_auto_url_from_webhook(monkeypatch, tmp_path):
     logo = tmp_path / 'logo.png'
     logo.write_bytes(b'png')
