@@ -6,7 +6,7 @@ import html
 from typing import TYPE_CHECKING
 
 import structlog
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +53,12 @@ async def build_referral_broadcast_message(
 
     bot_link = settings.get_bot_referral_link(user.referral_code, username)
     cabinet_link = settings.get_cabinet_referral_link(user.referral_code)
+    if not cabinet_link and user.referral_code:
+        base_url = (settings.MINIAPP_CUSTOM_URL or settings.WEBHOOK_URL or '').strip().rstrip('/')
+        if base_url and not base_url.startswith(('http://example.com', 'https://example.com')):
+            safe_code = settings._encode_referral_code(user.referral_code)
+            sep = '&' if '?' in base_url else '?'
+            cabinet_link = f'{base_url}{sep}ref={safe_code}'
     code = user.referral_code or ''
 
     # Build condition lines from DB
@@ -130,10 +136,15 @@ async def build_referral_broadcast_message(
         parts.append(f'🆔 <b>Ваш код:</b> <code>{html.escape(code)}</code>')
 
     message = '\n'.join(parts)
+    from app.utils.miniapp_buttons import build_miniapp_or_callback_button
+
     button_text = '👥 Open Referral Program' if is_en else '👥 Реферальная программа'
-    markup = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=button_text, callback_data='menu_referrals')]]
+    button = build_miniapp_or_callback_button(
+        button_text,
+        callback_data='menu_referrals',
+        cabinet_path='/referral',
     )
+    markup = InlineKeyboardMarkup(inline_keyboard=[[button]])
     return message, markup
 
 

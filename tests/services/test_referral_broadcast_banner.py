@@ -51,6 +51,30 @@ async def test_build_referral_broadcast_message_legacy_conditions(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_build_referral_broadcast_message_cabinet_mode_button(monkeypatch):
+    """Verifies that in cabinet mode button opens miniapp at /referral."""
+    monkeypatch.setattr(type(settings), 'is_cabinet_mode', lambda self: True)
+    monkeypatch.setattr(settings, 'MINIAPP_CUSTOM_URL', 'https://invoxy.my')
+    monkeypatch.setattr(type(settings), 'is_referral_levels_scheme', lambda self: False)
+
+    user = User(
+        id=42,
+        telegram_id=12345678,
+        username='tester',
+        referral_code='REF42',
+        language='ru',
+        status=UserStatus.ACTIVE.value,
+    )
+
+    db = AsyncMock(spec=AsyncSession)
+    _, markup = await build_referral_broadcast_message(user, db, bot_username='InvoxyBot')
+
+    btn = markup.inline_keyboard[0][0]
+    assert btn.web_app is not None
+    assert btn.web_app.url == 'https://invoxy.my/referral'
+
+
+@pytest.mark.asyncio
 async def test_send_user_referral_broadcast_with_banner(monkeypatch):
     """Verifies that telegram user receives referral broadcast as a photo with ref.png banner."""
     user = User(
