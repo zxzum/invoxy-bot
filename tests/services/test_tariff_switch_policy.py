@@ -66,3 +66,58 @@ class TestTrafficReset:
         monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_TARIFF_SWITCH', False)
         assert should_reset_used_traffic(500_00) is False
         assert should_reset_used_traffic(0) is False
+
+
+class TestConvertedDays:
+    def test_switch_up_with_ten_percent_fee(self):
+        from app.database.models import Tariff
+        from app.services.pricing_engine import PricingEngine
+
+        basic = Tariff(id=2, name='Базовый', period_prices={'30': 10000})
+        standard = Tariff(id=3, name='Стандарт', period_prices={'30': 20000})
+
+        # 30 days of Basic (100 RUB) to Standard (200 RUB):
+        # Remaining value = 100 RUB.
+        # With 10% fee = 90 RUB.
+        # Standard daily rate = 200 / 30 = 6.666 RUB/day.
+        # 90 / (200/30) = 13.5 -> 13 days
+        days = PricingEngine.calculate_converted_days(basic, standard, 30, commission_pct=10)
+        assert days == 13
+
+    def test_switch_down_with_ten_percent_fee(self):
+        from app.database.models import Tariff
+        from app.services.pricing_engine import PricingEngine
+
+        standard = Tariff(id=3, name='Стандарт', period_prices={'30': 20000})
+        basic = Tariff(id=2, name='Базовый', period_prices={'30': 10000})
+
+        # 30 days of Standard (200 RUB) to Basic (100 RUB):
+        # Remaining value = 200 RUB.
+        # With 10% fee = 180 RUB.
+        # Basic daily rate = 100 / 30 = 3.333 RUB/day.
+        # 180 / (100/30) = 54 days
+        days = PricingEngine.calculate_converted_days(standard, basic, 30, commission_pct=10)
+        assert days == 54
+
+    def test_zero_or_negative_days(self):
+        from app.database.models import Tariff
+        from app.services.pricing_engine import PricingEngine
+
+        basic = Tariff(id=2, name='Базовый', period_prices={'30': 10000})
+        standard = Tariff(id=3, name='Стандарт', period_prices={'30': 20000})
+
+        assert PricingEngine.calculate_converted_days(basic, standard, 0, commission_pct=10) == 0
+        assert PricingEngine.calculate_converted_days(basic, standard, -5, commission_pct=10) == 0
+
+    def test_minimum_one_day_guarantee(self):
+        from app.database.models import Tariff
+        from app.services.pricing_engine import PricingEngine
+
+        basic = Tariff(id=2, name='Базовый', period_prices={'30': 10000})
+        premium = Tariff(id=4, name='Премиум', period_prices={'30': 40000})
+
+        # 1 day of Basic (3.33 RUB) to Premium (13.33 RUB/day) with 10% fee = 3.0 RUB
+        # 3.0 / 13.33 = 0.22 -> guarantees at least 1 day
+        days = PricingEngine.calculate_converted_days(basic, premium, 1, commission_pct=10)
+        assert days == 1
+

@@ -295,6 +295,10 @@ class TariffPurchaseRequest(BaseModel):
         pattern=r'^[A-Za-z0-9._:-]{4,128}$',
         description='Cached Yandex.Metrika ClientID (optional).',
     )
+    switch_mode: Literal['prorate_cost', 'convert_days'] = Field(
+        'prorate_cost',
+        description="Switch mode: 'prorate_cost' (pay difference, keep days) or 'convert_days' (convert days with 10% fee)",
+    )
 
 
 class TariffInvoiceRequest(BaseModel):

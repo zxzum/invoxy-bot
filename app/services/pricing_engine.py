@@ -237,6 +237,38 @@ class PricingEngine:
             return 0, 1
         return price, best_period
 
+    @staticmethod
+    def calculate_converted_days(
+        current_tariff: Tariff,
+        new_tariff: Tariff,
+        remaining_days: int,
+        commission_pct: int = 10,
+    ) -> int:
+        """Calculate converted days when switching tariffs with commission on days value.
+
+        commission_pct: fee percentage deducted from remaining value (default 10%).
+        Formula:
+          cur_price, cur_period = get_tariff_daily_rate_fraction(current_tariff)
+          new_price, new_period = get_tariff_daily_rate_fraction(new_tariff)
+          converted = floor(remaining_days * cur_daily_rate * (1 - fee) / new_daily_rate)
+          = (remaining_days * cur_price * new_period * (100 - commission_pct)) // (cur_period * new_price * 100)
+        """
+        if remaining_days <= 0 or current_tariff is None or new_tariff is None:
+            return 0
+        cur_price, cur_period = PricingEngine.get_tariff_daily_rate_fraction(current_tariff)
+        new_price, new_period = PricingEngine.get_tariff_daily_rate_fraction(new_tariff)
+        if cur_price <= 0 or cur_period <= 0 or new_price <= 0 or new_period <= 0:
+            return 0
+
+        factor = max(0, 100 - commission_pct)
+        numerator = remaining_days * cur_price * new_period * factor
+        denominator = cur_period * new_price * 100
+        if denominator <= 0:
+            return 0
+
+        raw_days = numerator // denominator
+        return max(1, int(raw_days)) if remaining_days >= 1 else 0
+
     def calculate_tariff_switch_cost(
         self,
         current_tariff: Tariff,

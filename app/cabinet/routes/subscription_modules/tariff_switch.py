@@ -163,8 +163,18 @@ async def preview_tariff_switch(
     has_enough = balance >= upgrade_cost
     missing = max(0, upgrade_cost - balance) if not has_enough else 0
 
+    converted_days = pricing_engine.calculate_converted_days(
+        current_tariff,
+        new_tariff,
+        remaining_days,
+        commission_pct=10,
+    )
+
     response: dict[str, Any] = {
         'can_switch': has_enough,
+        'can_convert_days': converted_days > 0,
+        'converted_days': converted_days,
+        'conversion_fee_percent': 10,
         'current_tariff_id': current_tariff.id if current_tariff else None,
         'current_tariff_name': current_tariff.name if current_tariff else None,
         'new_tariff_id': new_tariff.id,
@@ -353,9 +363,38 @@ async def switch_tariff(
             detail='Daily tariff has invalid price',
         )
 
-    # Charge if upgrade
+    switch_mode = getattr(request, 'switch_mode', 'prorate_cost') or 'prorate_cost'
+    is_convert_days = switch_mode == 'convert_days'
+    converted_days = 0
+
+    # Charge if upgrade or handle day conversion
     switch_transaction = None
-    if upgrade_cost > 0:
+    if is_convert_days:
+        if remaining_days <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='No remaining days to convert',
+            )
+        converted_days = pricing_engine.calculate_converted_days(
+            current_tariff,
+            new_tariff,
+            remaining_days,
+            commission_pct=10,
+        )
+        upgrade_cost = 0
+        description = (
+            f"Переход на тариф '{new_tariff.name}' с конвертацией дней ({converted_days} дн., комиссия 10%)"
+        )
+        await create_transaction(
+            db=db,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=0,
+            description=description,
+            payment_method=PaymentMethod.BALANCE,
+            commit=False,
+        )
+    elif upgrade_cost > 0:
         if user.balance_kopeks < upgrade_cost:
             missing = upgrade_cost - user.balance_kopeks
             raise HTTPException(
@@ -489,9 +528,8 @@ async def switch_tariff(
     subscription.whitelist_traffic_purchased_gb = 0
     subscription.whitelist_traffic_reset_at = None
 
-    # Счётчик трафика обнуляет только ОПЛАЧЕННОЕ переключение — иначе прыжок
-    # туда-обратно по бесплатному направлению давал новую квоту каждый раз.
-    reset_used_traffic = should_reset_used_traffic(upgrade_cost)
+    # Счётчик трафика обнуляет оплаченное переключение или конвертацию дней
+    reset_used_traffic = should_reset_used_traffic(upgrade_cost) or is_convert_days
     if reset_used_traffic:
         await db.execute(
             sql_delete(WhitelistTrafficUsageSnapshot).where(
@@ -501,7 +539,10 @@ async def switch_tariff(
         subscription.traffic_used_gb = 0.0
         subscription.whitelist_traffic_used_bytes = 0
 
-    if switching_to_daily:
+    if is_convert_days:
+        subscription.end_date = datetime.now(UTC) + timedelta(days=converted_days)
+        subscription.is_daily_paused = False
+    elif switching_to_daily:
         # Switching TO daily - reset end_date to 1 day, set last_daily_charge_at
         subscription.end_date = datetime.now(UTC) + timedelta(days=1)
         subscription.last_daily_charge_at = datetime.now(UTC)
@@ -613,6 +654,8 @@ async def switch_tariff(
         'charged_kopeks': upgrade_cost,
         'balance_kopeks': user.balance_kopeks,
         'balance_label': settings.format_price(user.balance_kopeks),
+        'switch_mode': switch_mode,
+        'converted_days': converted_days if is_convert_days else None,
     }
 
     # Add discount info if applicable
