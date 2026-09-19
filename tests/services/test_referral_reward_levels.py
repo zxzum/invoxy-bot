@@ -714,7 +714,7 @@ class TestInvitePromise:
 
         captured = {}
 
-        async def fake_edit(_callback, text, _keyboard):
+        async def fake_edit(_callback, text, _keyboard, **_kwargs):
             captured['text'] = text
 
         monkeypatch.setattr(screen, 'edit_or_answer_photo', fake_edit)
@@ -753,7 +753,7 @@ class TestInvitePromise:
 
         captured = {}
 
-        async def fake_edit(_callback, text, _keyboard):
+        async def fake_edit(_callback, text, _keyboard, **_kwargs):
             captured['text'] = text
 
         monkeypatch.setattr(screen, 'edit_or_answer_photo', fake_edit)

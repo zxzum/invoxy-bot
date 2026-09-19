@@ -125,7 +125,7 @@ class TestBotInviteScreen:
         """Текст пересылают другу: обещание в нём — про ранг ЭТОГО приглашающего."""
         from app.handlers import referral as screen
 
-        async def fake_edit(_callback, _text, _keyboard):
+        async def fake_edit(_callback, _text, _keyboard, **_kwargs):
             return None
 
         monkeypatch.setattr(screen, 'edit_or_answer_photo', fake_edit)
