@@ -22,6 +22,8 @@ from app.database.crud.subscription import (
 from app.database.models import Subscription, SubscriptionStatus, User
 from app.localization.texts import Texts, get_texts
 from app.utils.formatters import format_whitelist_traffic
+from app.utils.photo_message import edit_or_answer_photo
+from app.utils.screen_banners import get_screen_banner
 
 
 logger = structlog.get_logger(__name__)
@@ -207,7 +209,9 @@ async def show_my_subscriptions(
         keyboard = _build_subscriptions_keyboard(subscriptions, db_user.language, gift_enabled=gift_enabled)
 
     if callback.message:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+        await edit_or_answer_photo(
+            callback, text, keyboard, media=get_screen_banner('subscription'), media_kind='subscription'
+        )
     await callback.answer()
 
 

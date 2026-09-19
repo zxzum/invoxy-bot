@@ -7,9 +7,9 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramFor
 from aiogram.types import InaccessibleMessage, InputMediaPhoto
 
 from app.config import settings
+from app.utils.screen_banners import cache_screen_banner_file_id
 
 from .message_patch import (
-    LOGO_PATH,
     _cache_logo_file_id,
     append_privacy_hint,
     caption_exceeds_telegram_limit,
@@ -106,6 +106,16 @@ async def _answer_text(
     )
 
 
+def _cache_sent_media(result, media_kind: str | None) -> None:
+    """Cache file_id of a successfully sent photo (INVOXY per-screen banners)."""
+    if media_kind:
+        photo = getattr(result, 'photo', None)
+        if photo:
+            cache_screen_banner_file_id(media_kind, photo[-1].file_id)
+    else:
+        _cache_logo_file_id(result)
+
+
 async def edit_or_answer_photo(
     callback: types.CallbackQuery,
     caption: str,
@@ -113,20 +123,28 @@ async def edit_or_answer_photo(
     parse_mode: str | None = 'HTML',
     *,
     force_text: bool = False,
+    media=None,
+    media_kind: str | None = None,
 ) -> None:
+    """Edit or send a photo message, falling back to text when needed.
+
+    `media` overrides the default logo (INVOXY per-screen banners);
+    None keeps upstream logo behavior byte-for-byte.
+    """
     resolved_parse_mode = parse_mode or 'HTML'
 
     # Если сообщение недоступно, отправляем новое сообщение
     if isinstance(callback.message, InaccessibleMessage):
         try:
-            if settings.ENABLE_LOGO_MODE and LOGO_PATH.exists():
+            photo = media if media is not None else get_logo_media()
+            if settings.ENABLE_LOGO_MODE and photo is not None:
                 result = await callback.message.answer_photo(
-                    photo=get_logo_media(),
+                    photo=photo,
                     caption=caption,
                     reply_markup=keyboard,
                     parse_mode=resolved_parse_mode,
                 )
-                _cache_logo_file_id(result)
+                _cache_sent_media(result, media_kind)
             else:
                 await callback.message.answer(
                     caption,
@@ -179,7 +197,7 @@ async def edit_or_answer_photo(
             await _answer_text(callback, caption, keyboard, resolved_parse_mode, error)
         return
 
-    media = _resolve_media(callback.message)
+    media = _resolve_media(callback.message) if media is None else media
 
     # Logo file unavailable (missing / directory bind-mount) — fall back to text.
     # See #586617: this used to surface as IsADirectoryError on every callback.
@@ -194,10 +212,11 @@ async def edit_or_answer_photo(
     # Retry logic для сетевых ошибок
     for attempt in range(MAX_RETRIES):
         try:
-            await callback.message.edit_media(
+            result = await callback.message.edit_media(
                 InputMediaPhoto(media=media, caption=caption, parse_mode=(parse_mode or 'HTML')),
                 reply_markup=keyboard,
             )
+            _cache_sent_media(result, media_kind)
             return  # Успешно — выходим
         except TelegramNetworkError as net_error:
             if attempt < MAX_RETRIES - 1:
@@ -247,7 +266,7 @@ async def edit_or_answer_photo(
                 await callback.message.delete()
             except Exception:
                 pass
-            logo_media = get_logo_media()
+            logo_media = media if media is not None else get_logo_media()
             if logo_media is None:
                 await _answer_text(callback, caption, keyboard, resolved_parse_mode)
                 return
@@ -259,7 +278,7 @@ async def edit_or_answer_photo(
                     reply_markup=keyboard,
                     parse_mode=resolved_parse_mode,
                 )
-                _cache_logo_file_id(result)
+                _cache_sent_media(result, media_kind)
             except (TelegramBadRequest, TelegramForbiddenError) as photo_error:
                 await _answer_text(callback, caption, keyboard, resolved_parse_mode, photo_error)
             except Exception:

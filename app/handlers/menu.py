@@ -44,6 +44,7 @@ from app.utils.promo_offer import (
     get_user_active_promo_discount_percent,
 )
 from app.utils.rich_menu import try_edit_rich_main_menu
+from app.utils.screen_banners import get_screen_banner
 from app.utils.telegram_html import (
     html_to_telegram,
     info_page_faq_to_telegram,
@@ -250,6 +251,8 @@ async def show_main_menu(
             caption=menu_text,
             keyboard=keyboard,
             parse_mode='HTML',
+            media=get_screen_banner('main'),
+            media_kind='main',
         )
     if not skip_callback_answer:
         await callback.answer()
@@ -1286,6 +1289,8 @@ async def handle_back_to_menu(callback: types.CallbackQuery, state: FSMContext, 
             caption=menu_text,
             keyboard=keyboard,
             parse_mode='HTML',
+            media=get_screen_banner('main'),
+            media_kind='main',
         )
     await callback.answer()
 

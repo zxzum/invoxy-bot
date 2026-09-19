@@ -57,6 +57,8 @@ from app.services.trial_activation_service import (
 )
 from app.services.user_cart_service import user_cart_service
 from app.utils.decorators import error_handler
+from app.utils.photo_message import edit_or_answer_photo
+from app.utils.screen_banners import get_screen_banner
 
 
 logger = structlog.get_logger(__name__)
@@ -210,9 +212,12 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
     subscription = db_user.subscription
 
     if not subscription:
-        await callback.message.edit_text(
+        await edit_or_answer_photo(
+            callback,
             texts.SUBSCRIPTION_NONE,
-            reply_markup=get_subscription_keyboard(db_user.language, has_subscription=False, gift_enabled=gift_enabled),
+            get_subscription_keyboard(db_user.language, has_subscription=False, gift_enabled=gift_enabled),
+            media=get_screen_banner('subscription'),
+            media_kind='subscription',
         )
         await callback.answer()
         return
@@ -591,16 +596,18 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             '📱 Скопируйте ссылку и добавьте в ваше VPN приложение',
         )
 
-    await callback.message.edit_text(
+    await edit_or_answer_photo(
+        callback,
         message,
-        reply_markup=get_subscription_keyboard(
+        get_subscription_keyboard(
             db_user.language,
             has_subscription=True,
             is_trial=subscription.is_trial,
             subscription=subscription,
             gift_enabled=gift_enabled,
         ),
-        parse_mode='HTML',
+        media=get_screen_banner('subscription'),
+        media_kind='subscription',
     )
     await callback.answer()
 

@@ -20,6 +20,7 @@ from app.services.referral_reward_service import format_reward_total
 from app.services.referral_withdrawal_service import referral_withdrawal_service
 from app.states import ReferralWithdrawalStates
 from app.utils.photo_message import edit_or_answer_photo
+from app.utils.screen_banners import get_screen_banner
 from app.utils.user_utils import (
     get_detailed_referral_list,
     get_effective_referral_commission_percent,
@@ -347,6 +348,8 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
         callback,
         referral_text,
         get_referral_keyboard(db_user.language),
+        media=get_screen_banner('referral'),
+        media_kind='referral',
     )
     await callback.answer()
 
@@ -711,6 +714,8 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User, db
             f'<blockquote>{invite_html}</blockquote>'
         ),
         keyboard,
+        media=get_screen_banner('referral'),
+        media_kind='referral',
     )
     await callback.answer()
 

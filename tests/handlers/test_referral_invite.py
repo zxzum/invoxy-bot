@@ -15,7 +15,7 @@ import app.handlers.referral as ref
 async def test_create_invite_message_wraps_links_in_code(monkeypatch):
     captured = {}
 
-    async def fake_edit(callback, text, keyboard):
+    async def fake_edit(callback, text, keyboard, **kwargs):
         captured['text'] = text
 
     monkeypatch.setattr(ref, 'edit_or_answer_photo', fake_edit)
