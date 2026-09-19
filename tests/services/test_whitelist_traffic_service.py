@@ -104,11 +104,23 @@ async def test_production_seed_uses_scoped_package_prices_and_exact_device_caps(
     premium_white = by_name['Премиум 💎 LTE']
     trial = by_name['Пробный период']
 
-    assert basic.get_traffic_topup_packages() == {100: 5000, 300: 15000}
-    assert standard_white.get_traffic_topup_packages() == {100: 5000, 300: 15000}
-    assert standard_white.get_whitelist_traffic_topup_packages() == {50: 15000, 100: 30000}
-    assert premium_white.get_traffic_topup_packages() == {100: 5000, 300: 15000}
-    assert premium_white.get_whitelist_traffic_topup_packages() == {50: 15000, 100: 30000}
+    assert basic.get_traffic_topup_packages() == {100: 5000}
+    assert basic.traffic_topup_max_per_month == 2
+    assert basic.whitelist_reset_enabled is False
+    assert standard_white.get_traffic_topup_packages() == {}
+    assert standard_white.get_whitelist_traffic_topup_packages() == {}
+    assert standard_white.whitelist_reset_enabled is True
+    assert standard_white.whitelist_reset_max_per_month == 1
+    assert standard_white.whitelist_reset_chunk_gb == 50
+    assert standard_white.whitelist_reset_price_kopeks == 15000
+    assert standard_white.whitelist_reset_min_used_gb == 10
+    assert premium_white.get_traffic_topup_packages() == {}
+    assert premium_white.get_whitelist_traffic_topup_packages() == {}
+    assert premium_white.whitelist_reset_enabled is True
+    assert premium_white.whitelist_reset_max_per_month == 2
+    assert premium_white.whitelist_reset_chunk_gb == 50
+    assert premium_white.whitelist_reset_price_kopeks == 15000
+    assert premium_white.whitelist_reset_min_used_gb == 10
     assert basic.allowed_squads == [bootstrap.JUST_VPN_SQUAD_UUID]
     assert standard_white.allowed_squads == [bootstrap.JUST_VPN_SQUAD_UUID, bootstrap.WHITELIST_SQUAD_UUID]
     assert premium_white.allowed_squads == [bootstrap.JUST_VPN_SQUAD_UUID, bootstrap.WHITELIST_SQUAD_UUID]

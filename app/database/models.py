@@ -2035,12 +2035,20 @@ class Tariff(Base):
     traffic_topup_packages = Column(JSON, default=dict)
     # Максимальный лимит трафика после докупки (0 = без ограничений)
     max_topup_traffic_gb = Column(Integer, default=0, nullable=False)
+    traffic_topup_max_per_month = Column(Integer, default=0, nullable=False)
 
     # Отдельный локальный лимит для трафика, прошедшего через WHITELIST-ноды.
     # Он не отправляется в RemnaWave и не влияет на её штатный trafficLimitBytes.
     whitelist_traffic_limit_gb = Column(Integer, default=0, nullable=False)
     whitelist_traffic_topup_enabled = Column(Boolean, default=False, nullable=False)
     whitelist_traffic_topup_packages = Column(JSON, default=dict)
+
+    # Сброс расхода Белого интернета (LTE)
+    whitelist_reset_enabled = Column(Boolean, default=False, nullable=False)
+    whitelist_reset_chunk_gb = Column(Integer, default=50, nullable=False)
+    whitelist_reset_price_kopeks = Column(Integer, default=15000, nullable=False)
+    whitelist_reset_min_used_gb = Column(Integer, default=10, nullable=False)
+    whitelist_reset_max_per_month = Column(Integer, default=0, nullable=False)
 
     # Суточный тариф - ежедневное списание
     is_daily = Column(Boolean, default=False, nullable=False)  # Является ли тариф суточным
@@ -2191,7 +2199,20 @@ class Tariff(Base):
 
     def can_topup_traffic(self) -> bool:
         """Проверяет, можно ли докупить трафик на этом тарифе."""
-        return self.traffic_topup_enabled and bool(self.traffic_topup_packages) and not self.is_unlimited_traffic
+        return (
+            self.traffic_topup_enabled
+            and (getattr(self, 'traffic_topup_max_per_month', 0) or 0) > 0
+            and bool(self.traffic_topup_packages)
+            and not self.is_unlimited_traffic
+        )
+
+    def can_reset_whitelist_traffic(self) -> bool:
+        """Проверяет, доступен ли сброс Белого интернета (LTE) на тарифе."""
+        return (
+            bool(self.whitelist_reset_enabled)
+            and (getattr(self, 'whitelist_reset_max_per_month', 0) or 0) > 0
+            and (getattr(self, 'whitelist_traffic_limit_gb', 0) or 0) > 0
+        )
 
     def get_daily_price_rubles(self) -> float:
         """Возвращает суточную цену в рублях."""
@@ -2506,6 +2527,8 @@ class Subscription(Base):
     whitelist_traffic_purchased_gb = Column(Integer, default=0, nullable=False)
     whitelist_traffic_reset_at = Column(AwareDateTime(), nullable=True)
     whitelist_traffic_topup_last_purchased_at = Column(AwareDateTime(), nullable=True)
+    whitelist_reset_period_key = Column(String(7), nullable=True)
+    whitelist_reset_count = Column(Integer, default=0, nullable=False)
 
     subscription_url = Column(String, nullable=True)
     subscription_crypto_link = Column(String, nullable=True)

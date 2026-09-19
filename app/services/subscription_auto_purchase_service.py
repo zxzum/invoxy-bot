@@ -1920,6 +1920,11 @@ async def _auto_add_traffic(
     traffic_scope = cart_data.get('scope') or cart_data.get('traffic_scope') or 'regular'
     is_whitelist = traffic_scope == 'whitelist'
 
+    if is_whitelist:
+        logger.info('Dropping obsolete whitelist topup cart', user_id=user.id)
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return False
+
     if traffic_gb <= 0 or cart_price_kopeks <= 0:
         logger.warning(
             '🔁 Автопокупка трафика: некорректные данные корзины для пользователя',
@@ -2293,6 +2298,153 @@ async def _auto_add_traffic(
         except Exception as error:
             logger.warning('⚠️ Автопокупка трафика: не удалось уведомить админов', error=error)
 
+    return True
+
+
+async def _auto_reset_traffic(
+    db: AsyncSession,
+    user: User,
+    cart_data: dict,
+    *,
+    bot: Bot | None = None,
+) -> bool:
+    """Auto-purchase LTE traffic reset from saved cart after balance topup."""
+    from app.cabinet.routes.subscription_modules.helpers import _apply_addon_discount
+    from app.database.crud.subscription import (
+        get_active_subscriptions_by_user_id,
+        get_subscription_by_id_for_user,
+        get_subscription_by_user_id,
+        reset_whitelist_subscription_traffic,
+    )
+    from app.database.crud.tariff import get_tariff_by_id
+    from app.database.crud.transaction import create_transaction
+    from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
+    from app.database.models import TransactionType
+    from app.services.cabinet_purchase_notification_service import (
+        notify_telegram_user_about_cabinet_purchase,
+    )
+    from app.utils.traffic_topup_limits import get_local_month_period_key
+
+    saved_subscription_id = cart_data.get('subscription_id')
+    subscription = None
+    if saved_subscription_id is not None:
+        parsed_sub_id = _safe_int(saved_subscription_id)
+        if parsed_sub_id:
+            subscription = await get_subscription_by_id_for_user(db, parsed_sub_id, user.id)
+
+    if subscription is None:
+        if settings.is_multi_tariff_enabled():
+            active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+            if len(active_subs) == 1:
+                subscription = active_subs[0]
+            elif active_subs:
+                for sub in active_subs:
+                    if sub.tariff and getattr(sub.tariff, 'can_reset_whitelist_traffic', lambda: False)():
+                        subscription = sub
+                        break
+        else:
+            subscription = await get_subscription_by_user_id(db, user.id)
+
+    if not subscription:
+        logger.warning('Автопокупка traffic_reset: подписка не найдена', user_id=user.id)
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return False
+
+    if subscription.status not in ('active', 'trial', 'disabled', 'limited', 'ACTIVE', 'TRIAL', 'DISABLED', 'LIMITED'):
+        logger.warning('Автопокупка traffic_reset: подписка не активна', user_id=user.id, status=subscription.status)
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return False
+
+    if subscription.is_trial:
+        logger.warning('Автопокупка traffic_reset: триал не поддерживает сброс', user_id=user.id)
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return False
+
+    tariff = getattr(subscription, 'tariff', None)
+    if not tariff and subscription.tariff_id:
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+
+    if not tariff or not getattr(tariff, 'can_reset_whitelist_traffic', lambda: False)():
+        logger.warning('Автопокупка traffic_reset: сброс выключен на тарифе', user_id=user.id)
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return False
+
+    now = datetime.now(UTC)
+    current_period = get_local_month_period_key(now)
+    used_this_month = (
+        subscription.whitelist_reset_count
+        if subscription.whitelist_reset_period_key == current_period
+        else 0
+    )
+    if used_this_month >= (tariff.whitelist_reset_max_per_month or 0):
+        logger.warning('Автопокупка traffic_reset: месячный лимит исчерпан', user_id=user.id)
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return False
+
+    used_bytes = max(0, int(subscription.whitelist_traffic_used_bytes or 0))
+    used_gb = used_bytes / (1024**3)
+    min_used_gb = tariff.whitelist_reset_min_used_gb or 10
+    if used_gb < min_used_gb:
+        logger.warning('Автопокупка traffic_reset: расход меньше min_used_gb', user_id=user.id, used_gb=used_gb)
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return False
+
+    user = await lock_user_for_pricing(db, user.id)
+
+    base_price = tariff.whitelist_reset_price_kopeks or 15000
+    discount_result = _apply_addon_discount(user, 'traffic', base_price, 30)
+    final_price = discount_result['discounted']
+    if 0 < discount_result['percent'] < 100 and final_price > 0:
+        final_price = max(100, final_price)
+
+    if user.balance_kopeks < final_price:
+        logger.info(
+            'Автопокупка traffic_reset: недостаточно средств',
+            user_id=user.id,
+            balance=user.balance_kopeks,
+            price=final_price,
+        )
+        return False
+
+    chunk_gb = tariff.whitelist_reset_chunk_gb or 50
+    will_clear_gb = min(round(used_gb, 1), float(chunk_gb))
+    will_clear_display = int(will_clear_gb) if will_clear_gb == int(will_clear_gb) else will_clear_gb
+    description = f'Сброс {will_clear_display} ГБ Белого интернета'
+
+    success = await subtract_user_balance(db, user, final_price, description, commit=False)
+    if not success:
+        return False
+
+    await create_transaction(
+        db=db,
+        user_id=user.id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        amount_kopeks=final_price,
+        description=description,
+        commit=False,
+    )
+
+    await reset_whitelist_subscription_traffic(
+        db,
+        subscription,
+        chunk_gb=chunk_gb,
+        commit=True,
+        now=now,
+    )
+
+    await _delete_cart_for_subscription(user.id, cart_data)
+
+    try:
+        await notify_telegram_user_about_cabinet_purchase(
+            user,
+            f'✅ <b>Расход LTE сброшен!</b>\n\n'
+            f'📉 Списано расхода: {will_clear_display} ГБ\n'
+            f'💰 Списано: {settings.format_price(final_price)}',
+        )
+    except Exception as e:
+        logger.warning('Failed to notify user about auto-purchase traffic_reset', error=e)
+
+    logger.info('✅ Автопокупка traffic_reset успешно выполнена', user_id=user.id, subscription_id=subscription.id)
     return True
 
 
@@ -3224,6 +3376,8 @@ async def _process_single_cart(
         return await _auto_add_devices(db, user, cart_data, bot=bot)
     if cart_mode == 'add_traffic':
         return await _auto_add_traffic(db, user, cart_data, bot=bot)
+    if cart_mode == 'traffic_reset':
+        return await _auto_reset_traffic(db, user, cart_data, bot=bot)
 
     logger.warning(
         'Автопокупка: неизвестный cart_mode, пропускаем',

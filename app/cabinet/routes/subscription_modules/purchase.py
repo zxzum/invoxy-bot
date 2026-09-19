@@ -306,11 +306,18 @@ async def _build_tariff_response(
         'min_traffic_gb': tariff.min_traffic_gb,
         'max_traffic_gb': tariff.max_traffic_gb,
         # Докупка трафика
-        'traffic_topup_enabled': tariff.traffic_topup_enabled,
+        'traffic_topup_enabled': tariff.traffic_topup_enabled and (getattr(tariff, 'traffic_topup_max_per_month', 0) or 0) > 0,
         'traffic_topup_packages': tariff.get_traffic_topup_packages()
-        if hasattr(tariff, 'get_traffic_topup_packages')
+        if hasattr(tariff, 'get_traffic_topup_packages') and (getattr(tariff, 'traffic_topup_max_per_month', 0) or 0) > 0
         else {},
+        'traffic_topup_max_per_month': getattr(tariff, 'traffic_topup_max_per_month', 0) or 0,
         'max_topup_traffic_gb': tariff.max_topup_traffic_gb,
+        # Сброс расхода LTE
+        'whitelist_reset_enabled': getattr(tariff, 'whitelist_reset_enabled', False) or False,
+        'whitelist_reset_chunk_gb': getattr(tariff, 'whitelist_reset_chunk_gb', 50) or 50,
+        'whitelist_reset_price_kopeks': getattr(tariff, 'whitelist_reset_price_kopeks', 15000) or 15000,
+        'whitelist_reset_min_used_gb': getattr(tariff, 'whitelist_reset_min_used_gb', 10) or 10,
+        'whitelist_reset_max_per_month': getattr(tariff, 'whitelist_reset_max_per_month', 0) or 0,
         # Дневной тариф
         'is_daily': getattr(tariff, 'is_daily', False),
         'daily_price_kopeks': daily_price,
@@ -406,6 +413,17 @@ async def get_purchase_options(
                     tariff_data['is_purchased'] = False
                 tariff_responses.append(tariff_data)
 
+            from .traffic import build_traffic_reset_status
+
+            active_tariff = (
+                await get_tariff_by_id(db, subscription.tariff_id)
+                if (subscription and subscription.tariff_id)
+                else None
+            )
+            traffic_reset_status = build_traffic_reset_status(
+                subscription, active_tariff, user
+            ).model_dump()
+
             return {
                 'sales_mode': 'tariffs',
                 'tariffs': tariff_responses,
@@ -417,6 +435,7 @@ async def get_purchase_options(
                 'subscription_is_expired': subscription_is_expired,
                 'subscription_on_free_tariff': subscription_on_free_tariff,
                 'has_subscription': subscription is not None,
+                'traffic_reset': traffic_reset_status,
                 # Multi-tariff: all tariffs purchased flag for frontend fallback
                 'all_tariffs_purchased': len(purchased_tariff_ids) >= len(tariffs)
                 if settings.is_multi_tariff_enabled()

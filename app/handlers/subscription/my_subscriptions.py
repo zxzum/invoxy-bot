@@ -148,7 +148,16 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
 
     if not is_inactive:
         buttons.append([types.InlineKeyboardButton(text='💳 Автоплатеж', callback_data='subscription_autopay')])
-        buttons.append([types.InlineKeyboardButton(text='📊 Трафик', callback_data=f'st:{sub_id}')])
+        has_traffic_feature = sub is not None and not getattr(sub, 'is_trial', False) and (
+            not sub.tariff or sub.tariff.can_topup_traffic() or getattr(sub.tariff, 'whitelist_reset_enabled', False)
+        )
+        if has_traffic_feature:
+            traffic_btn_text = (
+                '🔄 Сброс LTE'
+                if (sub.tariff and getattr(sub.tariff, 'whitelist_reset_enabled', False))
+                else '📊 Трафик'
+            )
+            buttons.append([types.InlineKeyboardButton(text=traffic_btn_text, callback_data=f'st:{sub_id}')])
         buttons.append([types.InlineKeyboardButton(text='📱 Устройства', callback_data=f'sd:{sub_id}')])
 
     if is_inactive:

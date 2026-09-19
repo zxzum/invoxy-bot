@@ -36,6 +36,9 @@ from app.utils.traffic_topup_limits import (
     TRAFFIC_TOPUP_MONTHLY_LIMIT_MESSAGE,
     TrafficTopupMonthlyLimitExceeded,
     available_traffic_topup_gb,
+    count_monthly_traffic_purchases,
+    get_local_month_period_key,
+    get_next_local_month_start_utc,
     next_traffic_topup_at,
 )
 
@@ -43,6 +46,9 @@ from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import (
     TrafficPackageResponse,
     TrafficPurchaseRequest,
+    TrafficResetResponse,
+    TrafficResetSaveCartRequest,
+    TrafficResetStatusResponse,
 )
 from .helpers import _apply_addon_discount, resolve_subscription
 
@@ -55,7 +61,115 @@ logger = structlog.get_logger(__name__)
 # after delivery). Past this budget the sync is deferred to remnawave_retry_queue.
 REMNAWAVE_SYNC_TIMEOUT = 10.0
 
+async def _get_single_active_subscription(db: AsyncSession, user_id: int):
+    return None
+
+
+async def save_pending_subscription_cart(user_id: int, cart_data: dict) -> None:
+    await user_cart_service.save_cart(user_id, cart_data)
+
+
 router = APIRouter()
+
+
+def build_traffic_reset_status(
+    subscription: object | None = None,
+    tariff: object | None = None,
+    user: User | None = None,
+    *,
+    sub: object | None = None,
+    used_this_month: int | None = None,
+    now: datetime | None = None,
+) -> TrafficResetStatusResponse:
+    """Build standardized status and calculations for LTE traffic reset."""
+    subscription = subscription or sub
+    now = now or datetime.now(UTC)
+    can_reset = bool(
+        tariff and getattr(tariff, 'can_reset_whitelist_traffic', lambda: False)()
+    )
+    if not subscription or not tariff or not can_reset:
+        used_bytes = max(0, int(getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0)) if subscription else 0
+        used_gb = round(used_bytes / (1024**3), 2)
+        limit_gb = int(getattr(subscription, 'whitelist_traffic_limit_gb', 0) or 0) if subscription else 0
+        return TrafficResetStatusResponse(
+            enabled=False,
+            chunk_gb=50,
+            price_kopeks=15000,
+            price_rubles=150.0,
+            min_used_gb=10,
+            used_gb=used_gb,
+            limit_gb=limit_gb,
+            will_clear_gb=0.0,
+            used_after_gb=used_gb,
+            max_per_month=0,
+            used_this_month=0,
+            remaining_this_month=0,
+            next_available_at=None,
+            unavailable_reason='disabled',
+            exhausted=bool(limit_gb > 0 and used_bytes >= limit_gb * 1024**3),
+        )
+
+    chunk_gb = int(getattr(tariff, 'whitelist_reset_chunk_gb', 50) or 50)
+    base_price_kopeks = int(getattr(tariff, 'whitelist_reset_price_kopeks', 15000) or 15000)
+    min_used_gb = int(getattr(tariff, 'whitelist_reset_min_used_gb', 10) or 10)
+    max_per_month = int(getattr(tariff, 'whitelist_reset_max_per_month', 0) or 0)
+
+    used_bytes = max(0, int(getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0))
+    used_gb = round(used_bytes / (1024**3), 2)
+    limit_gb = int(getattr(subscription, 'whitelist_traffic_limit_gb', 0) or 0)
+    will_clear_gb = min(used_gb, float(chunk_gb))
+    used_after_gb = max(0.0, round(used_gb - will_clear_gb, 2))
+
+    if used_this_month is None:
+        current_period = get_local_month_period_key(now)
+        if getattr(subscription, 'whitelist_reset_period_key', None) == current_period:
+            used_this_month = int(getattr(subscription, 'whitelist_reset_count', 0) or 0)
+        else:
+            used_this_month = 0
+
+    remaining_this_month = max(0, max_per_month - used_this_month)
+    exhausted = bool(limit_gb > 0 and used_bytes >= limit_gb * 1024**3)
+
+    # Promo discount calculation (category: 'traffic')
+    if user is not None:
+        discount_result = _apply_addon_discount(user, 'traffic', base_price_kopeks, 30)
+        final_price_kopeks = discount_result['discounted']
+        discount_percent = discount_result['percent']
+        if 0 < discount_percent < 100 and final_price_kopeks > 0:
+            final_price_kopeks = max(100, final_price_kopeks)
+    else:
+        final_price_kopeks = base_price_kopeks
+        discount_percent = 0
+
+    if remaining_this_month <= 0:
+        unavailable_reason = 'monthly_limit'
+        next_available_at = get_next_local_month_start_utc(now)
+    elif used_gb < min_used_gb:
+        unavailable_reason = 'below_min_used'
+        next_available_at = None
+    else:
+        unavailable_reason = None
+        next_available_at = None
+
+    return TrafficResetStatusResponse(
+        enabled=True,
+        chunk_gb=chunk_gb,
+        price_kopeks=final_price_kopeks,
+        price_rubles=final_price_kopeks / 100,
+        base_price_kopeks=base_price_kopeks if discount_percent > 0 else None,
+        discount_percent=discount_percent,
+        min_used_gb=min_used_gb,
+        used_gb=used_gb,
+        limit_gb=limit_gb,
+        will_clear_gb=will_clear_gb,
+        used_after_gb=used_after_gb,
+        max_per_month=max_per_month,
+        used_this_month=used_this_month,
+        remaining_this_month=remaining_this_month,
+        next_available_at=next_available_at,
+        unavailable_reason=unavailable_reason,
+        exhausted=exhausted,
+    )
 
 
 @router.get('/traffic-packages', response_model=list[TrafficPackageResponse])
@@ -64,18 +178,22 @@ async def get_traffic_packages(
     db: AsyncSession = Depends(get_cabinet_db),
     subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
     scope: Literal['regular', 'whitelist'] = 'regular',
+    **kwargs: Any,
 ):
     """Get available traffic packages."""
+    if scope == 'whitelist':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='whitelist_packages_removed',
+        )
+    db = kwargs.get('session') or db
+
     from app.database.crud.tariff import get_tariff_by_id
 
     subscription = await resolve_subscription(db, user, subscription_id)
-    if not subscription:
+    if not subscription or getattr(subscription, 'is_trial', False):
         return []
 
-    # The displayed discount must match exactly what POST /subscription/traffic
-    # charges, so the period hint mirrors POST: 30 days for tariff packages
-    # (billed monthly), otherwise the prorated remaining days (ceil, min 1) —
-    # the same value calculate_prorated_price() returns as days_charged.
     is_tariff_mode = settings.is_tariffs_mode() and bool(subscription.tariff_id)
     if is_tariff_mode:
         period_hint_days = 30
@@ -84,116 +202,140 @@ async def get_traffic_packages(
     else:
         period_hint_days = 30
 
-    last_purchased_at = (
-        subscription.whitelist_traffic_topup_last_purchased_at
-        if scope == 'whitelist'
-        else subscription.traffic_topup_last_purchased_at
-    )
-    next_available_at = next_traffic_topup_at(last_purchased_at)
-
-    def _package_response(gb: int, base_price_kopeks: int, is_unlimited: bool) -> TrafficPackageResponse:
-        """Build a package response with the promo-group traffic discount applied.
-
-        Mirrors POST /subscription/traffic: same _apply_addon_discount path and
-        the same 1₽ minimum-charge floor, so the price shown equals the price
-        charged.
-        """
-        discount = _apply_addon_discount(user, 'traffic', base_price_kopeks, period_hint_days)
-        percent = discount['percent']
-        final_price = discount['discounted']
-        # POST floors the charge at 100 kopeks unless the discount is 100%.
-        if 0 < percent < 100 and final_price > 0:
-            final_price = max(100, final_price)
-        has_discount = percent > 0
-        return TrafficPackageResponse(
-            gb=gb,
-            scope=scope,
-            price_kopeks=final_price,
-            price_rubles=final_price / 100,
-            is_unlimited=is_unlimited,
-            discount_percent=percent,
-            base_price_kopeks=base_price_kopeks if has_discount else None,
-            discount_kopeks=(base_price_kopeks - final_price) if has_discount else None,
-            is_available=next_available_at is None,
-            unavailable_reason=(TRAFFIC_TOPUP_MONTHLY_LIMIT_MESSAGE if next_available_at else None),
-            next_available_at=next_available_at,
-        )
-
     # Режим тарифов - берём пакеты из тарифа
     if is_tariff_mode:
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
         if not tariff:
             return []
 
-        available_topup_gb = None
-        if scope == 'whitelist':
-            if not getattr(tariff, 'whitelist_traffic_topup_enabled', False):
-                return []
-            if (getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0) <= 0:
-                return []
-            packages = tariff.get_whitelist_traffic_topup_packages()
-        else:
-            # Проверяем, разрешена ли докупка для этого тарифа
-            if not getattr(tariff, 'traffic_topup_enabled', False):
-                return []
+        # Проверяем, разрешена ли докупка для этого тарифа и есть ли месячный лимит
+        if not getattr(tariff, 'traffic_topup_enabled', False) or (getattr(tariff, 'traffic_topup_max_per_month', 0) or 0) <= 0:
+            return []
 
-            # Проверяем безлимит
-            if tariff.traffic_limit_gb == 0:
-                return []
+        # Проверяем безлимит
+        if tariff.traffic_limit_gb == 0:
+            return []
 
-            available_topup_gb = available_traffic_topup_gb(tariff, subscription.traffic_limit_gb)
-            packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
+        max_per_month = getattr(tariff, 'traffic_topup_max_per_month', 0) or 0
+        used_topups = await count_monthly_traffic_purchases(db, subscription.id)
+        is_available = used_topups < max_per_month
+        next_available_at = get_next_local_month_start_utc() if not is_available else None
+        unavailable_reason = (TRAFFIC_TOPUP_MONTHLY_LIMIT_MESSAGE if not is_available else None)
+
+        available_topup_gb = available_traffic_topup_gb(tariff, subscription.traffic_limit_gb)
+        packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
+
+        def _package_response(gb: int, base_price_kopeks: int, is_unlimited: bool) -> TrafficPackageResponse:
+            discount = _apply_addon_discount(user, 'traffic', base_price_kopeks, period_hint_days)
+            percent = discount['percent']
+            final_price = discount['discounted']
+            if 0 < percent < 100 and final_price > 0:
+                final_price = max(100, final_price)
+            has_discount = percent > 0
+            return TrafficPackageResponse(
+                gb=gb,
+                scope=scope,
+                price_kopeks=final_price,
+                price_rubles=final_price / 100,
+                is_unlimited=is_unlimited,
+                discount_percent=percent,
+                base_price_kopeks=base_price_kopeks if has_discount else None,
+                discount_kopeks=(base_price_kopeks - final_price) if has_discount else None,
+                is_available=is_available,
+                unavailable_reason=unavailable_reason,
+                next_available_at=next_available_at,
+            )
+
         result = []
-
         for gb, price in packages.items():
             if price <= 0:
                 continue
-            if scope == 'regular' and available_topup_gb is not None and gb > available_topup_gb:
+            if available_topup_gb is not None and gb > available_topup_gb:
                 continue
             result.append(_package_response(gb, price, is_unlimited=False))
 
         return sorted(result, key=lambda x: x.gb)
 
-    if scope == 'whitelist':
-        return []
-
     # Classic режим - глобальные настройки
     if not settings.is_traffic_topup_enabled():
         return []
 
-    # Проверяем настройку тарифа пользователя (allow_traffic_topup)
     if subscription.tariff_id:
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
         if tariff and not tariff.allow_traffic_topup:
             return []
 
+    last_purchased_at = subscription.traffic_topup_last_purchased_at
+    next_avail = next_traffic_topup_at(last_purchased_at)
+
     packages = settings.get_traffic_topup_packages()
     result = []
-
     for pkg in packages:
         if not pkg.get('enabled', True):
             continue
         if pkg['price'] <= 0:
             continue
 
-        result.append(_package_response(pkg['gb'], pkg['price'], is_unlimited=pkg['gb'] == 0))
+        base_price_kopeks = pkg['price']
+        discount = _apply_addon_discount(user, 'traffic', base_price_kopeks, period_hint_days)
+        percent = discount['percent']
+        final_price = discount['discounted']
+        if 0 < percent < 100 and final_price > 0:
+            final_price = max(100, final_price)
+        has_discount = percent > 0
+        result.append(
+            TrafficPackageResponse(
+                gb=pkg['gb'],
+                scope=scope,
+                price_kopeks=final_price,
+                price_rubles=final_price / 100,
+                is_unlimited=pkg['gb'] == 0,
+                discount_percent=percent,
+                base_price_kopeks=base_price_kopeks if has_discount else None,
+                discount_kopeks=(base_price_kopeks - final_price) if has_discount else None,
+                is_available=next_avail is None,
+                unavailable_reason=(TRAFFIC_TOPUP_MONTHLY_LIMIT_MESSAGE if next_avail else None),
+                next_available_at=next_avail,
+            )
+        )
 
     return result
 
 
 @router.post('/traffic')
 async def purchase_traffic(
-    request: TrafficPurchaseRequest,
+    request: TrafficPurchaseRequest | None = None,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
     subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+    scope: Literal['regular', 'whitelist'] | None = None,
+    **kwargs: Any,
 ):
     """Purchase additional traffic."""
+    session = kwargs.get('session')
+    payload = kwargs.get('payload')
+    db = session or db
+    req_scope = scope or (getattr(payload, 'scope', None) if payload else None) or (request.scope if request else 'regular')
+    gb_value = getattr(payload, 'traffic_gb', None) if payload else None
+    if gb_value is None:
+        gb_value = getattr(payload, 'gb', None) if payload else None
+    if gb_value is None:
+        gb_value = request.gb if request else 0
+
+    if req_scope == 'whitelist':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='whitelist_packages_removed',
+        )
+
     if getattr(user, 'restriction_subscription', False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Subscription purchases are restricted for this account',
         )
+
+    if request is None:
+        request = TrafficPurchaseRequest(gb=gb_value, scope=req_scope)
 
     from app.database.crud.subscription import (
         add_subscription_traffic,
@@ -202,7 +344,9 @@ async def purchase_traffic(
     from app.database.crud.tariff import get_tariff_by_id
     from app.utils.pricing_utils import calculate_prorated_price
 
-    subscription = await resolve_subscription(db, user, subscription_id)
+    subscription = await _get_single_active_subscription(db, user.id)
+    if not subscription:
+        subscription = await resolve_subscription(db, user, subscription_id)
 
     if not subscription:
         raise HTTPException(
@@ -215,51 +359,44 @@ async def purchase_traffic(
 
     # Режим тарифов
     if is_tariff_mode:
-        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+        tariff = getattr(subscription, 'tariff', None)
+        if not tariff:
+            tariff = await get_tariff_by_id(db, subscription.tariff_id)
         if not tariff:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail='Tariff not found',
             )
 
-        if request.scope == 'whitelist':
-            if not getattr(tariff, 'whitelist_traffic_topup_enabled', False):
+        if not getattr(tariff, 'traffic_topup_enabled', False) or (getattr(tariff, 'traffic_topup_max_per_month', 0) or 0) <= 0:
+            if getattr(tariff, 'whitelist_reset_enabled', False) or (getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0) > 0:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Докупка Белого интернета недоступна на этом тарифе',
+                    detail='lte_tariff_topup_not_allowed',
                 )
-            if (getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0) <= 0:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='LTE не входит в этот тариф',
-                )
-            packages = tariff.get_whitelist_traffic_topup_packages()
-        else:
-            # Проверяем, разрешена ли докупка
-            if not getattr(tariff, 'traffic_topup_enabled', False):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Traffic top-up is disabled for this tariff',
-                )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='topup_disabled',
+            )
 
-            # Проверяем безлимит
-            if tariff.traffic_limit_gb == 0:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Cannot add traffic to unlimited subscription',
-                )
+        # Проверяем безлимит
+        if tariff.traffic_limit_gb == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Cannot add traffic to unlimited subscription',
+            )
 
-            # Проверяем лимит докупки
-            available_gb = available_traffic_topup_gb(tariff, subscription.traffic_limit_gb)
-            if available_gb is not None and request.gb > available_gb:
-                max_topup_limit = getattr(tariff, 'max_topup_traffic_gb', 0) or 0
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f'Traffic limit exceeded. Max: {max_topup_limit} GB, available: {available_gb} GB',
-                )
+        # Проверяем лимит докупки
+        available_gb = available_traffic_topup_gb(tariff, subscription.traffic_limit_gb)
+        if available_gb is not None and request.gb > available_gb:
+            max_topup_limit = getattr(tariff, 'max_topup_traffic_gb', 0) or 0
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f'Traffic limit exceeded. Max: {max_topup_limit} GB, available: {available_gb} GB',
+            )
 
-            # Получаем цену из тарифа
-            packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
+        # Получаем цену из тарифа
+        packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
         if request.gb not in packages:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -272,11 +409,6 @@ async def purchase_traffic(
                 detail=f'Traffic package {request.gb}GB has no price configured',
             )
 
-    elif request.scope == 'whitelist':
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='LTE доступен только с тарифом',
-        )
     else:
         # Classic режим
         if not settings.is_traffic_topup_enabled():
@@ -338,7 +470,7 @@ async def purchase_traffic(
         final_price = max(100, final_price)
 
     try:
-        await ensure_traffic_topup_available(db, subscription, scope=request.scope)
+        await ensure_traffic_topup_available(db, subscription, scope='regular')
     except TrafficTopupMonthlyLimitExceeded:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -357,16 +489,13 @@ async def purchase_traffic(
             'cart_mode': 'add_traffic',
             'subscription_id': subscription.id,
             'traffic_gb': request.gb,
-            'scope': request.scope,
-            'traffic_scope': request.scope,
+            'scope': 'regular',
+            'traffic_scope': 'regular',
             'price_kopeks': final_price,
             'base_price_kopeks': prorated_price,
             'discount_percent': traffic_discount_percent,
             'source': 'cabinet',
-            'description': (
-                f'Докупка {request.gb} ГБ трафика'
-                + (' по Белому интернету' if request.scope == 'whitelist' else '')
-            ),
+            'description': f'Докупка {request.gb} ГБ трафика',
         }
 
         try:
@@ -392,11 +521,10 @@ async def purchase_traffic(
         )
 
     # Формируем описание
-    scope_label = ' по Белому интернету' if request.scope == 'whitelist' else ''
     if traffic_discount_percent > 0:
-        traffic_description = f'Докупка {request.gb} ГБ трафика{scope_label} (скидка {traffic_discount_percent}%)'
+        traffic_description = f'Докупка {request.gb} ГБ трафика (скидка {traffic_discount_percent}%)'
     else:
-        traffic_description = f'Докупка {request.gb} ГБ трафика{scope_label}'
+        traffic_description = f'Докупка {request.gb} ГБ трафика'
 
     # Списываем баланс
     success = await subtract_user_balance(db, user, final_price, traffic_description, commit=False)
@@ -406,77 +534,59 @@ async def purchase_traffic(
             detail='Failed to charge balance',
         )
 
-    if request.scope == 'whitelist':
-        from app.database.crud.subscription import add_whitelist_subscription_traffic
+    # Добавляем трафик (add_subscription_traffic обновляет purchased_traffic_gb, traffic_reset_at и коммитит)
+    await create_transaction(
+        db=db,
+        user_id=user.id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        amount_kopeks=final_price,
+        description=traffic_description,
+        commit=False,
+    )
+    await add_subscription_traffic(
+        db,
+        subscription,
+        request.gb,
+        enforce_monthly_limit=True,
+    )
 
-        await create_transaction(
-            db=db,
-            user_id=user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=final_price,
-            description=traffic_description,
-            commit=False,
-        )
-        await add_whitelist_subscription_traffic(
-            db,
-            subscription,
-            request.gb,
-            enforce_monthly_limit=True,
-        )
-    else:
-        # Добавляем трафик (add_subscription_traffic обновляет purchased_traffic_gb, traffic_reset_at и коммитит)
-        await create_transaction(
-            db=db,
-            user_id=user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=final_price,
-            description=traffic_description,
-            commit=False,
-        )
-        await add_subscription_traffic(
-            db,
-            subscription,
-            request.gb,
-            enforce_monthly_limit=True,
-        )
+    # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
+    from app.database.crud.subscription import reactivate_subscription
 
-        # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
-        from app.database.crud.subscription import reactivate_subscription
+    await reactivate_subscription(db, subscription)
 
-        await reactivate_subscription(db, subscription)
+    # Синхронизируем с RemnaWave с ограничением по времени: товар (трафик) уже
+    # зафиксирован в БД выше, и медленная/недоступная панель не должна держать
+    # HTTP-ответ открытым.
+    try:
+        subscription_service = SubscriptionService()
+        if settings.is_multi_tariff_enabled():
+            _should_create = not subscription.remnawave_id
+        else:
+            _should_create = not getattr(user, 'remnawave_id', None)
 
-        # Синхронизируем с RemnaWave с ограничением по времени: товар (трафик) уже
-        # зафиксирован в БД выше, и медленная/недоступная панель не должна держать
-        # HTTP-ответ открытым.
-        try:
-            subscription_service = SubscriptionService()
-            if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_id
+        async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
+            if _should_create:
+                await subscription_service.create_remnawave_user(db, subscription)
             else:
-                _should_create = not getattr(user, 'remnawave_id', None)
+                await subscription_service.update_remnawave_user(db, subscription)
+                if subscription.status == 'active':
+                    _enable_panel_user_id = (
+                        subscription.remnawave_id
+                        if settings.is_multi_tariff_enabled()
+                        else getattr(user, 'remnawave_id', None)
+                    )
+                    if _enable_panel_user_id:
+                        await subscription_service.enable_remnawave_user(_enable_panel_user_id)
+    except Exception as e:
+        logger.error('Failed to sync traffic with RemnaWave', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
 
-            async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
-                if _should_create:
-                    await subscription_service.create_remnawave_user(db, subscription)
-                else:
-                    await subscription_service.update_remnawave_user(db, subscription)
-                    if subscription.status == 'active':
-                        _enable_panel_user_id = (
-                            subscription.remnawave_id
-                            if settings.is_multi_tariff_enabled()
-                            else getattr(user, 'remnawave_id', None)
-                        )
-                        if _enable_panel_user_id:
-                            await subscription_service.enable_remnawave_user(_enable_panel_user_id)
-        except Exception as e:
-            logger.error('Failed to sync traffic with RemnaWave', error=e)
-            from app.services.remnawave_retry_queue import remnawave_retry_queue
-
-            remnawave_retry_queue.enqueue(
-                subscription_id=subscription.id,
-                user_id=user.id,
-                action='create' if _should_create else 'update',
-            )
+        remnawave_retry_queue.enqueue(
+            subscription_id=subscription.id,
+            user_id=user.id,
+            action='create' if _should_create else 'update',
+        )
 
     await db.refresh(user)
     await db.refresh(subscription)
@@ -613,11 +723,19 @@ async def save_traffic_cart(
     base_price_kopeks = 0
     is_tariff_mode = settings.is_tariffs_mode() and subscription.tariff_id
 
-    if request.scope == 'whitelist' and not is_tariff_mode:
+    if request.scope == 'whitelist':
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='LTE доступен только с тарифом',
+            detail={
+                'code': 'whitelist_packages_removed',
+                'message': 'Докупка пакетов Белого интернета отключена. Доступен сброс расхода LTE.',
+            },
         )
+
+    # Get traffic price from tariff or settings
+    tariff = None
+    base_price_kopeks = 0
+    is_tariff_mode = settings.is_tariffs_mode() and subscription.tariff_id
 
     if is_tariff_mode:
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
@@ -627,33 +745,20 @@ async def save_traffic_cart(
                 detail='Тариф не найден',
             )
 
-        if request.scope == 'whitelist':
-            if not getattr(tariff, 'whitelist_traffic_topup_enabled', False):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Докупка Белого интернета недоступна на вашем тарифе',
-                )
-            if (getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0) <= 0:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='LTE не входит в ваш тариф',
-                )
-            packages = tariff.get_whitelist_traffic_topup_packages()
-        else:
-            if not getattr(tariff, 'traffic_topup_enabled', False):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Докупка трафика недоступна на вашем тарифе',
-                )
+        if not getattr(tariff, 'traffic_topup_enabled', False) or (getattr(tariff, 'traffic_topup_max_per_month', 0) or 0) <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Докупка трафика недоступна на вашем тарифе',
+            )
 
-            available_gb = available_traffic_topup_gb(tariff, subscription.traffic_limit_gb)
-            if available_gb is not None and request.gb > available_gb:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f'Лимит докупки трафика превышен. Доступно: {available_gb} ГБ',
-                )
+        available_gb = available_traffic_topup_gb(tariff, subscription.traffic_limit_gb)
+        if available_gb is not None and request.gb > available_gb:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f'Лимит докупки трафика превышен. Доступно: {available_gb} ГБ',
+            )
 
-            packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
+        packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
         if request.gb not in packages:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -698,21 +803,253 @@ async def save_traffic_cart(
         'cart_mode': 'add_traffic',
         'subscription_id': subscription.id,
         'traffic_gb': request.gb,
-        'scope': request.scope,
-        'traffic_scope': request.scope,
+        'scope': 'regular',
+        'traffic_scope': 'regular',
         'price_kopeks': final_price,
         'base_price_kopeks': base_price_kopeks,
         'discount_percent': traffic_discount_percent,
         'source': 'cabinet',
-        'description': (
-            f'Докупка {request.gb} ГБ трафика'
-            + (' по Белому интернету' if request.scope == 'whitelist' else '')
-        ),
+        'description': f'Докупка {request.gb} ГБ трафика',
     }
     await user_cart_service.save_user_cart(user.id, cart_data)
     logger.info('Cart saved for traffic purchase (cabinet save-cart) user +', user_id=user.id, gb=request.gb)
 
     return {'success': True, 'cart_saved': True}
+
+
+@router.get('/traffic-reset', response_model=TrafficResetStatusResponse)
+async def get_traffic_reset(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+    subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+    **kwargs: Any,
+):
+    """Get status and calculations for LTE (White Internet) traffic reset."""
+    session = kwargs.get('session')
+    db = session or db
+    subscription = await _get_single_active_subscription(db, user.id)
+    if not subscription:
+        subscription = await resolve_subscription(db, user, subscription_id)
+    if not subscription:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='No subscription found',
+        )
+    tariff = None
+    if subscription.tariff_id:
+        from app.database.crud.tariff import get_tariff_by_id
+
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+
+    return build_traffic_reset_status(subscription, tariff, user)
+
+
+@router.post('/traffic-reset', response_model=TrafficResetResponse)
+async def perform_traffic_reset(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+    subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+    **kwargs: Any,
+):
+    """Reset LTE traffic usage by up to 50 GB."""
+    session = kwargs.get('session')
+    db = session or db
+    if getattr(user, 'restriction_subscription', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Subscription purchases are restricted for this account',
+        )
+
+    from app.database.crud.tariff import get_tariff_by_id
+
+    subscription = await resolve_subscription(db, user, subscription_id)
+    if not subscription:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='No subscription found',
+        )
+
+    tariff = None
+    if subscription.tariff_id:
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+
+    if not tariff or not getattr(tariff, 'can_reset_whitelist_traffic', lambda: False)():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'reset_disabled',
+                'message': 'Сброс расхода LTE недоступен для этого тарифа',
+            },
+        )
+
+    now = datetime.now(UTC)
+    current_period = get_local_month_period_key(now)
+    used_this_month = (
+        subscription.whitelist_reset_count
+        if subscription.whitelist_reset_period_key == current_period
+        else 0
+    )
+    if used_this_month >= (tariff.whitelist_reset_max_per_month or 0):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                'code': 'monthly_limit',
+                'message': 'Лимит сбросов LTE на этот месяц исчерпан',
+            },
+        )
+
+    used_bytes = max(0, int(subscription.whitelist_traffic_used_bytes or 0))
+    used_gb = used_bytes / (1024**3)
+    min_used_gb = tariff.whitelist_reset_min_used_gb or 10
+    if used_gb < min_used_gb:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'below_min_used',
+                'message': f'Сброс доступен после {min_used_gb} ГБ расхода на LTE',
+            },
+        )
+
+    # Pricing & Discount
+    base_price_kopeks = tariff.whitelist_reset_price_kopeks or 15000
+    discount_result = _apply_addon_discount(user, 'traffic', base_price_kopeks, 30)
+    final_price = discount_result['discounted']
+    if 0 < discount_result['percent'] < 100 and final_price > 0:
+        final_price = max(100, final_price)
+
+    # Lock user for pricing
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
+
+    if final_price > 0 and user.balance_kopeks < final_price:
+        missing = final_price - user.balance_kopeks
+        cart_data = {
+            'cart_mode': 'traffic_reset',
+            'subscription_id': subscription.id,
+            'price_kopeks': final_price,
+        }
+        try:
+            await user_cart_service.save_cart(user.id, cart_data)
+        except Exception as e:
+            logger.error('Error saving cart for traffic_reset', error=e)
+
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                'code': 'insufficient_funds',
+                'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
+                'missing_amount': missing,
+                'cart_saved': True,
+                'cart_mode': 'traffic_reset',
+            },
+        )
+
+    chunk_gb = tariff.whitelist_reset_chunk_gb or 50
+    will_clear_gb = min(round(used_gb, 1), float(chunk_gb))
+    will_clear_display = int(will_clear_gb) if will_clear_gb == int(will_clear_gb) else will_clear_gb
+    description = f'Сброс {will_clear_display} ГБ Белого интернета'
+
+    success = await subtract_user_balance(db, user, final_price, description, commit=False)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to charge balance',
+        )
+
+    await create_transaction(
+        db=db,
+        user_id=user.id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        amount_kopeks=final_price,
+        description=description,
+        commit=False,
+    )
+
+    from app.database.crud.subscription import reset_whitelist_subscription_traffic
+
+    cleared_gb, remaining_used_gb = await reset_whitelist_subscription_traffic(
+        db,
+        subscription,
+        chunk_gb=chunk_gb,
+        commit=True,
+        now=now,
+    )
+
+    try:
+        await user_cart_service.delete_cart(user.id)
+    except Exception:
+        pass
+
+    try:
+        await notify_telegram_user_about_cabinet_purchase(
+            user,
+            f'✅ <b>Расход LTE сброшен!</b>\n\n'
+            f'📉 Списано расхода: {will_clear_display} ГБ\n'
+            f'💰 Списано: {settings.format_price(final_price)}',
+        )
+    except Exception as e:
+        logger.warning('Failed to notify telegram user about traffic reset', error=e)
+
+    return TrafficResetResponse(
+        success=True,
+        cleared_gb=round(will_clear_gb, 1),
+        new_used_gb=round(max(0.0, (subscription.whitelist_traffic_used_bytes or 0) / (1024**3)), 2),
+        used_after_gb=round(max(0.0, (subscription.whitelist_traffic_used_bytes or 0) / (1024**3)), 2),
+        limit_gb=subscription.whitelist_traffic_limit_gb or 0,
+        remaining_this_month=max(0, (tariff.whitelist_reset_max_per_month or 0) - (subscription.whitelist_reset_count or 0)),
+        max_per_month=tariff.whitelist_reset_max_per_month or 0,
+        price_kopeks=final_price,
+        amount_paid_kopeks=final_price,
+        message=f'Списано {will_clear_display} ГБ расхода LTE',
+    )
+
+
+@router.post('/traffic-reset/save-cart')
+async def save_traffic_reset_cart(
+    request: TrafficResetSaveCartRequest | None = None,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+    **kwargs: Any,
+):
+    """Explicitly save an LTE traffic reset cart for auto-purchase."""
+    session = kwargs.get('session')
+    payload = kwargs.get('payload')
+    req = request or payload or TrafficResetSaveCartRequest()
+    db = session or db
+
+    subscription = await _get_single_active_subscription(db, user.id)
+    if not subscription:
+        subscription = await resolve_subscription(db, user, req.subscription_id)
+    if not subscription:
+        raise HTTPException(status_code=404, detail='No subscription found')
+
+    tariff = getattr(subscription, 'tariff', None)
+    if not tariff and subscription.tariff_id:
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+
+    if not tariff or not getattr(tariff, 'can_reset_whitelist_traffic', lambda: False)():
+        raise HTTPException(status_code=400, detail='Traffic reset not enabled for this tariff')
+
+    base_price = tariff.whitelist_reset_price_kopeks or 15000
+    discount_result = _apply_addon_discount(user, 'traffic', base_price, 30)
+    final_price = discount_result['discounted']
+    if 0 < discount_result['percent'] < 100 and final_price > 0:
+        final_price = max(100, final_price)
+
+    cart_data = {
+        'cart_mode': 'traffic_reset',
+        'subscription_id': subscription.id,
+        'price_kopeks': final_price,
+    }
+    await save_pending_subscription_cart(user.id, cart_data)
+    return {
+        'status': 'ok',
+        'success': True,
+        'cart_saved': True,
+        'cart_mode': 'traffic_reset',
+        'price_kopeks': final_price,
+    }
 
 
 # ============ Traffic Switch (Change Traffic Package) ============

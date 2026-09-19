@@ -245,6 +245,12 @@ async def get_tariff(
         traffic_topup_enabled=tariff.traffic_topup_enabled,
         traffic_topup_packages=tariff.traffic_topup_packages or {},
         max_topup_traffic_gb=tariff.max_topup_traffic_gb,
+        traffic_topup_max_per_month=getattr(tariff, 'traffic_topup_max_per_month', 0) or 0,
+        whitelist_reset_enabled=getattr(tariff, 'whitelist_reset_enabled', False) or False,
+        whitelist_reset_chunk_gb=getattr(tariff, 'whitelist_reset_chunk_gb', 50) or 50,
+        whitelist_reset_price_kopeks=getattr(tariff, 'whitelist_reset_price_kopeks', 15000) or 15000,
+        whitelist_reset_min_used_gb=getattr(tariff, 'whitelist_reset_min_used_gb', 10) or 10,
+        whitelist_reset_max_per_month=getattr(tariff, 'whitelist_reset_max_per_month', 0) or 0,
         whitelist_traffic_topup_enabled=tariff.whitelist_traffic_topup_enabled,
         whitelist_traffic_topup_packages=tariff.whitelist_traffic_topup_packages or {},
         traffic_limit_gb=tariff.traffic_limit_gb,
@@ -312,6 +318,12 @@ async def create_new_tariff(
         traffic_topup_enabled=request.traffic_topup_enabled,
         traffic_topup_packages=request.traffic_topup_packages,
         max_topup_traffic_gb=request.max_topup_traffic_gb,
+        traffic_topup_max_per_month=request.traffic_topup_max_per_month,
+        whitelist_reset_enabled=request.whitelist_reset_enabled,
+        whitelist_reset_chunk_gb=request.whitelist_reset_chunk_gb,
+        whitelist_reset_price_kopeks=request.whitelist_reset_price_kopeks,
+        whitelist_reset_min_used_gb=request.whitelist_reset_min_used_gb,
+        whitelist_reset_max_per_month=request.whitelist_reset_max_per_month,
         whitelist_traffic_limit_gb=request.whitelist_traffic_limit_gb,
         whitelist_traffic_topup_enabled=request.whitelist_traffic_topup_enabled,
         whitelist_traffic_topup_packages=request.whitelist_traffic_topup_packages,
@@ -394,6 +406,18 @@ async def update_existing_tariff(
         updates['traffic_topup_packages'] = request.traffic_topup_packages
     if request.max_topup_traffic_gb is not None:
         updates['max_topup_traffic_gb'] = request.max_topup_traffic_gb
+    if request.traffic_topup_max_per_month is not None:
+        updates['traffic_topup_max_per_month'] = request.traffic_topup_max_per_month
+    if request.whitelist_reset_enabled is not None:
+        updates['whitelist_reset_enabled'] = request.whitelist_reset_enabled
+    if request.whitelist_reset_chunk_gb is not None:
+        updates['whitelist_reset_chunk_gb'] = request.whitelist_reset_chunk_gb
+    if request.whitelist_reset_price_kopeks is not None:
+        updates['whitelist_reset_price_kopeks'] = request.whitelist_reset_price_kopeks
+    if request.whitelist_reset_min_used_gb is not None:
+        updates['whitelist_reset_min_used_gb'] = request.whitelist_reset_min_used_gb
+    if request.whitelist_reset_max_per_month is not None:
+        updates['whitelist_reset_max_per_month'] = request.whitelist_reset_max_per_month
     if request.whitelist_traffic_limit_gb is not None:
         updates['whitelist_traffic_limit_gb'] = request.whitelist_traffic_limit_gb
     if request.whitelist_traffic_topup_enabled is not None:

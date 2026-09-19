@@ -200,9 +200,15 @@ async def create_tariff(
     traffic_topup_enabled: bool = False,
     traffic_topup_packages: dict[str, int] | None = None,
     max_topup_traffic_gb: int = 0,
+    traffic_topup_max_per_month: int = 0,
     whitelist_traffic_limit_gb: int = 0,
     whitelist_traffic_topup_enabled: bool = False,
     whitelist_traffic_topup_packages: dict[str, int] | None = None,
+    whitelist_reset_enabled: bool = False,
+    whitelist_reset_chunk_gb: int = 50,
+    whitelist_reset_price_kopeks: int = 15000,
+    whitelist_reset_min_used_gb: int = 10,
+    whitelist_reset_max_per_month: int = 0,
     is_daily: bool = False,
     daily_price_kopeks: int = 0,
     # UUID продукта Lava для рекуррентных подписок
@@ -247,9 +253,15 @@ async def create_tariff(
         traffic_topup_enabled=traffic_topup_enabled,
         traffic_topup_packages=traffic_topup_packages or {},
         max_topup_traffic_gb=max(0, max_topup_traffic_gb),
+        traffic_topup_max_per_month=max(0, traffic_topup_max_per_month),
         whitelist_traffic_limit_gb=max(0, whitelist_traffic_limit_gb),
         whitelist_traffic_topup_enabled=whitelist_traffic_topup_enabled,
         whitelist_traffic_topup_packages=whitelist_traffic_topup_packages or {},
+        whitelist_reset_enabled=whitelist_reset_enabled,
+        whitelist_reset_chunk_gb=max(1, whitelist_reset_chunk_gb),
+        whitelist_reset_price_kopeks=max(0, whitelist_reset_price_kopeks),
+        whitelist_reset_min_used_gb=max(0, whitelist_reset_min_used_gb),
+        whitelist_reset_max_per_month=max(0, whitelist_reset_max_per_month),
         is_daily=is_daily,
         daily_price_kopeks=max(0, daily_price_kopeks),
         lava_product_id=(lava_product_id or '').strip() or None,
@@ -323,9 +335,15 @@ async def update_tariff(
     traffic_topup_enabled: bool | None = None,
     traffic_topup_packages: dict[str, int] | None = None,
     max_topup_traffic_gb: int | None = None,
+    traffic_topup_max_per_month: int | None = None,
     whitelist_traffic_limit_gb: int | None = None,
     whitelist_traffic_topup_enabled: bool | None = None,
     whitelist_traffic_topup_packages: dict[str, int] | None = None,
+    whitelist_reset_enabled: bool | None = None,
+    whitelist_reset_chunk_gb: int | None = None,
+    whitelist_reset_price_kopeks: int | None = None,
+    whitelist_reset_min_used_gb: int | None = None,
+    whitelist_reset_max_per_month: int | None = None,
     is_daily: bool | None = None,
     daily_price_kopeks: int | None = None,
     lava_product_id: str | None = None,
@@ -396,12 +414,24 @@ async def update_tariff(
         tariff.traffic_topup_packages = traffic_topup_packages
     if max_topup_traffic_gb is not None:
         tariff.max_topup_traffic_gb = max(0, max_topup_traffic_gb)
+    if traffic_topup_max_per_month is not None:
+        tariff.traffic_topup_max_per_month = max(0, traffic_topup_max_per_month)
     if whitelist_traffic_limit_gb is not None:
         tariff.whitelist_traffic_limit_gb = max(0, whitelist_traffic_limit_gb)
     if whitelist_traffic_topup_enabled is not None:
         tariff.whitelist_traffic_topup_enabled = whitelist_traffic_topup_enabled
     if whitelist_traffic_topup_packages is not None:
         tariff.whitelist_traffic_topup_packages = whitelist_traffic_topup_packages
+    if whitelist_reset_enabled is not None:
+        tariff.whitelist_reset_enabled = whitelist_reset_enabled
+    if whitelist_reset_chunk_gb is not None:
+        tariff.whitelist_reset_chunk_gb = max(1, whitelist_reset_chunk_gb)
+    if whitelist_reset_price_kopeks is not None:
+        tariff.whitelist_reset_price_kopeks = max(0, whitelist_reset_price_kopeks)
+    if whitelist_reset_min_used_gb is not None:
+        tariff.whitelist_reset_min_used_gb = max(0, whitelist_reset_min_used_gb)
+    if whitelist_reset_max_per_month is not None:
+        tariff.whitelist_reset_max_per_month = max(0, whitelist_reset_max_per_month)
     if is_daily is not None:
         tariff.is_daily = is_daily
     if daily_price_kopeks is not None:

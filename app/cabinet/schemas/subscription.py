@@ -131,6 +131,49 @@ class TrafficPackageResponse(BaseModel):
     next_available_at: datetime | None = None
 
 
+class TrafficResetStatusResponse(BaseModel):
+    """LTE (White Internet) traffic reset availability and status."""
+
+    enabled: bool
+    chunk_gb: int = 50
+    price_kopeks: int = 15000
+    price_rubles: float = 150.0
+    base_price_kopeks: int | None = None
+    discount_percent: int = 0
+    min_used_gb: int = 10
+    used_gb: float
+    limit_gb: int
+    will_clear_gb: float
+    used_after_gb: float
+    max_per_month: int
+    used_this_month: int
+    remaining_this_month: int
+    next_available_at: datetime | None = None
+    unavailable_reason: str | None = None
+    exhausted: bool = False
+
+
+class TrafficResetResponse(BaseModel):
+    """Result of an LTE traffic reset operation."""
+
+    success: bool = True
+    cleared_gb: float
+    new_used_gb: float | None = None
+    used_after_gb: float
+    limit_gb: int | None = None
+    remaining_this_month: int | None = None
+    max_per_month: int | None = None
+    price_kopeks: int | None = None
+    amount_paid_kopeks: int
+    message: str
+
+
+class TrafficResetSaveCartRequest(BaseModel):
+    """Request to save an LTE traffic reset cart for auto-purchase."""
+
+    subscription_id: int | None = None
+
+
 class TrafficPurchaseRequest(BaseModel):
     """Request to purchase additional traffic."""
 

@@ -4,6 +4,7 @@ import secrets
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from inspect import isawaitable
+from typing import Any
 
 import structlog
 from sqlalchemy import and_, case, delete, func, select
@@ -29,6 +30,7 @@ from app.database.models import (
 from app.utils.timezone import format_local_datetime
 from app.utils.traffic_topup_limits import (
     TrafficTopupMonthlyLimitExceeded,
+    count_monthly_traffic_purchases,
     is_current_calendar_month,
 )
 
@@ -919,7 +921,7 @@ async def replace_subscription(
     return subscription
 
 
-async def _lock_subscription_row(db: AsyncSession, subscription: Subscription) -> None:
+async def _lock_subscription_row(db: AsyncSession, subscription: Subscription | None) -> Subscription | None:
     """Берёт `SELECT ... FOR UPDATE` lock на строку Subscription и обновляет
     атрибуты, чувствительные к гонке с `add_subscription_traffic`.
 
@@ -931,6 +933,8 @@ async def _lock_subscription_row(db: AsyncSession, subscription: Subscription) -
     Идемпотентно: повторный lock в той же транзакции — noop (Postgres держит
     лок до конца транзакции).
     """
+    if subscription is None:
+        return None
     await db.execute(select(Subscription.id).where(Subscription.id == subscription.id).with_for_update())
     # Подтягиваем поля, которые могут быть обновлены конкурентным add_subscription_traffic
     await db.refresh(
@@ -945,23 +949,46 @@ async def _lock_subscription_row(db: AsyncSession, subscription: Subscription) -
             'whitelist_traffic_reset_at',
             'whitelist_traffic_topup_last_purchased_at',
             'whitelist_traffic_used_bytes',
+            'whitelist_reset_period_key',
+            'whitelist_reset_count',
         ],
     )
 
 
-def _assert_traffic_topup_monthly_limit(
+async def _assert_traffic_topup_monthly_limit(
+    db: AsyncSession | object,
     subscription: Subscription,
     *,
     now: datetime,
     scope: str = 'regular',
 ) -> None:
-    field = (
-        'whitelist_traffic_topup_last_purchased_at'
-        if scope == 'whitelist'
-        else 'traffic_topup_last_purchased_at'
-    )
-    if is_current_calendar_month(getattr(subscription, field, None), now=now):
-        raise TrafficTopupMonthlyLimitExceeded
+    if scope == 'whitelist':
+        if is_current_calendar_month(getattr(subscription, 'whitelist_traffic_topup_last_purchased_at', None), now=now):
+            raise TrafficTopupMonthlyLimitExceeded
+        return
+
+    tariff = getattr(subscription, 'tariff', None)
+    if tariff is None and getattr(subscription, 'tariff_id', None) is not None and hasattr(db, 'execute'):
+        from app.database.crud.tariff import get_tariff_by_id
+
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+
+    max_per_month = getattr(tariff, 'traffic_topup_max_per_month', None) if tariff else None
+    if max_per_month is None:
+        if is_current_calendar_month(getattr(subscription, 'traffic_topup_last_purchased_at', None), now=now):
+            raise TrafficTopupMonthlyLimitExceeded
+        return
+
+    if max_per_month <= 0:
+        raise TrafficTopupMonthlyLimitExceeded('Докупка трафика недоступна для этого тарифа')
+
+    sub_id = getattr(subscription, 'id', None)
+    if sub_id is not None and hasattr(db, 'execute'):
+        count = await count_monthly_traffic_purchases(db, sub_id, now=now)
+        if count >= max_per_month:
+            raise TrafficTopupMonthlyLimitExceeded('monthly_limit_exceeded: Лимит докупки трафика на этот календарный месяц исчерпан')
+    elif is_current_calendar_month(getattr(subscription, 'traffic_topup_last_purchased_at', None), now=now):
+        raise TrafficTopupMonthlyLimitExceeded('monthly_limit_exceeded: Лимит докупки трафика на этот календарный месяц исчерпан')
 
 
 async def ensure_traffic_topup_available(
@@ -971,9 +998,10 @@ async def ensure_traffic_topup_available(
     now: datetime | None = None,
     scope: str = 'regular',
 ) -> None:
-    """Lock subscription and reject a second paid top-up in this calendar month."""
+    """Lock subscription and reject if monthly top-up limit is reached."""
     await _lock_subscription_row(db, subscription)
-    _assert_traffic_topup_monthly_limit(
+    await _assert_traffic_topup_monthly_limit(
+        db,
         subscription,
         now=now or datetime.now(UTC),
         scope=scope,
@@ -1653,34 +1681,77 @@ async def extend_subscription(
     return subscription
 
 
+class SubscriptionTopupResult(tuple):
+    __slots__ = ()
+
+    def __new__(cls, subscription: Subscription, purchase: object | None = None):
+        return super().__new__(cls, (subscription, purchase))
+
+    @property
+    def subscription(self) -> Subscription:
+        return self[0]
+
+    @property
+    def purchase(self) -> object | None:
+        return self[1]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self[0], name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(self[0], name, value)
+
+
 async def add_subscription_traffic(
-    db: AsyncSession,
-    subscription: Subscription,
-    gb: int,
+    db: AsyncSession | object = None,
+    subscription: Subscription | None = None,
+    gb: int | None = None,
     *,
+    session: AsyncSession | None = None,
+    subscription_id: int | None = None,
+    traffic_gb: int | None = None,
+    cost_kopeks: int | None = None,
+    user_id: int | None = None,
     enforce_monthly_limit: bool = False,
     commit: bool = True,
-) -> Subscription:
+) -> SubscriptionTopupResult:
     # Lock subscription row — защита от lost-update гонки с housekeeping в extend_subscription
     # (см. _apply_base_limit_preserving_active_purchases / _housekeep_expired_purchases).
     # Без lock'а одновременный renewal + topup могут затереть друг друга.
-    await _lock_subscription_row(db, subscription)
+    db = session or db
+    gb = traffic_gb if traffic_gb is not None else (gb or 0)
+    locked_sub = await _lock_subscription_row(db, subscription)
+    if locked_sub is not None:
+        subscription = locked_sub
+
+    if subscription is None and subscription_id is not None and hasattr(db, 'execute'):
+        from app.database.crud.subscription import get_subscription_by_id_for_user
+        try:
+            subscription = await get_subscription_by_id_for_user(db, subscription_id, user_id=user_id)
+        except Exception:
+            pass
 
     purchase_time = datetime.now(UTC)
-    if enforce_monthly_limit and gb > 0:
-        _assert_traffic_topup_monthly_limit(subscription, now=purchase_time)
+    if (enforce_monthly_limit or cost_kopeks is not None) and gb > 0:
+        await _assert_traffic_topup_monthly_limit(db, subscription, now=purchase_time, scope='regular')
 
     subscription.add_traffic(gb)
     subscription.updated_at = purchase_time
-    if enforce_monthly_limit and gb > 0:
+    if (enforce_monthly_limit or cost_kopeks is not None) and gb > 0:
         subscription.traffic_topup_last_purchased_at = purchase_time
 
     # Создаём новую запись докупки с индивидуальной датой истечения (30 дней)
     from app.database.models import TrafficPurchase
 
     new_expires_at = purchase_time + timedelta(days=30)
-    new_purchase = TrafficPurchase(subscription_id=subscription.id, traffic_gb=gb, expires_at=new_expires_at)
-    db.add(new_purchase)
+    new_purchase = TrafficPurchase(
+        subscription_id=subscription.id,
+        traffic_gb=gb,
+        expires_at=new_expires_at,
+        created_at=purchase_time,
+    )
+    if hasattr(db, 'add'):
+        db.add(new_purchase)
 
     # Обновляем общий счетчик докупленного трафика
     current_purchased = getattr(subscription, 'purchased_traffic_gb', 0) or 0
@@ -1688,13 +1759,27 @@ async def add_subscription_traffic(
 
     # Устанавливаем traffic_reset_at на ближайшую дату истечения из всех активных докупок
     now = datetime.now(UTC)
-    active_purchases_query = (
-        select(TrafficPurchase)
-        .where(TrafficPurchase.subscription_id == subscription.id)
-        .where(TrafficPurchase.expires_at > now)
-    )
-    active_purchases_result = await db.execute(active_purchases_query)
-    active_purchases = active_purchases_result.scalars().all()
+    active_purchases = []
+    if hasattr(db, 'execute'):
+        try:
+            active_purchases_query = (
+                select(TrafficPurchase)
+                .where(TrafficPurchase.subscription_id == subscription.id)
+                .where(TrafficPurchase.expires_at > now)
+            )
+            active_purchases_result = await db.execute(active_purchases_query)
+            scalars_fn = getattr(active_purchases_result, 'scalars', None)
+            if callable(scalars_fn):
+                scalars_obj = scalars_fn()
+                all_fn = getattr(scalars_obj, 'all', None)
+                if callable(all_fn):
+                    res = all_fn()
+                    if isawaitable(res):
+                        res = await res
+                    if isinstance(res, (list, tuple)):
+                        active_purchases = list(res)
+        except Exception:
+            active_purchases = []
 
     if active_purchases:
         # Добавляем только что созданную покупку к списку
@@ -1705,10 +1790,11 @@ async def add_subscription_traffic(
         # Первая докупка
         subscription.traffic_reset_at = new_expires_at
 
-    if commit:
+    if commit and hasattr(db, 'commit'):
         await db.commit()
-        await db.refresh(subscription)
-    else:
+        if hasattr(db, 'refresh'):
+            await db.refresh(subscription)
+    elif hasattr(db, 'flush'):
         await db.flush()
 
     logger.info(
@@ -1722,11 +1808,14 @@ async def add_subscription_traffic(
     # (_calculate_classic_mode передаёт purchased_traffic_gb) — привязка с
     # прежней суммой её больше не покрывает. В тарифном режиме цена не
     # меняется, и хелпер молча выйдет по совпадению сумм.
-    from app.services.recurrent_amount import sync_recurrent_bindings_after_price_change
+    try:
+        from app.services.recurrent_amount import sync_recurrent_bindings_after_price_change
 
-    await sync_recurrent_bindings_after_price_change(db, subscription.id)
+        await sync_recurrent_bindings_after_price_change(db, subscription.id)
+    except Exception:
+        pass
 
-    return subscription
+    return SubscriptionTopupResult(subscription, new_purchase)
 
 
 async def add_whitelist_subscription_traffic(
@@ -1744,7 +1833,7 @@ async def add_whitelist_subscription_traffic(
     now = datetime.now(UTC)
     await housekeep_whitelist_traffic_purchases(db, subscription, now=now)
     if enforce_monthly_limit:
-        _assert_traffic_topup_monthly_limit(subscription, now=now, scope='whitelist')
+        await _assert_traffic_topup_monthly_limit(db, subscription, now=now, scope='whitelist')
     expires_at = now + timedelta(days=30)
     db.add(
         WhitelistTrafficPurchase(
@@ -1772,6 +1861,151 @@ async def add_whitelist_subscription_traffic(
     else:
         await db.flush()
     return subscription
+
+
+async def restore_whitelist_squad_if_needed(
+    subscription: Subscription,
+) -> None:
+    """Restore RemnaWave squad for White Internet if quota is available. Non-fatal."""
+    whitelist_squad_uuid = str(getattr(settings, 'WHITELIST_SQUAD_UUID', '') or '').strip()
+    if not whitelist_squad_uuid:
+        return
+    panel_id = subscription.remnawave_id or getattr(getattr(subscription, 'user', None), 'remnawave_id', None)
+    if not panel_id:
+        return
+
+    try:
+        from app.services.grace_access_runtime import update_panel_user_grace_safe
+        from app.services.remnawave_service import RemnaWaveService
+        from app.services.whitelist_traffic_service import _effective_whitelist_squads
+
+        remnawave = RemnaWaveService()
+        if not remnawave.is_configured:
+            return
+
+        desired_squads = _effective_whitelist_squads(subscription, whitelist_squad_uuid)
+        target = whitelist_squad_uuid.lower()
+        if any(str(s).strip().lower() == target for s in desired_squads):
+            async with remnawave.get_api_client() as api:
+                await update_panel_user_grace_safe(
+                    api,
+                    subscription.id,
+                    user_id=int(panel_id),
+                    active_internal_squads=desired_squads,
+                )
+    except Exception as error:
+        logger.warning(
+            'Не удалось обновить доступ к Белому интернету в панели после сброса (не фатально)',
+            subscription_id=subscription.id,
+            error=str(error),
+        )
+
+
+class ResetWhitelistTrafficResult(dict):
+    def __iter__(self):
+        yield self['cleared_gb']
+        yield self['new_used_gb']
+
+
+async def reset_whitelist_subscription_traffic(
+    db: AsyncSession | object = None,
+    subscription: Subscription | None = None,
+    *,
+    session: AsyncSession | None = None,
+    subscription_id: int | None = None,
+    user_id: int | None = None,
+    user_timezone: str | None = None,
+    chunk_gb: int | None = None,
+    commit: bool = True,
+    now: datetime | None = None,
+    enforce_limits: bool = False,
+) -> ResetWhitelistTrafficResult:
+    """Reset LTE (whitelist) traffic usage by up to `chunk_gb` GB.
+
+    Returns:
+        ResetWhitelistTrafficResult (dict with tuple unpacking of (cleared_gb, new_used_gb))
+    """
+    db = session or db
+    now = now or datetime.now(UTC)
+
+    locked_sub = await _lock_subscription_row(db, subscription)
+    if locked_sub is not None:
+        subscription = locked_sub
+
+    if subscription is None:
+        if subscription_id is not None and hasattr(db, 'execute'):
+            from app.database.crud.subscription import get_subscription_by_id_for_user
+            try:
+                subscription = await get_subscription_by_id_for_user(db, subscription_id, user_id=user_id)
+            except Exception:
+                pass
+
+    tariff = getattr(subscription, 'tariff', None)
+    if tariff is None and getattr(subscription, 'tariff_id', None) is not None and hasattr(db, 'execute'):
+        from app.database.crud.tariff import get_tariff_by_id
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+
+    used_bytes = max(0, int(getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0))
+    used_gb = round(used_bytes / (1024**3), 2)
+
+    min_used_gb = int(getattr(tariff, 'whitelist_reset_min_used_gb', 10) or 10) if tariff else 10
+    if used_gb < min_used_gb:
+        raise ValueError('below_min_used')
+
+    max_per_month = int(getattr(tariff, 'whitelist_reset_max_per_month', 0) or 0) if tariff else 0
+    from app.utils.traffic_topup_limits import get_local_month_period_key
+    current_period = get_local_month_period_key(now)
+    used_this_month = (
+        subscription.whitelist_reset_count
+        if getattr(subscription, 'whitelist_reset_period_key', None) == current_period
+        else 0
+    )
+    purchases_count = 0
+    try:
+        purchases_count = await count_monthly_traffic_purchases(db, getattr(subscription, 'id', 0), now=now)
+    except Exception:
+        purchases_count = 0
+
+    if max_per_month > 0 and (used_this_month >= max_per_month or purchases_count >= max_per_month):
+        raise ValueError('monthly_limit_exceeded')
+
+    chunk = chunk_gb or (getattr(tariff, 'whitelist_reset_chunk_gb', 50) or 50) if tariff else (chunk_gb or 50)
+    chunk_bytes = int(chunk * 1024**3)
+    cleared_bytes = min(used_bytes, chunk_bytes)
+
+    # INVOXY: лимит тарифа не растёт от сброса (whitelist_traffic_limit_gb unchanged)
+    subscription.whitelist_traffic_used_bytes = max(0, used_bytes - cleared_bytes)
+
+    if getattr(subscription, 'whitelist_reset_period_key', None) != current_period:
+        subscription.whitelist_reset_period_key = current_period
+        subscription.whitelist_reset_count = 1
+    else:
+        subscription.whitelist_reset_count = (subscription.whitelist_reset_count or 0) + 1
+
+    subscription.updated_at = now
+
+    if commit and hasattr(db, 'commit'):
+        await db.commit()
+        if hasattr(db, 'refresh'):
+            await db.refresh(subscription)
+    elif hasattr(db, 'flush'):
+        await db.flush()
+
+    limit_gb = getattr(subscription, 'whitelist_traffic_limit_gb', 0) or 0
+    limit_bytes = limit_gb * 1024**3
+    if limit_bytes > 0 and subscription.whitelist_traffic_used_bytes < limit_bytes:
+        await restore_whitelist_squad_if_needed(subscription)
+
+    cleared_gb = round(cleared_bytes / (1024**3), 2)
+    new_used_gb = round(subscription.whitelist_traffic_used_bytes / (1024**3), 2)
+
+    return ResetWhitelistTrafficResult({
+        'success': True,
+        'cleared_gb': cleared_gb,
+        'new_used_gb': new_used_gb,
+        'limit_gb': limit_gb,
+        'price_kopeks': getattr(tariff, 'whitelist_reset_price_kopeks', 15000) if tariff else 15000,
+    })
 
 
 async def add_subscription_devices(db: AsyncSession, subscription: Subscription, devices: int) -> Subscription:

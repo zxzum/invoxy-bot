@@ -91,6 +91,12 @@ class TariffDetailResponse(BaseModel):
     traffic_topup_enabled: bool = False
     traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
     max_topup_traffic_gb: int = 0
+    traffic_topup_max_per_month: int = 0
+    whitelist_reset_enabled: bool = False
+    whitelist_reset_chunk_gb: int = 50
+    whitelist_reset_price_kopeks: int = 15000
+    whitelist_reset_min_used_gb: int = 10
+    whitelist_reset_max_per_month: int = 0
     whitelist_traffic_topup_enabled: bool = False
     whitelist_traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
     traffic_limit_gb: int
@@ -157,6 +163,12 @@ class TariffCreateRequest(BaseModel):
     traffic_topup_enabled: bool = False
     traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
     max_topup_traffic_gb: int = Field(0, ge=0)
+    traffic_topup_max_per_month: int = Field(0, ge=0)
+    whitelist_reset_enabled: bool = False
+    whitelist_reset_chunk_gb: int = Field(50, ge=1)
+    whitelist_reset_price_kopeks: int = Field(15000, ge=0)
+    whitelist_reset_min_used_gb: int = Field(10, ge=0)
+    whitelist_reset_max_per_month: int = Field(0, ge=0)
     whitelist_traffic_limit_gb: int = Field(0, ge=0)
     whitelist_traffic_topup_enabled: bool = False
     whitelist_traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
@@ -206,6 +218,12 @@ class TariffUpdateRequest(BaseModel):
     traffic_topup_enabled: bool | None = None
     traffic_topup_packages: dict[str, int] | None = None
     max_topup_traffic_gb: int | None = Field(None, ge=0)
+    traffic_topup_max_per_month: int | None = Field(None, ge=0)
+    whitelist_reset_enabled: bool | None = None
+    whitelist_reset_chunk_gb: int | None = Field(None, ge=1)
+    whitelist_reset_price_kopeks: int | None = Field(None, ge=0)
+    whitelist_reset_min_used_gb: int | None = Field(None, ge=0)
+    whitelist_reset_max_per_month: int | None = Field(None, ge=0)
     whitelist_traffic_limit_gb: int | None = Field(None, ge=0)
     whitelist_traffic_topup_enabled: bool | None = None
     whitelist_traffic_topup_packages: dict[str, int] | None = None

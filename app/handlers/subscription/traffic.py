@@ -9,6 +9,8 @@ from app.config import PERIOD_PRICES, settings
 from app.database.crud.subscription import (
     add_subscription_traffic,
     reactivate_subscription,
+    reset_whitelist_subscription_traffic,
+    restore_whitelist_squad_if_needed,
 )
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
@@ -30,6 +32,10 @@ from app.services.user_cart_service import user_cart_service
 from app.states import SubscriptionStates
 from app.utils.pricing_utils import (
     calculate_prorated_price,
+)
+from app.utils.traffic_topup_limits import (
+    count_monthly_traffic_purchases,
+    get_local_month_period_key,
 )
 
 from .common import (
@@ -115,7 +121,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
     # Режим тарифов - проверяем настройки тарифа
     if settings.is_tariffs_mode() and subscription.tariff_id:
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
-        if not tariff or not tariff.can_topup_traffic():
+        if not tariff:
             await callback.answer(
                 texts.t(
                     'TARIFF_TRAFFIC_TOPUP_DISABLED',
@@ -123,6 +129,131 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                 ),
                 show_alert=True,
             )
+            return
+
+        # Если на тарифе включен сброс LTE расхода
+        if tariff.whitelist_reset_enabled:
+            used_bytes = getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0
+            used_gb = used_bytes / (1024**3)
+            limit_gb = getattr(subscription, 'whitelist_traffic_limit_gb', 0) or 0
+            chunk_gb = getattr(tariff, 'whitelist_reset_chunk_gb', 50) or 50
+            min_used_gb = getattr(tariff, 'whitelist_reset_min_used_gb', 10) or 10
+            max_per_month = getattr(tariff, 'whitelist_reset_max_per_month', 0) or 0
+
+            period_key = get_local_month_period_key()
+            used_this_month = (
+                getattr(subscription, 'whitelist_reset_count', 0)
+                if getattr(subscription, 'whitelist_reset_period_key', None) == period_key
+                else 0
+            )
+            remaining_this_month = max(0, max_per_month - used_this_month)
+            will_clear_gb = min(used_gb, float(chunk_gb))
+            used_after_gb = max(0.0, used_gb - will_clear_gb)
+
+            base_price = getattr(tariff, 'whitelist_reset_price_kopeks', 15000) or 15000
+            period_hint_days = _get_period_hint_from_subscription(subscription)
+            discounted_price, _, _ = PricingEngine.calculate_traffic_discount(
+                base_price,
+                db_user,
+                period_hint_days,
+            )
+            price_rubles = discounted_price // 100
+            back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'my_subscriptions'
+
+            if max_per_month > 0 and remaining_this_month <= 0:
+                text = (
+                    '🔄 <b>Сброс расхода LTE</b>\n\n'
+                    f'Потрачено сейчас: <b>{used_gb:.1f} ГБ</b> из {limit_gb} ГБ\n\n'
+                    f'⚠️ Лимит сбросов на этот месяц исчерпан ({max_per_month} из {max_per_month}).\n'
+                    'Следующий сброс будет доступен с 1-го числа следующего месяца.'
+                )
+                buttons = [[types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)]]
+                await callback.message.edit_text(
+                    text,
+                    reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+                    parse_mode='HTML',
+                )
+                await callback.answer()
+                return
+
+            if used_gb < min_used_gb:
+                text = (
+                    '🔄 <b>Сброс расхода LTE</b>\n\n'
+                    f'Потрачено сейчас: <b>{used_gb:.1f} ГБ</b> из {limit_gb} ГБ\n\n'
+                    f'⚠️ Сброс расхода доступен после {min_used_gb} ГБ расхода на LTE.'
+                )
+                buttons = [[types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)]]
+                await callback.message.edit_text(
+                    text,
+                    reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+                    parse_mode='HTML',
+                )
+                await callback.answer()
+                return
+
+            reconnect_line = ''
+            if limit_gb > 0 and used_gb >= limit_gb:
+                reconnect_line = '\n💡 <i>После оплаты Белый интернет включится снова.</i>\n'
+
+            text = (
+                '🔄 <b>Как работает сброс LTE</b>\n\n'
+                f'Лимит тарифа не увеличивается. Вы обнуляете уже потраченные гигабайты Белого интернета — '
+                f'максимум {chunk_gb} ГБ за одну оплату ({price_rubles} ₽).\n\n'
+                f'Неизрасходованные гигабайты не возвращаются и не копятся: если сейчас потрачено {used_gb:.1f} ГБ, '
+                f'сброс спишет {will_clear_gb:.1f} ГБ, не добавляя трафик сверху. '
+                f'Когда квота снова закончится, доступ к Белому интернету приостановится.\n'
+                f'{reconnect_line}\n'
+                '📊 <b>Честный расчёт перед оплатой:</b>\n'
+                f'• Потрачено сейчас: <b>{used_gb:.1f} ГБ</b> из {limit_gb} ГБ\n'
+                f'• Будет списано расхода: <b>{will_clear_gb:.1f} ГБ</b>\n'
+                f'• После сброса: <b>{used_after_gb:.1f} / {limit_gb} ГБ</b>\n'
+                f'• Осталось сбросов в этом месяце: <b>{remaining_this_month} из {max_per_month}</b>'
+            )
+
+            buttons = [
+                [
+                    types.InlineKeyboardButton(
+                        text=f'Понятно, сбросить за {price_rubles} ₽',
+                        callback_data=f'confirm_lte_reset:{sub_id}',
+                    )
+                ],
+                [types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+            ]
+            await callback.message.edit_text(
+                text,
+                reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+                parse_mode='HTML',
+            )
+            await callback.answer()
+            return
+
+        if not tariff.can_topup_traffic():
+            await callback.answer(
+                texts.t(
+                    'TARIFF_TRAFFIC_TOPUP_DISABLED',
+                    '⚠️ На вашем тарифе докупка трафика недоступна',
+                ),
+                show_alert=True,
+            )
+            return
+
+        purchases_this_month = await count_monthly_traffic_purchases(db, subscription.id)
+        max_topup_per_month = getattr(tariff, 'traffic_topup_max_per_month', 0) or 0
+        back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'my_subscriptions'
+
+        if max_topup_per_month > 0 and purchases_this_month >= max_topup_per_month:
+            text = (
+                '📈 <b>Добавить трафик к подписке</b>\n\n'
+                f'⚠️ Лимит докупки трафика на этот месяц исчерпан ({purchases_this_month} из {max_topup_per_month}).\n'
+                'Следующая докупка будет доступна с 1-го числа следующего месяца.'
+            )
+            buttons = [[types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)]]
+            await callback.message.edit_text(
+                text,
+                reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+                parse_mode='HTML',
+            )
+            await callback.answer()
             return
 
         # Показываем пакеты из тарифа
@@ -136,11 +267,18 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
             period_hint_days,
         )
 
+        limit_info = (
+            f'\nДоступно докупок в этом месяце: <b>{max_topup_per_month - purchases_this_month} из {max_topup_per_month}</b>\n'
+            if max_topup_per_month > 0
+            else ''
+        )
+
         prompt_text = texts.t(
             'ADD_TRAFFIC_PROMPT',
             (
                 '📈 <b>Добавить трафик к подписке</b>\n\n'
-                'Текущий лимит: {current_traffic}\n'
+                'Текущий лимит: {current_traffic}'
+                f'{limit_info}\n'
                 'Выберите дополнительный трафик:'
             ),
         ).format(current_traffic=texts.format_traffic(current_traffic))
@@ -433,6 +571,157 @@ async def confirm_reset_traffic(
     await callback.answer()
 
 
+async def handle_confirm_lte_reset(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    """Подтверждение и выполнение сброса расхода LTE (Белого интернета)."""
+    from app.config import settings
+    from app.database.crud.tariff import get_tariff_by_id
+    from app.database.crud.user import lock_user_for_pricing
+
+    texts = get_texts(db_user.language)
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
+
+    if not subscription or subscription.is_trial:
+        await callback.answer(
+            texts.t('PAID_FEATURE_ONLY', '⚠ Эта функция доступна только для платных подписок'),
+            show_alert=True,
+        )
+        return
+
+    if not subscription.tariff_id:
+        await callback.answer('Тариф не найден', show_alert=True)
+        return
+
+    tariff = await get_tariff_by_id(db, subscription.tariff_id)
+    if not tariff or not tariff.whitelist_reset_enabled:
+        await callback.answer('Сброс LTE недоступен для этого тарифа', show_alert=True)
+        return
+
+    used_bytes = getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0
+    used_gb = used_bytes / (1024**3)
+    min_used_gb = getattr(tariff, 'whitelist_reset_min_used_gb', 10) or 10
+    if used_gb < min_used_gb:
+        await callback.answer(f'Сброс доступен только после {min_used_gb} ГБ расхода', show_alert=True)
+        return
+
+    period_key = get_local_month_period_key()
+    used_this_month = (
+        getattr(subscription, 'whitelist_reset_count', 0)
+        if getattr(subscription, 'whitelist_reset_period_key', None) == period_key
+        else 0
+    )
+    max_per_month = getattr(tariff, 'whitelist_reset_max_per_month', 0) or 0
+    if max_per_month > 0 and used_this_month >= max_per_month:
+        await callback.answer('Лимит сбросов на этот месяц исчерпан', show_alert=True)
+        return
+
+    db_user = await lock_user_for_pricing(db, db_user.id)
+    subscription, _ = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
+
+    base_price = getattr(tariff, 'whitelist_reset_price_kopeks', 15000) or 15000
+    period_hint_days = _get_period_hint_from_subscription(subscription)
+    price, _, _ = PricingEngine.calculate_traffic_discount(
+        base_price,
+        db_user,
+        period_hint_days,
+    )
+
+    if price > 0 and db_user.balance_kopeks < price:
+        missing_kopeks = price - db_user.balance_kopeks
+        cart_data = {
+            'cart_mode': 'traffic_reset',
+            'subscription_id': subscription.id,
+            'price_kopeks': price,
+            'source': 'bot',
+            'description': f'Сброс расхода LTE ({tariff.whitelist_reset_chunk_gb} ГБ)',
+        }
+        try:
+            await user_cart_service.save_user_cart(db_user.id, cart_data)
+        except Exception as e:
+            logger.error('Error saving cart for traffic reset', error=e)
+
+        message_text = texts.t(
+            'ADDON_INSUFFICIENT_FUNDS_MESSAGE',
+            (
+                '⚠️ <b>Недостаточно средств</b>\n\n'
+                'Стоимость услуги: {required}\n'
+                'На балансе: {balance}\n'
+                'Не хватает: {missing}\n\n'
+                'Выберите способ пополнения. Сумма подставится автоматически.'
+            ),
+        ).format(
+            required=texts.format_price(price, round_kopeks=False),
+            balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
+            missing=texts.format_price(missing_kopeks, round_kopeks=False),
+        )
+
+        await callback.message.edit_text(
+            message_text,
+            reply_markup=get_insufficient_balance_keyboard(
+                db_user.language,
+                amount_kopeks=missing_kopeks,
+            ),
+            parse_mode='HTML',
+        )
+        await callback.answer()
+        return
+
+    chunk_gb = getattr(tariff, 'whitelist_reset_chunk_gb', 50) or 50
+    will_clear_gb = min(used_gb, float(chunk_gb))
+
+    try:
+        success = await subtract_user_balance(
+            db,
+            db_user,
+            price,
+            f'Сброс {will_clear_gb:.1f} ГБ Белого интернета',
+        )
+        if not success:
+            await callback.answer('⚠️ Ошибка списания средств', show_alert=True)
+            return
+
+        res = await reset_whitelist_subscription_traffic(db, subscription, chunk_gb=chunk_gb, commit=False)
+
+        await create_transaction(
+            db=db,
+            user_id=db_user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=price,
+            description=f'Сброс {res["cleared_gb"]:.1f} ГБ Белого интернета',
+        )
+
+        await db.commit()
+
+        # Restore squad in RemnaWave immediately if used < limit
+        await restore_whitelist_squad_if_needed(subscription)
+
+        await db.refresh(db_user)
+        await db.refresh(subscription)
+
+        back_cb = f'sm:{subscription.id}' if settings.is_multi_tariff_enabled() else 'my_subscriptions'
+        buttons = [[types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)]]
+
+        await callback.message.edit_text(
+            f'✅ <b>Расход LTE успешно сброшен!</b>\n\n'
+            f'📉 Списано расхода: <b>{res["cleared_gb"]:.1f} ГБ</b>\n'
+            f'📊 Текущий расход: <b>{res["new_used_gb"]:.1f} / {subscription.whitelist_traffic_limit_gb} ГБ</b>\n'
+            f'💰 Списано с баланса: <b>{price // 100} ₽</b>',
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+            parse_mode='HTML',
+        )
+        logger.info('✅ Пользователь сбросил расход LTE', telegram_id=db_user.telegram_id, cleared_gb=res['cleared_gb'])
+    except Exception as e:
+        logger.error('Ошибка сброса расхода LTE', error=e)
+        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(db_user.language))
+
+    await callback.answer()
+
+
 async def refresh_traffic_config():
     try:
         from app.config import refresh_traffic_prices
@@ -550,7 +839,18 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
     if settings.is_tariffs_mode() and subscription and subscription.tariff_id:
         # Режим тарифов - берем цену из тарифа
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
+        if tariff and tariff.whitelist_reset_enabled:
+            await callback.answer('⚠️ На вашем тарифе доступен только сброс расхода LTE', show_alert=True)
+            return
         if tariff and tariff.can_topup_traffic():
+            if getattr(tariff, 'traffic_topup_max_per_month', 0) > 0:
+                purchases = await count_monthly_traffic_purchases(db, subscription.id)
+                if purchases >= tariff.traffic_topup_max_per_month:
+                    await callback.answer(
+                        f'⚠️ Лимит докупки трафика на этот месяц исчерпан ({tariff.traffic_topup_max_per_month} из {tariff.traffic_topup_max_per_month})',
+                        show_alert=True,
+                    )
+                    return
             base_price = tariff.get_traffic_topup_price(traffic_gb) or 0
         else:
             await callback.answer('⚠️ На вашем тарифе докупка трафика недоступна', show_alert=True)
