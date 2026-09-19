@@ -1723,47 +1723,6 @@ async def check_payment_status(
     )
 
 
-@router.post('/pending-payments/{method}/{payment_id}/cancel')
-async def cancel_pending_payment(
-    method: str,
-    payment_id: int,
-    user: User = Depends(get_current_cabinet_user),
-    db: AsyncSession = Depends(get_cabinet_db),
-):
-    """Cancel an unpaid pending payment."""
-    try:
-        payment_method = PaymentMethod(method)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Invalid payment method: {method}',
-        )
-
-    record = await get_payment_record(db, payment_method, payment_id)
-    if not record:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail='Payment not found',
-        )
-
-    if not record.user or record.user.id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='Access denied',
-        )
-
-    if record.is_paid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Нельзя отменить уже оплаченный счет',
-        )
-
-    if record.payment:
-        record.payment.status = 'canceled'
-        await db.commit()
-
-    return {'success': True, 'message': 'Счет успешно отменен'}
-
 
 @router.get('/saved-cards', response_model=SavedCardsListResponse)
 async def get_saved_cards(
