@@ -103,3 +103,111 @@ def test_send_message_permission_registered():
     from app.services.permission_service import get_all_permissions
 
     assert 'users:send_message' in get_all_permissions()
+
+
+async def test_send_email_success(monkeypatch):
+    target = MagicMock(email='user@example.com', telegram_id=None)
+    monkeypatch.setattr(m, 'get_user_by_id', AsyncMock(return_value=target))
+
+    from app.cabinet.services.email_service import email_service
+
+    monkeypatch.setattr(email_service, 'is_configured', lambda: True)
+    mock_send = MagicMock(return_value=True)
+    monkeypatch.setattr(email_service, 'send_email', mock_send)
+
+    result = await m.send_user_message(
+        user_id=1,
+        request=SendUserMessageRequest(
+            text='Line 1\nLine 2 <alert>',
+            channel='email',
+            subject='Subject Line',
+        ),
+        admin=MagicMock(id=7),
+        db=AsyncMock(),
+    )
+
+    assert result.success is True
+    assert result.message == 'Email sent'
+    mock_send.assert_called_once_with(
+        'user@example.com',
+        'Subject Line',
+        'Line 1<br>Line 2 &lt;alert&gt;',
+    )
+
+
+async def test_send_email_no_email(monkeypatch):
+    target = MagicMock(email=None, telegram_id=123)
+    monkeypatch.setattr(m, 'get_user_by_id', AsyncMock(return_value=target))
+
+    with pytest.raises(HTTPException) as exc:
+        await m.send_user_message(
+            user_id=1,
+            request=SendUserMessageRequest(text='hello', channel='email', subject='Subj'),
+            admin=MagicMock(id=7),
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail['code'] == 'no_email'
+
+
+async def test_send_email_empty_subject(monkeypatch):
+    target = MagicMock(email='user@example.com')
+    monkeypatch.setattr(m, 'get_user_by_id', AsyncMock(return_value=target))
+
+    from app.cabinet.services.email_service import email_service
+
+    monkeypatch.setattr(email_service, 'is_configured', lambda: True)
+
+    with pytest.raises(HTTPException) as exc:
+        await m.send_user_message(
+            user_id=1,
+            request=SendUserMessageRequest(text='hello', channel='email', subject='   '),
+            admin=MagicMock(id=7),
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail['code'] == 'empty_subject'
+
+
+async def test_send_email_smtp_not_configured(monkeypatch):
+    target = MagicMock(email='user@example.com')
+    monkeypatch.setattr(m, 'get_user_by_id', AsyncMock(return_value=target))
+
+    from app.cabinet.services.email_service import email_service
+
+    monkeypatch.setattr(email_service, 'is_configured', lambda: False)
+
+    with pytest.raises(HTTPException) as exc:
+        await m.send_user_message(
+            user_id=1,
+            request=SendUserMessageRequest(text='hello', channel='email', subject='Subj'),
+            admin=MagicMock(id=7),
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail['code'] == 'smtp_not_configured'
+
+
+async def test_send_email_send_failed(monkeypatch):
+    target = MagicMock(email='user@example.com')
+    monkeypatch.setattr(m, 'get_user_by_id', AsyncMock(return_value=target))
+
+    from app.cabinet.services.email_service import email_service
+
+    monkeypatch.setattr(email_service, 'is_configured', lambda: True)
+    monkeypatch.setattr(email_service, 'send_email', lambda *args, **kwargs: False)
+
+    with pytest.raises(HTTPException) as exc:
+        await m.send_user_message(
+            user_id=1,
+            request=SendUserMessageRequest(text='hello', channel='email', subject='Subj'),
+            admin=MagicMock(id=7),
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 502
+    assert exc.value.detail['code'] == 'send_failed'
+

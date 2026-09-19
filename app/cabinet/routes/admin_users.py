@@ -1,5 +1,6 @@
 """Admin routes for managing users in cabinet."""
 
+import asyncio
 import math
 from datetime import UTC, datetime, timedelta
 
@@ -58,6 +59,7 @@ from app.database.models import (
     UserPromoGroup,
     UserStatus,
     WheelSpin,
+    WhitelistTrafficPurchase,
     WithdrawalRequest,
 )
 from app.services.panel_expiry import panel_expire_at
@@ -264,6 +266,29 @@ def _build_subscription_info(subscription: Subscription, tariff_name: str | None
         days_remaining = max(0, delta.days)
         is_active = subscription.status == SubscriptionStatus.ACTIVE.value and subscription.end_date > datetime.now(UTC)
 
+    whitelist_limit = getattr(subscription, 'whitelist_traffic_limit_gb', 0) or 0
+    whitelist_used_bytes = getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0
+    whitelist_used_gb = round(whitelist_used_bytes / (1024**3), 2)
+    whitelist_used_percent = (
+        round(min(100.0, (whitelist_used_gb / whitelist_limit) * 100), 1)
+        if whitelist_limit > 0
+        else 0.0
+    )
+    whitelist_purchased_gb = getattr(subscription, 'whitelist_traffic_purchased_gb', 0) or 0
+    whitelist_reset_at = getattr(subscription, 'whitelist_traffic_reset_at', None)
+    whitelist_exhausted = (
+        whitelist_limit > 0 and whitelist_used_bytes >= whitelist_limit * (1024**3)
+    )
+
+    whitelist_squad_attached = None
+    if getattr(settings, 'WHITELIST_TRAFFIC_ACCOUNTING_ENABLED', False):
+        target_squad = str(getattr(settings, 'WHITELIST_SQUAD_UUID', '') or '').strip().lower()
+        if target_squad:
+            connected = {
+                str(s).strip().lower() for s in (getattr(subscription, 'connected_squads', None) or [])
+            }
+            whitelist_squad_attached = target_squad in connected
+
     return UserSubscriptionInfo(
         id=subscription.id,
         status=subscription.status,
@@ -278,6 +303,13 @@ def _build_subscription_info(subscription: Subscription, tariff_name: str | None
         autopay_enabled=subscription.autopay_enabled,
         is_active=is_active,
         days_remaining=days_remaining,
+        whitelist_traffic_limit_gb=whitelist_limit,
+        whitelist_traffic_used_gb=whitelist_used_gb,
+        whitelist_traffic_used_percent=whitelist_used_percent,
+        whitelist_traffic_purchased_gb=whitelist_purchased_gb,
+        whitelist_traffic_reset_at=whitelist_reset_at,
+        whitelist_exhausted=whitelist_exhausted,
+        whitelist_squad_attached=whitelist_squad_attached,
     )
 
 
@@ -318,6 +350,32 @@ async def _build_subscription_info_async(db: AsyncSession, subscription: Subscri
     info = _build_subscription_info(subscription, tariff_name=tariff_name)
     info.purchased_traffic_gb = getattr(subscription, 'purchased_traffic_gb', 0) or 0
     info.traffic_purchases = traffic_purchase_items
+
+    # Fetch whitelist traffic purchases
+    wtp_query = (
+        select(WhitelistTrafficPurchase)
+        .where(WhitelistTrafficPurchase.subscription_id == subscription.id)
+        .order_by(WhitelistTrafficPurchase.created_at.desc())
+    )
+    wtp_result = await db.execute(wtp_query)
+    whitelist_purchases = wtp_result.scalars().all()
+
+    whitelist_traffic_purchase_items = []
+    for p in whitelist_purchases:
+        delta = p.expires_at - now
+        p_days_remaining = max(0, delta.days)
+        is_expired = now >= p.expires_at
+        whitelist_traffic_purchase_items.append(
+            TrafficPurchaseItem(
+                id=p.id,
+                traffic_gb=p.traffic_gb,
+                expires_at=p.expires_at,
+                created_at=p.created_at,
+                days_remaining=p_days_remaining,
+                is_expired=is_expired,
+            )
+        )
+    info.whitelist_traffic_purchases = whitelist_traffic_purchase_items
 
     # Platega SBP auto-renewal status — admin-only, needs a DB query, so it
     # lives here rather than in the sync builder. Gated to avoid a needless
@@ -1348,6 +1406,44 @@ async def update_user_balance(
     )
 
 
+async def _sync_whitelist_squads_to_panel(subscription: Subscription, user: User) -> None:
+    """Sync effective whitelist squads to RemnaWave panel immediately after quota change."""
+    whitelist_squad = str(getattr(settings, 'WHITELIST_SQUAD_UUID', '') or '').strip()
+    if not whitelist_squad:
+        return
+    try:
+        from app.services.grace_access_runtime import update_panel_user_grace_safe
+        from app.services.remnawave_service import RemnaWaveService
+        from app.services.whitelist_traffic_service import _effective_whitelist_squads
+
+        remnawave = RemnaWaveService()
+        if not remnawave.is_configured:
+            return
+
+        panel_user_id = (
+            subscription.remnawave_id
+            if settings.is_multi_tariff_enabled()
+            else (subscription.remnawave_id or getattr(user, 'remnawave_id', None))
+        )
+        if not panel_user_id:
+            return
+
+        desired_squads = _effective_whitelist_squads(subscription, whitelist_squad)
+        async with remnawave.get_api_client() as api:
+            await update_panel_user_grace_safe(
+                api,
+                subscription.id,
+                user_id=panel_user_id,
+                active_internal_squads=desired_squads,
+            )
+    except Exception as err:
+        logger.warning(
+            'Failed to sync whitelist squads to panel after admin update',
+            subscription_id=subscription.id,
+            error=str(err),
+        )
+
+
 # === Subscription Management ===
 
 
@@ -1936,6 +2032,135 @@ async def update_user_subscription(
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
+    if request.action == 'add_whitelist_traffic':
+        if not request.traffic_gb or request.traffic_gb <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='traffic_gb parameter is required and must be > 0 for add_whitelist_traffic action',
+            )
+
+        # INVOXY: admin LTE quota adjustment does not enforce user monthly top-up limits
+        from app.database.crud.subscription import add_whitelist_subscription_traffic
+
+        squad_uuid = str(getattr(settings, 'WHITELIST_SQUAD_UUID', '') or '').strip()
+        if squad_uuid:
+            squads = list(subscription.connected_squads or [])
+            squads_lower = {str(s).strip().lower() for s in squads}
+            if squad_uuid.lower() not in squads_lower:
+                squads.append(squad_uuid)
+                subscription.connected_squads = squads
+
+        await add_whitelist_subscription_traffic(
+            db,
+            subscription,
+            request.traffic_gb,
+            enforce_monthly_limit=False,
+        )
+
+        await db.refresh(subscription)
+
+        # Sync effective squads to panel immediately
+        await _sync_whitelist_squads_to_panel(subscription, user)
+
+        logger.info(
+            'Admin added whitelist traffic for user',
+            admin_id=admin.id,
+            traffic_gb=request.traffic_gb,
+            user_id=user_id,
+            subscription_id=subscription.id,
+        )
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message=f'Added {request.traffic_gb} GB White Internet traffic (30 days)',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
+    if request.action == 'remove_whitelist_traffic':
+        if not request.traffic_purchase_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='traffic_purchase_id parameter is required for remove_whitelist_traffic action',
+            )
+
+        wtp_query = select(WhitelistTrafficPurchase).where(
+            WhitelistTrafficPurchase.id == request.traffic_purchase_id,
+            WhitelistTrafficPurchase.subscription_id == subscription.id,
+        )
+        wtp_result = await db.execute(wtp_query)
+        purchase = wtp_result.scalar_one_or_none()
+        if not purchase:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='Whitelist traffic purchase not found',
+            )
+
+        removed_gb = purchase.traffic_gb
+
+        # Decrement counters
+        subscription.whitelist_traffic_limit_gb = max(0, (subscription.whitelist_traffic_limit_gb or 0) - removed_gb)
+        current_purchased = getattr(subscription, 'whitelist_traffic_purchased_gb', 0) or 0
+        subscription.whitelist_traffic_purchased_gb = max(0, current_purchased - removed_gb)
+
+        await db.delete(purchase)
+
+        now = datetime.now(UTC)
+        remaining_query = select(WhitelistTrafficPurchase).where(
+            WhitelistTrafficPurchase.subscription_id == subscription.id,
+            WhitelistTrafficPurchase.expires_at > now,
+            WhitelistTrafficPurchase.id != request.traffic_purchase_id,
+        )
+        remaining_result = await db.execute(remaining_query)
+        remaining_purchases = remaining_result.scalars().all()
+
+        if remaining_purchases:
+            subscription.whitelist_traffic_reset_at = min(p.expires_at for p in remaining_purchases)
+        else:
+            subscription.whitelist_traffic_reset_at = None
+
+        await db.commit()
+        await db.refresh(subscription)
+
+        # Sync effective squads to panel immediately
+        await _sync_whitelist_squads_to_panel(subscription, user)
+
+        logger.info(
+            'Admin removed whitelist traffic purchase for user',
+            admin_id=admin.id,
+            traffic_purchase_id=request.traffic_purchase_id,
+            removed_gb=removed_gb,
+            user_id=user_id,
+            subscription_id=subscription.id,
+        )
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message=f'Removed {removed_gb} GB White Internet traffic package',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
+    if request.action == 'reset_whitelist_used':
+        subscription.whitelist_traffic_used_bytes = 0
+        subscription.updated_at = datetime.now(UTC)
+        await db.commit()
+        await db.refresh(subscription)
+
+        # Sync effective squads to panel immediately (quota restored, squad should re-attach)
+        await _sync_whitelist_squads_to_panel(subscription, user)
+
+        logger.info(
+            'Admin reset whitelist traffic usage for user',
+            admin_id=admin.id,
+            user_id=user_id,
+            subscription_id=subscription.id,
+        )
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message='White Internet traffic usage reset to 0',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
     if request.action == 'set_device_limit':
         if request.device_limit is None:
             raise HTTPException(
@@ -2135,6 +2360,9 @@ async def get_user_available_tariffs(
                 traffic_topup_enabled=tariff.traffic_topup_enabled,
                 traffic_topup_packages=tariff.traffic_topup_packages or {},
                 max_topup_traffic_gb=tariff.max_topup_traffic_gb,
+                whitelist_traffic_limit_gb=getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0,
+                whitelist_traffic_topup_enabled=getattr(tariff, 'whitelist_traffic_topup_enabled', False) or False,
+                whitelist_traffic_topup_packages=getattr(tariff, 'whitelist_traffic_topup_packages', {}) or {},
                 is_available=is_available,
                 requires_promo_group=requires_promo_group,
             )
@@ -2262,19 +2490,91 @@ async def send_user_message(
     admin: User = Depends(require_permission('users:send_message')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Send a direct Telegram message to the user via the bot.
-
-    Parity with the bot's «✉️ Отправить сообщение» action in the admin user
-    card. Email-only users (no telegram_id) cannot receive Telegram messages —
-    the endpoint returns 400 with a distinct code so the frontend can explain.
-    """
-    from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-
-    from app.bot_factory import create_bot
-
+    """Send a direct message to the user via Telegram or Email."""
     target_user = await get_user_by_id(db, user_id)
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={'code': 'empty_message', 'message': 'Message text is empty'},
+        )
+
+    if request.channel == 'email':
+        if not target_user.email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    'code': 'no_email',
+                    'message': 'User has no email address',
+                },
+            )
+
+        from app.cabinet.services.email_service import email_service
+
+        if not email_service.is_configured():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    'code': 'smtp_not_configured',
+                    'message': 'SMTP is not configured',
+                },
+            )
+
+        subject = (request.subject or '').strip()
+        if not subject:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    'code': 'empty_subject',
+                    'message': 'Subject is required for email message',
+                },
+            )
+
+        import html
+
+        body_html = html.escape(text).replace('\n', '<br>')
+
+        try:
+            sent = await asyncio.to_thread(
+                email_service.send_email,
+                target_user.email,
+                subject,
+                body_html,
+            )
+        except Exception as err:
+            logger.error(
+                'Cabinet: unexpected error sending direct email to user',
+                user_id=user_id,
+                email=target_user.email,
+                error=str(err),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={'code': 'send_failed', 'message': 'Failed to send the message, try again later'},
+            )
+
+        if not sent:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={'code': 'send_failed', 'message': 'Failed to send the message, try again later'},
+            )
+
+        logger.info(
+            'Cabinet: direct message sent to user',
+            admin_id=admin.id,
+            user_id=user_id,
+            channel='email',
+            text_length=len(text),
+        )
+        return SendUserMessageResponse(success=True, message='Email sent')
+
+    # Telegram channel
+    from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+
+    from app.bot_factory import create_bot
 
     if not target_user.telegram_id:
         raise HTTPException(
@@ -2289,13 +2589,6 @@ async def send_user_message(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={'code': 'bot_not_configured', 'message': 'Bot token is not configured'},
-        )
-
-    text = request.text.strip()
-    if not text:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={'code': 'empty_message', 'message': 'Message text is empty'},
         )
 
     bot = create_bot()
@@ -2341,6 +2634,7 @@ async def send_user_message(
         'Cabinet: direct message sent to user',
         admin_id=admin.id,
         user_id=user_id,
+        channel='telegram',
         telegram_id=target_user.telegram_id,
         text_length=len(text),
     )

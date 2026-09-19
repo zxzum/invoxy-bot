@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -75,6 +75,16 @@ class UserSubscriptionInfo(BaseModel):
     # builder; the sync builder leaves both at their None default).
     sbp_recurring_status: str | None = None
     sbp_recurring_id: int | None = None
+
+    # White Internet / LTE local traffic
+    whitelist_traffic_limit_gb: int = 0
+    whitelist_traffic_used_gb: float = 0.0
+    whitelist_traffic_used_percent: float = 0.0
+    whitelist_traffic_purchased_gb: int = 0
+    whitelist_traffic_reset_at: datetime | None = None
+    whitelist_exhausted: bool = False
+    whitelist_squad_attached: bool | None = None
+    whitelist_traffic_purchases: list[TrafficPurchaseItem] = []
 
 
 class UserPromoGroupInfo(BaseModel):
@@ -355,7 +365,8 @@ class UpdateSubscriptionRequest(BaseModel):
         ...,
         description=(
             'Action: extend, shorten, set_end_date, change_tariff, set_traffic, '
-            'toggle_autopay, cancel, reset (zero out the subscription, keep user+tickets)'
+            'toggle_autopay, cancel, reset (zero out the subscription, keep user+tickets), '
+            'add_traffic, remove_traffic, add_whitelist_traffic, remove_whitelist_traffic, reset_whitelist_used'
         ),
     )
 
@@ -414,11 +425,12 @@ class UpdateUserStatusResponse(BaseModel):
 
 
 class SendUserMessageRequest(BaseModel):
-    """Request to send a direct Telegram message to a user (parity with the
-    bot's «Отправить сообщение» action in the admin user card)."""
+    """Request to send a direct message to a user via Telegram or Email."""
 
-    # 4096 — лимит Telegram на текст сообщения
-    text: str = Field(..., min_length=1, max_length=4096, description='Message text (HTML)')
+    # 4096 — лимит на текст сообщения (соответствует лимиту Telegram)
+    text: str = Field(..., min_length=1, max_length=4096, description='Message text (HTML for Telegram, text for email)')
+    channel: Literal['telegram', 'email'] = Field('telegram', description='Message delivery channel')
+    subject: str | None = Field(None, max_length=200, description='Subject line (required when channel=email)')
 
 
 class SendUserMessageResponse(BaseModel):
@@ -660,6 +672,11 @@ class UserAvailableTariffItem(BaseModel):
     traffic_topup_enabled: bool = False
     traffic_topup_packages: dict[str, int] = {}
     max_topup_traffic_gb: int = 0
+
+    # Whitelist / LTE topup
+    whitelist_traffic_limit_gb: int = 0
+    whitelist_traffic_topup_enabled: bool = False
+    whitelist_traffic_topup_packages: dict[str, int] = {}
 
     # Access info
     is_available: bool = True  # Available for this user's promo group
