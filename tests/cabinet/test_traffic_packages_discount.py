@@ -141,11 +141,15 @@ async def test_traffic_packages_respect_apply_discounts_to_addons_flag(classic_m
 @pytest.mark.asyncio
 async def test_traffic_packages_apply_discount_in_tariff_mode(monkeypatch):
     """Tariff-mode packages go through the same discount path as classic mode."""
+    from unittest.mock import AsyncMock
+
     settings_cls = type(traffic_route.settings)
     monkeypatch.setattr(settings_cls, 'is_tariffs_mode', lambda self: True)
+    monkeypatch.setattr(traffic_route, 'count_monthly_traffic_purchases', AsyncMock(return_value=0))
 
     class _FakeTariff:
         traffic_topup_enabled = True
+        traffic_topup_max_per_month = 2
         traffic_limit_gb = 200
 
         def get_traffic_topup_packages(self):
@@ -179,11 +183,15 @@ async def test_traffic_packages_apply_discount_in_tariff_mode(monkeypatch):
 @pytest.mark.asyncio
 async def test_traffic_packages_hide_packages_over_tariff_topup_limit(monkeypatch):
     """Packages above the tariff's remaining top-up capacity are not offered."""
+    from unittest.mock import AsyncMock
+
     settings_cls = type(traffic_route.settings)
     monkeypatch.setattr(settings_cls, 'is_tariffs_mode', lambda self: True)
+    monkeypatch.setattr(traffic_route, 'count_monthly_traffic_purchases', AsyncMock(return_value=0))
 
     class _FakeTariff:
         traffic_topup_enabled = True
+        traffic_topup_max_per_month = 2
         traffic_limit_gb = 200
         max_topup_traffic_gb = 250
 
