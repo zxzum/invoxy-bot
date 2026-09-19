@@ -349,3 +349,18 @@ async def test_auto_purchase_service_handles_traffic_reset():
         assert mock_reset.called
         assert mock_delete.called
         assert mock_sub.called
+
+
+def test_traffic_routes_have_no_var_keyword_params():
+    import inspect
+    from app.cabinet.routes.subscription_modules.traffic import router
+
+    for route in router.routes:
+        endpoint = getattr(route, 'endpoint', None)
+        if endpoint and callable(endpoint):
+            sig = inspect.signature(endpoint)
+            for param_name, param in sig.parameters.items():
+                assert param.kind != inspect.Parameter.VAR_KEYWORD, (
+                    f"Route {route.path} has VAR_KEYWORD param '{param_name}' which FastAPI treats as required query parameter"
+                )
+

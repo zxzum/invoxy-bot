@@ -178,7 +178,7 @@ async def get_traffic_packages(
     db: AsyncSession = Depends(get_cabinet_db),
     subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
     scope: Literal['regular', 'whitelist'] = 'regular',
-    **kwargs: Any,
+    session: Any = Depends(lambda: None),
 ):
     """Get available traffic packages."""
     if scope == 'whitelist':
@@ -186,7 +186,7 @@ async def get_traffic_packages(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='whitelist_packages_removed',
         )
-    db = kwargs.get('session') or db
+    db = session or db
 
     from app.database.crud.tariff import get_tariff_by_id
 
@@ -309,11 +309,10 @@ async def purchase_traffic(
     db: AsyncSession = Depends(get_cabinet_db),
     subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
     scope: Literal['regular', 'whitelist'] | None = None,
-    **kwargs: Any,
+    session: Any = Depends(lambda: None),
+    payload: Any = Depends(lambda: None),
 ):
     """Purchase additional traffic."""
-    session = kwargs.get('session')
-    payload = kwargs.get('payload')
     db = session or db
     req_scope = scope or (getattr(payload, 'scope', None) if payload else None) or (request.scope if request else 'regular')
     gb_value = getattr(payload, 'traffic_gb', None) if payload else None
@@ -822,10 +821,9 @@ async def get_traffic_reset(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
     subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
-    **kwargs: Any,
+    session: Any = Depends(lambda: None),
 ):
     """Get status and calculations for LTE (White Internet) traffic reset."""
-    session = kwargs.get('session')
     db = session or db
     subscription = await _get_single_active_subscription(db, user.id)
     if not subscription:
@@ -849,10 +847,9 @@ async def perform_traffic_reset(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
     subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
-    **kwargs: Any,
+    session: Any = Depends(lambda: None),
 ):
     """Reset LTE traffic usage by up to 50 GB."""
-    session = kwargs.get('session')
     db = session or db
     if getattr(user, 'restriction_subscription', False):
         raise HTTPException(
@@ -862,7 +859,9 @@ async def perform_traffic_reset(
 
     from app.database.crud.tariff import get_tariff_by_id
 
-    subscription = await resolve_subscription(db, user, subscription_id)
+    subscription = await _get_single_active_subscription(db, user.id)
+    if not subscription:
+        subscription = await resolve_subscription(db, user, subscription_id)
     if not subscription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1010,11 +1009,10 @@ async def save_traffic_reset_cart(
     request: TrafficResetSaveCartRequest | None = None,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
-    **kwargs: Any,
+    session: Any = Depends(lambda: None),
+    payload: Any = Depends(lambda: None),
 ):
     """Explicitly save an LTE traffic reset cart for auto-purchase."""
-    session = kwargs.get('session')
-    payload = kwargs.get('payload')
     req = request or payload or TrafficResetSaveCartRequest()
     db = session or db
 
