@@ -274,7 +274,13 @@ async def show_subscription_detail(
     keyboard = _build_subscription_detail_keyboard(sub_id, sub=subscription)
 
     if callback.message:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+        await edit_or_answer_photo(
+            callback,
+            text,
+            keyboard,
+            media=get_screen_banner('subscription'),
+            media_kind='subscription',
+        )
     await callback.answer()
 
 
