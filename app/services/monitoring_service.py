@@ -2590,28 +2590,34 @@ class MonitoringService:
         except Exception as error:
             logger.error('Error checking traffic warnings', error=error)
 
-    async def _send_referral_broadcast_if_due(self, db: AsyncSession):
+    async def _send_referral_broadcast_if_due(self, db: AsyncSession, force: bool = False):
         """Send an occasional referral-link message, with a DB-backed cooldown."""
-        if not getattr(settings, 'REFERRAL_BROADCAST_ENABLED', False):
+        if not force and not getattr(settings, 'REFERRAL_BROADCAST_ENABLED', False):
             return
         if not self.bot or not NotificationSettingsService.are_notifications_globally_enabled():
             return
 
         from app.database.crud.system_setting import get_setting_value, upsert_system_setting
+        from app.services.referral_broadcast_service import (
+            build_referral_broadcast_message,
+            get_reward_tariff_names,
+            send_user_referral_broadcast,
+        )
         from app.utils.notification_prefs import is_promo_offers_enabled
 
         now = datetime.now(UTC)
         interval_days = max(1, int(getattr(settings, 'REFERRAL_BROADCAST_INTERVAL_DAYS', 7)))
-        last_sent_value = await get_setting_value(db, 'REFERRAL_BROADCAST_LAST_SENT_AT')
-        if last_sent_value:
-            try:
-                last_sent = datetime.fromisoformat(last_sent_value.replace('Z', '+00:00'))
-                if last_sent.tzinfo is None:
-                    last_sent = last_sent.replace(tzinfo=UTC)
-                if now - last_sent < timedelta(days=interval_days):
-                    return
-            except ValueError:
-                logger.warning('Некорректная дата последней реферальной рассылки')
+        if not force:
+            last_sent_value = await get_setting_value(db, 'REFERRAL_BROADCAST_LAST_SENT_AT')
+            if last_sent_value:
+                try:
+                    last_sent = datetime.fromisoformat(last_sent_value.replace('Z', '+00:00'))
+                    if last_sent.tzinfo is None:
+                        last_sent = last_sent.replace(tzinfo=UTC)
+                    if now - last_sent < timedelta(days=interval_days):
+                        return
+                except ValueError:
+                    logger.warning('Некорректная дата последней реферальной рассылки')
 
         # Claim the window before sending so a second bot instance cannot send a duplicate.
         await upsert_system_setting(db, 'REFERRAL_BROADCAST_LAST_SENT_AT', now.isoformat())
@@ -2629,35 +2635,17 @@ class MonitoringService:
         )
         sent_count = 0
         bot_username = settings.get_bot_username()
+        tariff_names = (
+            await get_reward_tariff_names(db) if settings.is_referral_levels_scheme() else None
+        )
         for user in result.scalars().all():
             if not is_promo_offers_enabled(user):
                 continue
             try:
-                referral_link = settings.get_referral_link(user.referral_code, bot_username)
-                safe_link = html.escape(referral_link, quote=True)
-                if (getattr(user, 'language', 'ru') or 'ru').lower().startswith('en'):
-                    message = (
-                        '🎁 <b>Invite friends to Invoxy VPN</b>\n\n'
-                        'Share your personal link and receive referral rewards according to the partner program.\n\n'
-                        f'Your link: <a href="{safe_link}">open Invoxy</a>'
-                    )
-                else:
-                    message = (
-                        '🎁 <b>Приглашай друзей в Invoxy VPN</b>\n\n'
-                        'Поделись своей ссылкой и получай бонусы по правилам партнёрской программы.\n\n'
-                        f'Твоя ссылка: <a href="{safe_link}">открыть Invoxy</a>'
-                    )
-                if await notification_delivery_service.send_notification(
-                    user=user,
-                    notification_type=NotificationType.PROMO_OFFER,
-                    context={
-                        'message_html': message.replace('\n', '<br>'),
-                        'valid_hours': 0,
-                        'discount_percent': 0,
-                    },
-                    bot=self.bot,
-                    telegram_message=message,
-                ):
+                message, markup = await build_referral_broadcast_message(
+                    user, db, bot_username=bot_username, tariff_names=tariff_names
+                )
+                if await send_user_referral_broadcast(self.bot, user, message, markup):
                     sent_count += 1
             except Exception:
                 logger.warning('Не удалось отправить реферальную рассылку', user_id=user.id, exc_info=True)

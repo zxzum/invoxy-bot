@@ -30,7 +30,9 @@ from app.services.tariff_switch_policy import remaining_days_for_switch, should_
 from app.services.user_cart_service import user_cart_service
 from app.utils.decorators import error_handler
 from app.utils.formatting import format_period, format_price_kopeks, format_traffic
+from app.utils.photo_message import edit_or_answer_photo
 from app.utils.promo_offer import get_user_active_promo_discount_percent
+from app.utils.screen_banners import get_screen_banner
 
 
 logger = structlog.get_logger(__name__)
@@ -1516,7 +1518,8 @@ async def handle_custom_confirm(
 
         traffic_display = format_traffic(traffic_limit)
 
-        await callback.message.edit_text(
+        await edit_or_answer_photo(
+            callback,
             texts.t(
                 'TARIFF_PURCHASE_SUCCESS',
                 '🎉 <b>Подписка успешно оформлена!</b>\n\n'
@@ -1533,7 +1536,7 @@ async def handle_custom_confirm(
                 period=format_period(custom_days),
                 price=format_price_kopeks(total_price),
             ),
-            reply_markup=InlineKeyboardMarkup(
+            InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
@@ -1546,7 +1549,8 @@ async def handle_custom_confirm(
                     [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
                 ]
             ),
-            parse_mode='HTML',
+            media=get_screen_banner('paid_successful'),
+            media_kind='paid_successful',
         )
     except Exception as e:
         logger.error('Ошибка при покупке тарифа с кастомными параметрами', error=e, exc_info=True)
@@ -2203,7 +2207,8 @@ async def confirm_tariff_purchase(
 
     traffic = format_traffic(tariff.traffic_limit_gb)
 
-    await callback.message.edit_text(
+    await edit_or_answer_photo(
+        callback,
         texts.t(
             'TARIFF_PURCHASE_SUCCESS',
             '🎉 <b>Подписка успешно оформлена!</b>\n\n'
@@ -2220,7 +2225,7 @@ async def confirm_tariff_purchase(
             period=format_period(period),
             price=format_price_kopeks(final_price),
         ),
-        reply_markup=InlineKeyboardMarkup(
+        InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
@@ -2233,7 +2238,8 @@ async def confirm_tariff_purchase(
                 [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
             ]
         ),
-        parse_mode='HTML',
+        media=get_screen_banner('paid_successful'),
+        media_kind='paid_successful',
     )
 
 
@@ -3166,7 +3172,8 @@ async def confirm_tariff_extend(
 
         traffic = format_traffic(tariff.traffic_limit_gb)
 
-        await callback.message.edit_text(
+        await edit_or_answer_photo(
+            callback,
             texts.t(
                 'TARIFF_RENEW_SUCCESS',
                 '🎉 <b>Подписка успешно продлена!</b>\n\n'
@@ -3182,7 +3189,7 @@ async def confirm_tariff_extend(
                 period=format_period(period),
                 price=format_price_kopeks(final_price),
             ),
-            reply_markup=InlineKeyboardMarkup(
+            InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
@@ -3195,7 +3202,8 @@ async def confirm_tariff_extend(
                     [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
                 ]
             ),
-            parse_mode='HTML',
+            media=get_screen_banner('paid_successful'),
+            media_kind='paid_successful',
         )
     except Exception as e:
         logger.error('Ошибка при продлении тарифа', error=e, exc_info=True)
