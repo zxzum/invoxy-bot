@@ -747,7 +747,7 @@ class Settings(BaseSettings):
     PLATEGA_CURRENCY: str = 'RUB'
     PLATEGA_ACTIVE_METHODS: str = '2,11,12,13'
     PLATEGA_INLINE_METHODS: bool = True
-    PLATEGA_MIN_AMOUNT_KOPEKS: int = 10000
+    PLATEGA_MIN_AMOUNT_KOPEKS: int = 1000
     PLATEGA_MAX_AMOUNT_KOPEKS: int = 100000000
     PLATEGA_WEBHOOK_PATH: str = '/platega-webhook'
     PLATEGA_WEBHOOK_HOST: str = '0.0.0.0'
@@ -920,7 +920,7 @@ class Settings(BaseSettings):
     ROLLYPAY_SIGNING_SECRET: str | None = None  # HMAC webhook verification
     ROLLYPAY_DISPLAY_NAME: str = 'RollyPay'
     ROLLYPAY_CURRENCY: str = 'RUB'
-    ROLLYPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
+    ROLLYPAY_MIN_AMOUNT_KOPEKS: int = 1000  # 10₽
     ROLLYPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
     ROLLYPAY_WEBHOOK_PATH: str = '/rollypay-webhook'
     ROLLYPAY_RETURN_URL: str | None = None

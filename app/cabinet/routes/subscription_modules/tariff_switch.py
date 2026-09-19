@@ -20,7 +20,6 @@ from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, Subscription, TransactionType, User
 from app.services.pricing_engine import pricing_engine
-from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
 
@@ -564,27 +563,8 @@ async def switch_tariff(
             action='update' if _has_panel else 'create',
         )
 
-    # Reset all devices on tariff switch
+    # INVOXY: Do not reset devices on tariff switch (keep active user devices connected)
     devices_reset = False
-    _switch_panel_user_id = (
-        subscription.remnawave_id
-        if settings.is_multi_tariff_enabled() and subscription.remnawave_id
-        else user.remnawave_id
-    )
-    if _switch_panel_user_id:
-        try:
-            service = RemnaWaveService()
-            async with service.get_api_client() as api:
-                # 3.0.0: сброс делается одним delete-all и исключений наружу не
-                # бросает — сбой панели приходит как False, поэтому флаг ставим
-                # по результату, а не по «не упало».
-                devices_reset = await api.reset_user_devices(_switch_panel_user_id)
-                if devices_reset:
-                    logger.info('Reset all devices for user on tariff switch', user_id=user.id)
-                else:
-                    logger.error('Failed to reset devices on tariff switch', user_id=user.id)
-        except Exception as e:
-            logger.error('Failed to reset devices on tariff switch', error=e)
 
     await db.refresh(user)
     await db.refresh(subscription)

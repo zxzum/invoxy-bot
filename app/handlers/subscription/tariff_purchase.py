@@ -3953,22 +3953,7 @@ async def confirm_tariff_switch(
                 'Multi-tariff: subscription missing remnawave_id, using user fallback',
                 subscription_id=getattr(subscription, 'id', None),
             )
-        if _reset_panel_id:
-            try:
-                from app.services.remnawave_service import RemnaWaveService
-
-                service = RemnaWaveService()
-                async with service.get_api_client() as api:
-                    # reset_user_devices больше не бросает при отказе панели —
-                    # он ловит ошибку внутри и возвращает False. Без проверки
-                    # результата лог утверждал бы, что сброс прошёл, когда он
-                    # провалился, и старые HWID остались бы за новым лимитом.
-                    if await api.reset_user_devices(_reset_panel_id):
-                        logger.info('🔧 Сброшены устройства при смене тарифа для user_id', db_user_id=db_user.id)
-                    else:
-                        logger.error('Не удалось сбросить устройства при смене тарифа', db_user_id=db_user.id)
-            except Exception as e:
-                logger.error('Ошибка сброса устройств при смене тарифа', error=e)
+        # INVOXY: do not reset devices on tariff switch (keep user devices connected)
 
         # Создаем транзакцию
         await create_transaction(
@@ -4250,26 +4235,7 @@ async def confirm_daily_tariff_switch(
                 'Multi-tariff: subscription missing remnawave_id, using user fallback',
                 subscription_id=getattr(subscription, 'id', None),
             )
-        if _reset_panel_id_daily:
-            try:
-                from app.services.remnawave_service import RemnaWaveService
-
-                service = RemnaWaveService()
-                async with service.get_api_client() as api:
-                    # reset_user_devices больше не бросает при отказе панели —
-                    # он ловит ошибку внутри и возвращает False. Без проверки
-                    # результата лог утверждал бы, что сброс прошёл, когда он
-                    # провалился, и старые HWID остались бы за новым лимитом.
-                    if await api.reset_user_devices(_reset_panel_id_daily):
-                        logger.info(
-                            '🔧 Сброшены устройства при смене на суточный тариф для user_id', db_user_id=db_user.id
-                        )
-                    else:
-                        logger.error(
-                            'Не удалось сбросить устройства при смене на суточный тариф', db_user_id=db_user.id
-                        )
-            except Exception as e:
-                logger.error('Ошибка сброса устройств при смене тарифа', error=e)
+        # INVOXY: do not reset devices on tariff switch (keep user devices connected)
 
         # Создаем транзакцию
         await create_transaction(
@@ -5206,28 +5172,7 @@ async def confirm_instant_switch(
                 'Multi-tariff: subscription missing remnawave_id, using user fallback',
                 subscription_id=getattr(subscription, 'id', None),
             )
-        if _reset_panel_id_instant:
-            try:
-                from app.services.remnawave_service import RemnaWaveService
-
-                service = RemnaWaveService()
-                async with service.get_api_client() as api:
-                    # reset_user_devices больше не бросает при отказе панели —
-                    # он ловит ошибку внутри и возвращает False. Без проверки
-                    # результата лог утверждал бы, что сброс прошёл, когда он
-                    # провалился, и старые HWID остались бы за новым лимитом.
-                    if await api.reset_user_devices(_reset_panel_id_instant):
-                        logger.info(
-                            '🔧 Сброшены устройства при мгновенном переключении тарифа для user_id',
-                            db_user_id=db_user.id,
-                        )
-                    else:
-                        logger.error(
-                            'Не удалось сбросить устройства при мгновенном переключении тарифа',
-                            db_user_id=db_user.id,
-                        )
-            except Exception as e:
-                logger.error('Ошибка сброса устройств при переключении тарифа', error=e)
+        # INVOXY: do not reset devices on tariff switch (keep user devices connected)
 
         # Создаем транзакцию если была оплата
         if is_upgrade and upgrade_cost > 0:
