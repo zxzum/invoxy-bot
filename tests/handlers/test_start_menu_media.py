@@ -149,12 +149,19 @@ async def test_answer_path_without_video_delegates_unchanged(monkeypatch):
 
     async with memory_session(monkeypatch, TABLES) as db:
         sms.reset_start_video_cache()
+        monkeypatch.setattr('app.handlers.start.get_screen_banner', lambda kind: 'BANNER')
 
         message = _message()
         await answer_menu_with_media(message, 'Меню', KEYBOARD, db)
 
         message.answer_video.assert_not_awaited()
-        message.answer.assert_awaited_once_with('Меню', reply_markup=KEYBOARD, parse_mode='HTML')
+        message.answer.assert_awaited_once_with(
+            'Меню',
+            reply_markup=KEYBOARD,
+            parse_mode='HTML',
+            media='BANNER',
+            media_kind='main',
+        )
 
 
 async def test_answer_path_falls_back_when_video_broken(monkeypatch):

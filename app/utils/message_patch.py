@@ -273,7 +273,22 @@ def is_topic_required_error(error: Exception) -> bool:
     return any(err.lower() in description for err in _TOPIC_REQUIRED_ERRORS)
 
 
+def _cache_banner_file_id(result: Message | None, media_kind: str | None) -> None:
+    """Cache file_id of an explicitly passed banner (INVOXY per-screen banners)."""
+    if not media_kind:
+        _cache_logo_file_id(result)
+        return
+    from app.utils.screen_banners import cache_screen_banner_file_id
+
+    photo = getattr(result, 'photo', None)
+    if photo:
+        cache_screen_banner_file_id(media_kind, photo[-1].file_id)
+
+
 async def _answer_with_photo(self: Message, text: str = None, **kwargs):
+    # INVOXY: explicit per-screen banner overrides the default logo.
+    media = kwargs.pop('media', None)
+    media_kind = kwargs.pop('media_kind', None)
     # Уважаем флаг в рантайме: если логотип выключен — не подменяем ответ
     if not settings.ENABLE_LOGO_MODE:
         # Фото-сообщения не показывают web page preview, текстовые — показывают.
@@ -288,10 +303,11 @@ async def _answer_with_photo(self: Message, text: str = None, **kwargs):
         pass
     language = _get_language(self)
 
-    if LOGO_PATH.exists():
+    photo = media if media is not None else get_logo_media()
+    if photo is not None:
         try:
-            result = await self.answer_photo(get_logo_media(), caption=text, **kwargs)
-            _cache_logo_file_id(result)
+            result = await self.answer_photo(photo, caption=text, **kwargs)
+            _cache_banner_file_id(result, media_kind)
             return result
         except TelegramBadRequest as error:
             if is_topic_required_error(error):
@@ -329,6 +345,9 @@ async def _answer_with_photo(self: Message, text: str = None, **kwargs):
 
 
 async def _edit_with_photo(self: Message, text: str, **kwargs):
+    # INVOXY: explicit per-screen banner overrides the default logo.
+    media = kwargs.pop('media', None)
+    media_kind = kwargs.pop('media_kind', None)
     # Уважаем флаг в рантайме: если логотип выключен — не подменяем редактирование
     if not settings.ENABLE_LOGO_MODE:
         kwargs.setdefault('disable_web_page_preview', True)
@@ -367,8 +386,8 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
                 return await _text_answer(self, text, **kwargs)
         except Exception:
             pass
-        if LOGO_PATH.exists():
-            media = get_logo_media()
+        if LOGO_PATH.exists() or media is not None:
+            media = media if media is not None else get_logo_media()
         else:
             media = self.photo[-1].file_id
         media_kwargs = {'media': media, 'caption': text}
@@ -379,7 +398,9 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
         else:
             media_kwargs['parse_mode'] = 'HTML'
         try:
-            return await self.edit_media(InputMediaPhoto(**media_kwargs), **edit_kwargs)
+            result = await self.edit_media(InputMediaPhoto(**media_kwargs), **edit_kwargs)
+            _cache_banner_file_id(result, media_kind)
+            return result
         except TelegramBadRequest as error:
             if is_topic_required_error(error):
                 return None
@@ -414,7 +435,7 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
         except TelegramBadRequest:
             pass
         try:
-            return await _answer_with_photo(self, text, **kwargs)
+            return await _answer_with_photo(self, text, media=media, media_kind=media_kind, **kwargs)
         except TelegramBadRequest as error:
             if is_topic_required_error(error):
                 return None

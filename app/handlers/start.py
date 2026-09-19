@@ -88,6 +88,7 @@ from app.states import RegistrationStates
 from app.utils.gift_links import InvalidGiftTokenError, parse_gift_claim_input
 from app.utils.long_messages import answer_long_text, edit_long_text, send_long_text
 from app.utils.rich_menu import try_answer_rich_main_menu, try_send_rich_main_menu
+from app.utils.screen_banners import cache_screen_banner_file_id, get_screen_banner
 from app.utils.user_utils import generate_unique_referral_code
 
 
@@ -330,7 +331,13 @@ async def answer_menu_with_media(message, text: str, keyboard, db) -> None:
                     error=str(video_error),
                 )
 
-    await message.answer(text, reply_markup=keyboard, parse_mode='HTML')
+    await message.answer(
+        text,
+        reply_markup=keyboard,
+        parse_mode='HTML',
+        media=get_screen_banner('main'),
+        media_kind='main',
+    )
 
 
 async def send_menu_with_media(
@@ -374,14 +381,24 @@ async def send_menu_with_media(
                 )
 
     if settings.ENABLE_LOGO_MODE and caption_fits:
+        banner = get_screen_banner('main')
+        photo = banner if banner is not None else get_logo_media()
+        if photo is None:
+            await bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard, parse_mode='HTML')
+            return
         _result = await bot.send_photo(
             chat_id=chat_id,
-            photo=get_logo_media(),
+            photo=photo,
             caption=text,
             reply_markup=keyboard,
             parse_mode='HTML',
         )
-        _cache_logo_file_id(_result)
+        if banner is not None:
+            sent_photo = getattr(_result, 'photo', None)
+            if sent_photo:
+                cache_screen_banner_file_id('main', sent_photo[-1].file_id)
+        else:
+            _cache_logo_file_id(_result)
         return
 
     await bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard, parse_mode='HTML')
