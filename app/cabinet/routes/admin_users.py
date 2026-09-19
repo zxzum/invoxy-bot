@@ -1366,11 +1366,21 @@ async def update_user_balance(
     else:
         # Subtract balance
         amount_to_subtract = abs(request.amount_kopeks)
-        if user.balance_kopeks < amount_to_subtract:
+        if user.balance_kopeks <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Insufficient balance. Current: {user.balance_kopeks}, requested: {amount_to_subtract}',
+                detail='Баланс пользователя уже нулевой',
             )
+        if user.balance_kopeks < amount_to_subtract:
+            # INVOXY: If difference is within 100 kopeks (1 RUB), it is caused by whole-ruble UI rounding.
+            # Clamp to total remaining balance so it zeroes out cleanly.
+            if amount_to_subtract - user.balance_kopeks < 100:
+                amount_to_subtract = user.balance_kopeks
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f'Недостаточно средств. Текущий баланс: {user.balance_kopeks / 100:.2f} ₽, запрошено: {amount_to_subtract / 100:.2f} ₽',
+                )
         success = await subtract_user_balance(
             db=db,
             user=user,
