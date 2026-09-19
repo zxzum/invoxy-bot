@@ -2765,7 +2765,7 @@ class Settings(BaseSettings):
         methods: list[int] = []
         seen: set[int] = set()
         for part in normalized.split(','):
-            part = part.strip()
+            part = part.strip().strip('"\'[]()')
             if not part:
                 continue
             try:
@@ -2785,10 +2785,26 @@ class Settings(BaseSettings):
     @staticmethod
     def get_platega_method_definitions() -> dict[int, dict[str, str]]:
         return {
-            2: {'name': 'СБП (QR)', 'title': '🏦 СБП (QR)'},
-            11: {'name': 'Карты (RUB)', 'title': '💳 Карты (RUB)'},
-            12: {'name': 'Международные карты', 'title': '🌍 Международные карты'},
-            13: {'name': 'Криптовалюта', 'title': '🪙 Криптовалюта'},
+            2: {
+                'name': 'СБП (Быстрый перевод)',
+                'title': '⚡ СБП (0% комиссии)',
+                'description': 'Мгновенно через приложение любого банка РФ',
+            },
+            11: {
+                'name': 'Банковские карты РФ',
+                'title': '💳 Карты РФ (МИР, Visa, MC)',
+                'description': 'МИР, Visa, Mastercard любых российских банков',
+            },
+            12: {
+                'name': 'Зарубежные карты',
+                'title': '🌍 Зарубежные карты',
+                'description': 'Visa / Mastercard зарубежных банков и СНГ',
+            },
+            13: {
+                'name': 'Криптовалюта',
+                'title': '🪙 Криптовалюта',
+                'description': 'USDT, TON, BTC и другие',
+            },
         }
 
     def get_platega_method_display_name(self, method_code: int) -> str:

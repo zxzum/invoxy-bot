@@ -215,6 +215,19 @@ def test_get_platega_active_methods_parses_and_filters(monkeypatch: pytest.Monke
     assert methods == [2, 11, 12, 13]
 
 
+def test_get_platega_active_methods_handles_brackets_and_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        settings,
+        'PLATEGA_ACTIVE_METHODS',
+        '[2, 11, 12, 13]',
+        raising=False,
+    )
+
+    methods = settings.get_platega_active_methods()
+
+    assert methods == [2, 11, 12, 13]
+
+
 def test_get_platega_active_methods_returns_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'PLATEGA_ACTIVE_METHODS', '', raising=False)
 
@@ -224,7 +237,7 @@ def test_get_platega_active_methods_returns_default(monkeypatch: pytest.MonkeyPa
 
 
 def test_platega_method_display_helpers() -> None:
-    assert settings.get_platega_method_display_name(11) == 'Карты (RUB)'
-    assert settings.get_platega_method_display_title(11) == '💳 Карты (RUB)'
+    assert settings.get_platega_method_display_name(11) == 'Банковские карты РФ'
+    assert settings.get_platega_method_display_title(11) == '💳 Карты РФ (МИР, Visa, MC)'
     assert settings.get_platega_method_display_name(999) == 'Метод 999'
     assert settings.get_platega_method_display_title(999) == 'Platega 999'

@@ -30,6 +30,7 @@ from .routes import (
     promo_groups,
     promo_offers,
     promocodes,
+    public_subscription,
     remnawave,
     servers,
     stats,
@@ -219,6 +220,7 @@ def create_web_api_app(lifespan: Any = None) -> FastAPI:
         app.add_middleware(RequestLoggingMiddleware)
 
     app.include_router(health.router)
+    app.include_router(public_subscription.router)
     app.include_router(stats.router, prefix='/stats', tags=['stats'])
     app.include_router(config.router, prefix='/settings', tags=['settings'])
     app.include_router(users.router, prefix='/users', tags=['users'])

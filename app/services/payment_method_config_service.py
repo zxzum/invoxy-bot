@@ -189,11 +189,7 @@ def _get_method_defaults() -> dict:
             'is_configured': settings.is_rollypay_enabled(),
             'default_min': settings.ROLLYPAY_MIN_AMOUNT_KOPEKS,
             'default_max': settings.ROLLYPAY_MAX_AMOUNT_KOPEKS,
-            'available_sub_options': [
-                {'id': 'sbp', 'name': 'СБП'},
-                {'id': 'card', 'name': 'Карта'},
-                {'id': 'crypto', 'name': 'Криптовалюта'},
-            ],
+            'available_sub_options': None,
         },
         'overpay': {
             'default_display_name': settings.get_overpay_display_name(),

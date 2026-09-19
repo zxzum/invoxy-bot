@@ -95,6 +95,11 @@ def _create_base_app(lifespan: Any = None) -> FastAPI:
             else:
                 app.include_router(apple_iap_only_router)
 
+    if not settings.is_web_api_enabled():
+        from app.webapi.routes.public_subscription import router as public_subscription_router
+
+        app.include_router(public_subscription_router)
+
     _attach_docs_alias(app, app.docs_url)
     return app
 

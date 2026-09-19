@@ -469,17 +469,38 @@ async def switch_tariff(
     # Reset purchased traffic and delete TrafficPurchase records on tariff switch
     from sqlalchemy import delete as sql_delete
 
-    from app.database.models import TrafficPurchase
+    from app.database.models import (
+        TrafficPurchase,
+        WhitelistTrafficPurchase,
+        WhitelistTrafficUsageSnapshot,
+    )
 
     await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
     subscription.purchased_traffic_gb = 0
     subscription.traffic_reset_at = None
+    # White Internet has the same tariff-switch invariant as regular traffic:
+    # the target tariff's base quota replaces the old one and old top-up
+    # packages do not survive the switch.
+    await db.execute(
+        sql_delete(WhitelistTrafficPurchase).where(
+            WhitelistTrafficPurchase.subscription_id == subscription.id
+        )
+    )
+    subscription.whitelist_traffic_limit_gb = new_tariff.whitelist_traffic_limit_gb or 0
+    subscription.whitelist_traffic_purchased_gb = 0
+    subscription.whitelist_traffic_reset_at = None
 
     # Счётчик трафика обнуляет только ОПЛАЧЕННОЕ переключение — иначе прыжок
     # туда-обратно по бесплатному направлению давал новую квоту каждый раз.
     reset_used_traffic = should_reset_used_traffic(upgrade_cost)
     if reset_used_traffic:
+        await db.execute(
+            sql_delete(WhitelistTrafficUsageSnapshot).where(
+                WhitelistTrafficUsageSnapshot.subscription_id == subscription.id
+            )
+        )
         subscription.traffic_used_gb = 0.0
+        subscription.whitelist_traffic_used_bytes = 0
 
     if switching_to_daily:
         # Switching TO daily - reset end_date to 1 day, set last_daily_charge_at
