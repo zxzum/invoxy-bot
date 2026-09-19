@@ -280,3 +280,4 @@ class TariffInvoiceResponse(BaseModel):
     price_kopeks: int  # полная цена тарифа
     balance_kopeks: int
     method: str
+    expires_at: datetime | None = None

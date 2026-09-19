@@ -2,6 +2,7 @@
 
 import math
 import time
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import structlog
@@ -10,6 +11,15 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot_factory import create_bot
+from app.cabinet.services.active_invoice import (
+    ACTIVE_INVOICE_TTL,
+    build_pending_payment_response,
+    cancel_pending_payment,
+    get_active_invoice_record,
+    record_cabinet_notification,
+    same_topup_intent,
+    send_invoice_created_telegram_message,
+)
 from app.config import settings
 from app.database.crud.saved_payment_method import (
     deactivate_payment_method,
@@ -17,6 +27,7 @@ from app.database.crud.saved_payment_method import (
 )
 from app.database.crud.user import get_user_by_id
 from app.database.models import PaymentMethod, Transaction, User
+from app.services.notification_types import NotificationType
 from app.services.payment_method_config_service import get_enabled_methods_for_user
 from app.services.payment_service import PaymentService
 from app.services.payment_verification_service import (
@@ -24,7 +35,6 @@ from app.services.payment_verification_service import (
     PendingPayment,
     get_payment_record,
     list_recent_pending_payments,
-    method_display_name,
     run_manual_check,
 )
 from app.utils.currency_converter import currency_converter
@@ -1106,6 +1116,29 @@ async def create_topup(
             detail=f'Maximum amount is {method.max_amount_kopeks / 100:.2f} RUB',
         )
 
+    # INVOXY: Check for active invoice (single active invoice per user rule)
+    active_record = await get_active_invoice_record(db, user.id)
+    if active_record:
+        if same_topup_intent(active_record, request.payment_method, request.amount_kopeks):
+            active_response = build_pending_payment_response(active_record)
+            return TopUpResponse(
+                payment_id=str(active_record.local_id),
+                payment_url=active_response.payment_url or '',
+                amount_kopeks=active_record.amount_kopeks,
+                amount_rubles=active_record.amount_kopeks / 100,
+                status=active_record.status or 'pending',
+                expires_at=active_response.expires_at,
+            )
+        active_response = build_pending_payment_response(active_record)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                'code': 'active_invoice_exists',
+                'message': 'У вас уже есть активный счёт. Оплатите или отмените его перед созданием нового.',
+                'payment': active_response.model_dump(mode='json'),
+            },
+        )
+
     cabinet_return_url = f'{settings.CABINET_URL.rstrip("/")}/balance/top-up/result?method={request.payment_method}'
     cabinet_success_url = f'{cabinet_return_url}&status=success'
     cabinet_failed_url = f'{cabinet_return_url}&status=failed'
@@ -1130,13 +1163,38 @@ async def create_topup(
             detail='Payment URL not received',
         )
 
+    expires_at = datetime.now(UTC) + ACTIVE_INVOICE_TTL
+
+    await record_cabinet_notification(
+        db=db,
+        user_id=user.id,
+        type_=NotificationType.PAYMENT_INVOICE_CREATED.value,
+        title='Счёт на оплату',
+        body=f'Пополнение баланса: {request.amount_kopeks / 100:.0f} ₽ ({method.name})',
+        payload_json={
+            'method': request.payment_method,
+            'payment_id': payment_id,
+            'amount_kopeks': request.amount_kopeks,
+            'payment_url': payment_url,
+        },
+    )
+    await db.commit()
+
+    await send_invoice_created_telegram_message(
+        user=user,
+        purpose='Пополнение баланса',
+        amount_kopeks=request.amount_kopeks,
+        method_display=method.name,
+        payment_url=payment_url,
+    )
+
     return TopUpResponse(
         payment_id=payment_id or 'pending',
         payment_url=payment_url,
         amount_kopeks=request.amount_kopeks,
         amount_rubles=request.amount_kopeks / 100,
         status='pending',
-        expires_at=None,
+        expires_at=expires_at,
     )
 
 
@@ -1413,26 +1471,7 @@ def _get_payment_url(record: PendingPayment) -> str | None:
 
 def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
     """Convert PendingPayment to API response."""
-    status_emoji, status_text = _get_status_info(record)
-    return PendingPaymentResponse(
-        id=record.local_id,
-        method=record.method.value,
-        method_display=method_display_name(record.method),
-        identifier=record.identifier,
-        amount_kopeks=record.amount_kopeks,
-        amount_rubles=record.amount_kopeks / 100,
-        status=record.status or '',
-        status_emoji=status_emoji,
-        status_text=status_text,
-        is_paid=record.is_paid,
-        is_checkable=_is_checkable(record),
-        created_at=record.created_at,
-        expires_at=record.expires_at,
-        payment_url=_get_payment_url(record),
-        user_id=record.user.id if record.user else None,
-        user_telegram_id=record.user.telegram_id if record.user else None,
-        user_username=record.user.username if record.user else None,
-    )
+    return build_pending_payment_response(record)
 
 
 @router.get('/pending-payments', response_model=PendingPaymentListResponse)
@@ -1443,10 +1482,7 @@ async def get_pending_payments(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get user's pending payments for manual verification."""
-    all_pending = await list_recent_pending_payments(db)
-
-    # Filter only current user's payments
-    user_payments = [p for p in all_pending if p.user and p.user.id == user.id]
+    user_payments = await list_recent_pending_payments(db, user_id=user.id)
 
     total = len(user_payments)
     pages = math.ceil(total / per_page) if total > 0 else 1
@@ -1455,7 +1491,7 @@ async def get_pending_payments(
     start_idx = (page - 1) * per_page
     page_payments = user_payments[start_idx : start_idx + per_page]
 
-    items = [_record_to_response(p) for p in page_payments]
+    items = [build_pending_payment_response(p) for p in page_payments]
 
     return PendingPaymentListResponse(
         items=items,
@@ -1464,6 +1500,18 @@ async def get_pending_payments(
         per_page=per_page,
         pages=pages,
     )
+
+
+@router.post('/pending-payments/{method}/{payment_id}/cancel', response_model=PendingPaymentResponse)
+async def cancel_user_pending_payment(
+    method: str,
+    payment_id: int,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Cancel user's own pending payment."""
+    record = await cancel_pending_payment(db, user, method, payment_id)
+    return build_pending_payment_response(record)
 
 
 @router.get('/pending-payments/{method}/latest', response_model=PendingPaymentResponse)

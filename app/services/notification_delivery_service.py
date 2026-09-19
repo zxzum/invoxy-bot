@@ -54,6 +54,8 @@ class NotificationDeliveryService:
             NotificationType.GUEST_ACTIVATION_REQUIRED,
             NotificationType.GUEST_GIFT_RECEIVED,
             NotificationType.GUEST_CABINET_CREDENTIALS,
+            NotificationType.PAYMENT_INVOICE_CREATED,
+            NotificationType.PAYMENT_INVOICE_CANCELLED,
         }
         if notification_type not in global_switch_exempt_types and not settings.is_notifications_enabled():
             logger.debug(

@@ -21,6 +21,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.routes.balance import _create_payment_link, get_payment_methods
+from app.cabinet.services.active_invoice import (
+    ACTIVE_INVOICE_TTL,
+    build_pending_payment_response,
+    get_active_invoice_record,
+    record_cabinet_notification,
+    same_tariff_intent,
+    send_invoice_created_telegram_message,
+)
 from app.config import settings
 from app.database.crud.server_squad import get_server_squad_by_uuid
 from app.database.crud.subscription import (
@@ -1469,6 +1477,38 @@ async def create_tariff_invoice(
             ),
         )
 
+    # INVOXY: Check for active invoice (single active invoice per user rule)
+    active_record = await get_active_invoice_record(db, user.id)
+    if active_record:
+        if same_tariff_intent(
+            active_record,
+            method=request.payment_method,
+            missing_kopeks=missing,
+            tariff_id=ctx.tariff.id,
+            period_days=ctx.period_days,
+            tariff_name=ctx.tariff.name,
+        ):
+            active_response = build_pending_payment_response(active_record)
+            return TariffInvoiceResponse(
+                payment_id=str(active_record.local_id),
+                payment_url=active_response.payment_url or '',
+                amount_kopeks=active_record.amount_kopeks,
+                amount_rubles=active_record.amount_kopeks / 100,
+                price_kopeks=ctx.price_kopeks,
+                balance_kopeks=user.balance_kopeks,
+                method=active_record.method.value,
+                expires_at=active_response.expires_at,
+            )
+        active_response = build_pending_payment_response(active_record)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                'code': 'active_invoice_exists',
+                'message': 'У вас уже есть активный счёт. Оплатите или отмените его перед созданием нового.',
+                'payment': active_response.model_dump(mode='json'),
+            },
+        )
+
     # Корзина — та же структура, что в 402-ветке /purchase-tariff:
     # её съест auto_purchase_saved_cart_after_topup после оплаты.
     cart_data = {
@@ -1548,6 +1588,33 @@ async def create_tariff_invoice(
             detail='Payment URL not received',
         )
 
+    expires_at = datetime.now(UTC) + ACTIVE_INVOICE_TTL
+
+    await record_cabinet_notification(
+        db=db,
+        user_id=user.id,
+        type_=NotificationType.PAYMENT_INVOICE_CREATED.value,
+        title='Счёт на оплату',
+        body=f'{description}: {missing / 100:.0f} ₽ ({method.name})',
+        payload_json={
+            'method': request.payment_method,
+            'payment_id': payment_id,
+            'amount_kopeks': missing,
+            'payment_url': payment_url,
+            'purpose': 'tariff',
+            'tariff_id': ctx.tariff.id,
+        },
+    )
+    await db.commit()
+
+    await send_invoice_created_telegram_message(
+        user=user,
+        purpose=description,
+        amount_kopeks=missing,
+        method_display=method.name,
+        payment_url=payment_url,
+    )
+
     return TariffInvoiceResponse(
         payment_id=payment_id or 'pending',
         payment_url=payment_url,
@@ -1556,6 +1623,7 @@ async def create_tariff_invoice(
         price_kopeks=ctx.price_kopeks,
         balance_kopeks=user.balance_kopeks,
         method=request.payment_method,
+        expires_at=expires_at,
     )
 
 

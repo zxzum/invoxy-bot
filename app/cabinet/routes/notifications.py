@@ -6,9 +6,10 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import User
+from app.database.models import CabinetNotification, User
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 
@@ -45,6 +46,27 @@ class NotificationSettingsUpdate(BaseModel):
     balance_low_threshold: int | None = Field(None, ge=0)
     news_enabled: bool | None = None
     promo_offers_enabled: bool | None = None
+
+
+class CabinetNotificationItem(BaseModel):
+    """Notification item in history."""
+
+    id: int
+    type: str
+    title: str
+    body: str
+    payload: dict[str, Any] | None = None
+    created_at: datetime
+    read_at: datetime | None = None
+
+
+class CabinetNotificationHistoryResponse(BaseModel):
+    """Notification history response."""
+
+    notifications: list[CabinetNotificationItem]
+    total: int
+    limit: int
+    offset: int
 
 
 # ============ Helpers ============
@@ -133,7 +155,7 @@ async def send_test_notification(
     }
 
 
-@router.get('/history')
+@router.get('/history', response_model=CabinetNotificationHistoryResponse)
 async def get_notification_history(
     limit: int = 20,
     offset: int = 0,
@@ -141,11 +163,38 @@ async def get_notification_history(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get user's notification history."""
-    # For now, return empty list - notification history can be implemented later
-    # when there's a notification log table
-    return {
-        'notifications': [],
-        'total': 0,
-        'limit': limit,
-        'offset': offset,
-    }
+    count_query = (
+        select(func.count())
+        .select_from(CabinetNotification)
+        .where(CabinetNotification.user_id == user.id)
+    )
+    total = (await db.execute(count_query)).scalar_one() or 0
+
+    items_query = (
+        select(CabinetNotification)
+        .where(CabinetNotification.user_id == user.id)
+        .order_by(CabinetNotification.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    records = (await db.execute(items_query)).scalars().all()
+
+    notifications = [
+        CabinetNotificationItem(
+            id=record.id,
+            type=record.type,
+            title=record.title,
+            body=record.body,
+            payload=record.payload_json,
+            created_at=record.created_at,
+            read_at=record.read_at,
+        )
+        for record in records
+    ]
+
+    return CabinetNotificationHistoryResponse(
+        notifications=notifications,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

@@ -17,6 +17,8 @@ class NotificationType(Enum):
     BALANCE_TOPUP = 'balance_topup'
     BALANCE_CHANGE = 'balance_change'
     BALANCE_LOW = 'balance_low'
+    PAYMENT_INVOICE_CREATED = 'payment_invoice_created'
+    PAYMENT_INVOICE_CANCELLED = 'payment_invoice_cancelled'
 
     # Subscription notifications
     SUBSCRIPTION_ACTIVATED = 'subscription_activated'

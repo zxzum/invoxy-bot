@@ -5237,3 +5237,20 @@ class ReachabilityTargetPref(Base):
     note = Column(Text, nullable=True)
     updated_by_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+
+class CabinetNotification(Base):
+    """User notifications in cabinet (in-app notification history)."""
+
+    __tablename__ = 'cabinet_notifications'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    type = Column(String(50), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    body = Column(Text, nullable=False)
+    payload_json = Column(JSON, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now(), nullable=False, index=True)
+    read_at = Column(AwareDateTime(), nullable=True)
+
+    user = relationship('User', backref=backref('cabinet_notifications', cascade='all, delete-orphan'))

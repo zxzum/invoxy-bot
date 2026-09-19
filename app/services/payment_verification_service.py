@@ -614,13 +614,15 @@ def _build_record(
     )
 
 
-async def _fetch_pal24_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(Pal24Payment)
-        .options(selectinload(Pal24Payment.user))
-        .where(Pal24Payment.created_at >= cutoff)
-        .order_by(desc(Pal24Payment.created_at))
-    )
+def _build_fetch_stmt(model: Any, cutoff: datetime, user_id: int | None = None):
+    stmt = select(model).options(selectinload(model.user)).where(model.created_at >= cutoff)
+    if user_id is not None:
+        stmt = stmt.where(model.user_id == user_id)
+    return stmt.order_by(desc(model.created_at))
+
+
+async def _fetch_pal24_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(Pal24Payment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -640,13 +642,8 @@ async def _fetch_pal24_payments(db: AsyncSession, cutoff: datetime) -> list[Pend
     return records
 
 
-async def _fetch_mulenpay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(MulenPayPayment)
-        .options(selectinload(MulenPayPayment.user))
-        .where(MulenPayPayment.created_at >= cutoff)
-        .order_by(desc(MulenPayPayment.created_at))
-    )
+async def _fetch_mulenpay_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(MulenPayPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -665,13 +662,8 @@ async def _fetch_mulenpay_payments(db: AsyncSession, cutoff: datetime) -> list[P
     return records
 
 
-async def _fetch_wata_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(WataPayment)
-        .options(selectinload(WataPayment.user))
-        .where(WataPayment.created_at >= cutoff)
-        .order_by(desc(WataPayment.created_at))
-    )
+async def _fetch_wata_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(WataPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -691,13 +683,8 @@ async def _fetch_wata_payments(db: AsyncSession, cutoff: datetime) -> list[Pendi
     return records
 
 
-async def _fetch_platega_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(PlategaPayment)
-        .options(selectinload(PlategaPayment.user))
-        .where(PlategaPayment.created_at >= cutoff)
-        .order_by(desc(PlategaPayment.created_at))
-    )
+async def _fetch_platega_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(PlategaPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -718,13 +705,8 @@ async def _fetch_platega_payments(db: AsyncSession, cutoff: datetime) -> list[Pe
     return records
 
 
-async def _fetch_heleket_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(HeleketPayment)
-        .options(selectinload(HeleketPayment.user))
-        .where(HeleketPayment.created_at >= cutoff)
-        .order_by(desc(HeleketPayment.created_at))
-    )
+async def _fetch_heleket_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(HeleketPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -744,13 +726,8 @@ async def _fetch_heleket_payments(db: AsyncSession, cutoff: datetime) -> list[Pe
     return records
 
 
-async def _fetch_yookassa_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(YooKassaPayment)
-        .options(selectinload(YooKassaPayment.user))
-        .where(YooKassaPayment.created_at >= cutoff)
-        .order_by(desc(YooKassaPayment.created_at))
-    )
+async def _fetch_yookassa_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(YooKassaPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -773,13 +750,8 @@ async def _fetch_yookassa_payments(db: AsyncSession, cutoff: datetime) -> list[P
     return records
 
 
-async def _fetch_cryptobot_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(CryptoBotPayment)
-        .options(selectinload(CryptoBotPayment.user))
-        .where(CryptoBotPayment.created_at >= cutoff)
-        .order_by(desc(CryptoBotPayment.created_at))
-    )
+async def _fetch_cryptobot_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(CryptoBotPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -800,13 +772,8 @@ async def _fetch_cryptobot_payments(db: AsyncSession, cutoff: datetime) -> list[
     return records
 
 
-async def _fetch_cloudpayments_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(CloudPaymentsPayment)
-        .options(selectinload(CloudPaymentsPayment.user))
-        .where(CloudPaymentsPayment.created_at >= cutoff)
-        .order_by(desc(CloudPaymentsPayment.created_at))
-    )
+async def _fetch_cloudpayments_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(CloudPaymentsPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -825,13 +792,8 @@ async def _fetch_cloudpayments_payments(db: AsyncSession, cutoff: datetime) -> l
     return records
 
 
-async def _fetch_freekassa_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(FreekassaPayment)
-        .options(selectinload(FreekassaPayment.user))
-        .where(FreekassaPayment.created_at >= cutoff)
-        .order_by(desc(FreekassaPayment.created_at))
-    )
+async def _fetch_freekassa_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(FreekassaPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -850,13 +812,8 @@ async def _fetch_freekassa_payments(db: AsyncSession, cutoff: datetime) -> list[
     return records
 
 
-async def _fetch_kassa_ai_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(KassaAiPayment)
-        .options(selectinload(KassaAiPayment.user))
-        .where(KassaAiPayment.created_at >= cutoff)
-        .order_by(desc(KassaAiPayment.created_at))
-    )
+async def _fetch_kassa_ai_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(KassaAiPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -875,13 +832,8 @@ async def _fetch_kassa_ai_payments(db: AsyncSession, cutoff: datetime) -> list[P
     return records
 
 
-async def _fetch_riopay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(RioPayPayment)
-        .options(selectinload(RioPayPayment.user))
-        .where(RioPayPayment.created_at >= cutoff)
-        .order_by(desc(RioPayPayment.created_at))
-    )
+async def _fetch_riopay_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(RioPayPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -901,13 +853,8 @@ async def _fetch_riopay_payments(db: AsyncSession, cutoff: datetime) -> list[Pen
     return records
 
 
-async def _fetch_severpay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(SeverPayPayment)
-        .options(selectinload(SeverPayPayment.user))
-        .where(SeverPayPayment.created_at >= cutoff)
-        .order_by(desc(SeverPayPayment.created_at))
-    )
+async def _fetch_severpay_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(SeverPayPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -927,13 +874,8 @@ async def _fetch_severpay_payments(db: AsyncSession, cutoff: datetime) -> list[P
     return records
 
 
-async def _fetch_paypear_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(PayPearPayment)
-        .options(selectinload(PayPearPayment.user))
-        .where(PayPearPayment.created_at >= cutoff)
-        .order_by(desc(PayPearPayment.created_at))
-    )
+async def _fetch_paypear_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(PayPearPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -953,13 +895,8 @@ async def _fetch_paypear_payments(db: AsyncSession, cutoff: datetime) -> list[Pe
     return records
 
 
-async def _fetch_rollypay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(RollyPayPayment)
-        .options(selectinload(RollyPayPayment.user))
-        .where(RollyPayPayment.created_at >= cutoff)
-        .order_by(desc(RollyPayPayment.created_at))
-    )
+async def _fetch_rollypay_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(RollyPayPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -979,13 +916,8 @@ async def _fetch_rollypay_payments(db: AsyncSession, cutoff: datetime) -> list[P
     return records
 
 
-async def _fetch_aurapay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(AuraPayPayment)
-        .options(selectinload(AuraPayPayment.user))
-        .where(AuraPayPayment.created_at >= cutoff)
-        .order_by(desc(AuraPayPayment.created_at))
-    )
+async def _fetch_aurapay_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(AuraPayPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -1031,13 +963,29 @@ async def _fetch_etoplatezhi_payments(db: AsyncSession, cutoff: datetime) -> lis
     return records
 
 
-async def _fetch_antilopay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(AntilopayPayment)
-        .options(selectinload(AntilopayPayment.user))
-        .where(AntilopayPayment.created_at >= cutoff)
-        .order_by(desc(AntilopayPayment.created_at))
-    )
+async def _fetch_etoplatezhi_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(EtoplatezhiPayment, cutoff, user_id=user_id)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_etoplatezhi_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.ETOPLATEZHI,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _fetch_antilopay_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(AntilopayPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -1057,13 +1005,8 @@ async def _fetch_antilopay_payments(db: AsyncSession, cutoff: datetime) -> list[
     return records
 
 
-async def _fetch_jupiter_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(JupiterPayment)
-        .options(selectinload(JupiterPayment.user))
-        .where(JupiterPayment.created_at >= cutoff)
-        .order_by(desc(JupiterPayment.created_at))
-    )
+async def _fetch_jupiter_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(JupiterPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -1083,13 +1026,8 @@ async def _fetch_jupiter_payments(db: AsyncSession, cutoff: datetime) -> list[Pe
     return records
 
 
-async def _fetch_donut_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(DonutPayment)
-        .options(selectinload(DonutPayment.user))
-        .where(DonutPayment.created_at >= cutoff)
-        .order_by(desc(DonutPayment.created_at))
-    )
+async def _fetch_donut_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(DonutPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -1109,13 +1047,8 @@ async def _fetch_donut_payments(db: AsyncSession, cutoff: datetime) -> list[Pend
     return records
 
 
-async def _fetch_lava_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(LavaPayment)
-        .options(selectinload(LavaPayment.user))
-        .where(LavaPayment.created_at >= cutoff)
-        .order_by(desc(LavaPayment.created_at))
-    )
+async def _fetch_lava_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(LavaPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -1135,13 +1068,8 @@ async def _fetch_lava_payments(db: AsyncSession, cutoff: datetime) -> list[Pendi
     return records
 
 
-async def _fetch_paritypay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(ParityPayPayment)
-        .options(selectinload(ParityPayPayment.user))
-        .where(ParityPayPayment.created_at >= cutoff)
-        .order_by(desc(ParityPayPayment.created_at))
-    )
+async def _fetch_paritypay_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(ParityPayPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -1161,13 +1089,8 @@ async def _fetch_paritypay_payments(db: AsyncSession, cutoff: datetime) -> list[
     return records
 
 
-async def _fetch_tabpay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(TabPayPayment)
-        .options(selectinload(TabPayPayment.user))
-        .where(TabPayPayment.created_at >= cutoff)
-        .order_by(desc(TabPayPayment.created_at))
-    )
+async def _fetch_tabpay_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(TabPayPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -1187,13 +1110,8 @@ async def _fetch_tabpay_payments(db: AsyncSession, cutoff: datetime) -> list[Pen
     return records
 
 
-async def _fetch_cispay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(CisPayPayment)
-        .options(selectinload(CisPayPayment.user))
-        .where(CisPayPayment.created_at >= cutoff)
-        .order_by(desc(CisPayPayment.created_at))
-    )
+async def _fetch_cispay_payments(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
+    stmt = _build_fetch_stmt(CisPayPayment, cutoff, user_id=user_id)
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
@@ -1213,7 +1131,7 @@ async def _fetch_cispay_payments(db: AsyncSession, cutoff: datetime) -> list[Pen
     return records
 
 
-async def _fetch_stars_transactions(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+async def _fetch_stars_transactions(db: AsyncSession, cutoff: datetime, user_id: int | None = None) -> list[PendingPayment]:
     stmt = (
         select(Transaction)
         .options(selectinload(Transaction.user))
@@ -1222,8 +1140,10 @@ async def _fetch_stars_transactions(db: AsyncSession, cutoff: datetime) -> list[
             Transaction.type == TransactionType.DEPOSIT.value,
             Transaction.payment_method == PaymentMethod.TELEGRAM_STARS.value,
         )
-        .order_by(desc(Transaction.created_at))
     )
+    if user_id is not None:
+        stmt = stmt.where(Transaction.user_id == user_id)
+    stmt = stmt.order_by(desc(Transaction.created_at))
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for transaction in result.scalars().all():
@@ -1244,36 +1164,37 @@ async def list_recent_pending_payments(
     db: AsyncSession,
     *,
     max_age: timedelta = PENDING_MAX_AGE,
+    user_id: int | None = None,
 ) -> list[PendingPayment]:
     """Return pending payments (top-ups) from supported providers within the age window."""
 
     cutoff = datetime.now(UTC) - max_age
 
     tasks: Iterable[list[PendingPayment]] = (
-        await _fetch_yookassa_payments(db, cutoff),
-        await _fetch_pal24_payments(db, cutoff),
-        await _fetch_mulenpay_payments(db, cutoff),
-        await _fetch_wata_payments(db, cutoff),
-        await _fetch_platega_payments(db, cutoff),
-        await _fetch_heleket_payments(db, cutoff),
-        await _fetch_cryptobot_payments(db, cutoff),
-        await _fetch_cloudpayments_payments(db, cutoff),
-        await _fetch_freekassa_payments(db, cutoff),
-        await _fetch_kassa_ai_payments(db, cutoff),
-        await _fetch_riopay_payments(db, cutoff),
-        await _fetch_severpay_payments(db, cutoff),
-        await _fetch_paypear_payments(db, cutoff),
-        await _fetch_rollypay_payments(db, cutoff),
-        await _fetch_aurapay_payments(db, cutoff),
-        await _fetch_etoplatezhi_payments(db, cutoff),
-        await _fetch_antilopay_payments(db, cutoff),
-        await _fetch_jupiter_payments(db, cutoff),
-        await _fetch_donut_payments(db, cutoff),
-        await _fetch_lava_payments(db, cutoff),
-        await _fetch_cispay_payments(db, cutoff),
-        await _fetch_tabpay_payments(db, cutoff),
-        await _fetch_paritypay_payments(db, cutoff),
-        await _fetch_stars_transactions(db, cutoff),
+        await _fetch_yookassa_payments(db, cutoff, user_id=user_id),
+        await _fetch_pal24_payments(db, cutoff, user_id=user_id),
+        await _fetch_mulenpay_payments(db, cutoff, user_id=user_id),
+        await _fetch_wata_payments(db, cutoff, user_id=user_id),
+        await _fetch_platega_payments(db, cutoff, user_id=user_id),
+        await _fetch_heleket_payments(db, cutoff, user_id=user_id),
+        await _fetch_cryptobot_payments(db, cutoff, user_id=user_id),
+        await _fetch_cloudpayments_payments(db, cutoff, user_id=user_id),
+        await _fetch_freekassa_payments(db, cutoff, user_id=user_id),
+        await _fetch_kassa_ai_payments(db, cutoff, user_id=user_id),
+        await _fetch_riopay_payments(db, cutoff, user_id=user_id),
+        await _fetch_severpay_payments(db, cutoff, user_id=user_id),
+        await _fetch_paypear_payments(db, cutoff, user_id=user_id),
+        await _fetch_rollypay_payments(db, cutoff, user_id=user_id),
+        await _fetch_aurapay_payments(db, cutoff, user_id=user_id),
+        await _fetch_etoplatezhi_payments(db, cutoff, user_id=user_id),
+        await _fetch_antilopay_payments(db, cutoff, user_id=user_id),
+        await _fetch_jupiter_payments(db, cutoff, user_id=user_id),
+        await _fetch_donut_payments(db, cutoff, user_id=user_id),
+        await _fetch_lava_payments(db, cutoff, user_id=user_id),
+        await _fetch_cispay_payments(db, cutoff, user_id=user_id),
+        await _fetch_tabpay_payments(db, cutoff, user_id=user_id),
+        await _fetch_paritypay_payments(db, cutoff, user_id=user_id),
+        await _fetch_stars_transactions(db, cutoff, user_id=user_id),
     )
 
     records: list[PendingPayment] = []

@@ -117,6 +117,10 @@ class PendingPaymentResponse(BaseModel):
     user_id: int | None = None
     user_telegram_id: int | None = None
     user_username: str | None = None
+    purpose: str = 'Пополнение баланса'
+    purpose_code: str = 'topup'
+    is_active: bool = False
+    can_cancel: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
