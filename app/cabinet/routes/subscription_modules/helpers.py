@@ -46,7 +46,7 @@ async def resolve_subscription(
 
     from app.database.crud.subscription import get_subscription_by_id_for_user
 
-    if subscription_id and settings.is_multi_tariff_enabled():
+    if subscription_id:
         subscription = await get_subscription_by_id_for_user(db, subscription_id, user.id)
         if not subscription:
             raise HTTPException(status_code=404, detail='Subscription not found')
