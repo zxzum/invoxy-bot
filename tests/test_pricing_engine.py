@@ -997,3 +997,68 @@ class TestOriginalPriceIdentity:
         with patch('app.services.pricing_engine.get_user_active_promo_discount_percent', return_value=5):
             result = await engine.calculate_renewal_price(db, sub, 30, user=user)
         assert result.original_total == 20000  # undiscounted subtotal
+
+
+class TestCalculateDowngradeExtraDays:
+    """Tests for calculate_downgrade_extra_days and downgrade tariff switch."""
+
+    def _mock_tariff(self, price_kopeks: int, period_days: int = 30):
+        t = MagicMock()
+        t.get_price_for_period = MagicMock(return_value=price_kopeks)
+        t.period_prices = {str(period_days): price_kopeks}
+        t.get_available_periods = MagicMock(return_value=[period_days])
+        t.is_daily = False
+        return t
+
+    def test_downgrade_half_price(self):
+        """Current 600 RUB/mo, new 300 RUB/mo -> 30 days gets +27 bonus days (10% fee)."""
+        cur = self._mock_tariff(60000, 30)
+        new = self._mock_tariff(30000, 30)
+        extra, fee = PricingEngine.calculate_downgrade_extra_days(cur, new, 30, commission_pct=10)
+        assert extra == 27
+        assert fee == 3
+
+    def test_downgrade_small_diff_preserves_days(self):
+        """Small price difference never reduces remaining days."""
+        cur = self._mock_tariff(30000, 30)
+        new = self._mock_tariff(28000, 30)
+        extra, fee = PricingEngine.calculate_downgrade_extra_days(cur, new, 20, commission_pct=10)
+        assert extra >= 1
+        assert extra >= 0
+
+    def test_downgrade_same_price(self):
+        """Same price tariff yields 0 bonus days."""
+        cur = self._mock_tariff(30000, 30)
+        new = self._mock_tariff(30000, 30)
+        extra, fee = PricingEngine.calculate_downgrade_extra_days(cur, new, 30, commission_pct=10)
+        assert extra == 0
+        assert fee == 0
+
+    def test_downgrade_when_new_is_more_expensive(self):
+        """If new tariff is more expensive, extra days should be 0 (it's an upgrade)."""
+        cur = self._mock_tariff(30000, 30)
+        new = self._mock_tariff(60000, 30)
+        extra, fee = PricingEngine.calculate_downgrade_extra_days(cur, new, 30, commission_pct=10)
+        assert extra == 0
+        assert fee == 0
+
+    def test_downgrade_zero_remaining_days(self):
+        cur = self._mock_tariff(60000, 30)
+        new = self._mock_tariff(30000, 30)
+        extra, fee = PricingEngine.calculate_downgrade_extra_days(cur, new, 0, commission_pct=10)
+        assert extra == 0
+        assert fee == 0
+
+    def test_calculate_tariff_switch_cost_downgrade_result(self):
+        """PricingEngine.calculate_tariff_switch_cost fills extra_days and converted_days on downgrade."""
+        cur = self._mock_tariff(60000, 30)
+        new = self._mock_tariff(30000, 30)
+        engine = PricingEngine()
+        result = engine.calculate_tariff_switch_cost(cur, new, 30)
+        assert result.is_upgrade is False
+        assert result.upgrade_cost == 0
+        assert result.extra_days == 27
+        assert result.converted_days == 57
+        assert result.commission_days == 3
+        assert result.commission_pct == 10
+

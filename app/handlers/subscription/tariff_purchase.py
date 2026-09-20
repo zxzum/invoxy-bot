@@ -5124,6 +5124,15 @@ async def confirm_instant_switch(
             subscription.is_trial = False
             subscription.is_daily_paused = False
             subscription.last_daily_charge_at = datetime.now(UTC)
+        elif not is_upgrade and switch_result.extra_days > 0:
+            if subscription.end_date:
+                if subscription.end_date.tzinfo is None:
+                    subscription.end_date = subscription.end_date.replace(tzinfo=UTC)
+                subscription.end_date = subscription.end_date + timedelta(days=switch_result.extra_days)
+            else:
+                subscription.end_date = datetime.now(UTC) + timedelta(days=switch_result.converted_days)
+            subscription.is_trial = False
+            subscription.is_daily_paused = False
 
         await db.commit()
         await db.refresh(subscription)
@@ -5199,6 +5208,19 @@ async def confirm_instant_switch(
                 )
             except Exception as e:
                 logger.error('Ошибка отправки уведомления админу', error=e)
+        elif not is_upgrade:
+            downgrade_desc = (
+                f'Переключение на тариф {new_tariff.name} с перерасчётом (+{switch_result.extra_days} дн., комиссия {switch_result.commission_pct}%)'
+                if switch_result.extra_days > 0
+                else f'Переключение на тариф {new_tariff.name}'
+            )
+            await create_transaction(
+                db,
+                user_id=db_user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=0,
+                description=downgrade_desc,
+            )
 
         await state.clear()
 

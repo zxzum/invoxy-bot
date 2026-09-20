@@ -6972,6 +6972,10 @@ async def preview_tariff_switch_endpoint(
         missing_amount_kopeks=missing,
         missing_amount_label=settings.format_price(missing, round_kopeks=False) if missing > 0 else '',
         is_upgrade=is_upgrade,
+        extra_days=switch_result.extra_days if not is_upgrade else 0,
+        converted_days=switch_result.converted_days if not is_upgrade else 0,
+        commission_days=switch_result.commission_days if not is_upgrade else 0,
+        conversion_fee_percent=switch_result.commission_pct if not is_upgrade else 10,
         message=None,
     )
 
@@ -7128,7 +7132,12 @@ async def switch_tariff_endpoint(
         )
     else:
         # Бесплатный переход (downgrade) — записываем в историю
-        description = f"Переход на тариф '{new_tariff.name}'"
+        if switch_result.extra_days > 0:
+            description = (
+                f"Переход на тариф '{new_tariff.name}' с перерасчётом (+{switch_result.extra_days} дн., комиссия {switch_result.commission_pct}%)"
+            )
+        else:
+            description = f"Переход на тариф '{new_tariff.name}'"
         switch_transaction = None
         await create_transaction(
             db=db,
@@ -7200,6 +7209,13 @@ async def switch_tariff_endpoint(
             )
         else:
             logger.info('🔄 Смена с суточного на обычный тариф: очищены daily поля')
+    elif not is_upgrade and switch_result.extra_days > 0:
+        if subscription.end_date:
+            if subscription.end_date.tzinfo is None:
+                subscription.end_date = subscription.end_date.replace(tzinfo=UTC)
+            subscription.end_date = subscription.end_date + timedelta(days=switch_result.extra_days)
+        else:
+            subscription.end_date = datetime.now(UTC) + timedelta(days=switch_result.converted_days)
 
     await db.commit()
 
@@ -7247,6 +7263,11 @@ async def switch_tariff_endpoint(
             message = f"Тариф изменён на '{new_tariff.name}'. Списано {settings.format_price(upgrade_cost)}"
         else:
             message = f"Switched to '{new_tariff.name}'. Charged {settings.format_price(upgrade_cost)}"
+    elif not is_upgrade and switch_result.extra_days > 0:
+        if lang == 'ru':
+            message = f"Тариф изменён на '{new_tariff.name}' (+{switch_result.extra_days} дн. сверх остатка)"
+        else:
+            message = f"Switched to '{new_tariff.name}' (+{switch_result.extra_days} bonus days)"
     elif lang == 'ru':
         message = f"Тариф изменён на '{new_tariff.name}'"
     else:
@@ -7260,6 +7281,8 @@ async def switch_tariff_endpoint(
         charged_kopeks=upgrade_cost,
         balance_kopeks=user.balance_kopeks,
         balance_label=settings.format_price(user.balance_kopeks),
+        extra_days=switch_result.extra_days if not is_upgrade else None,
+        converted_days=switch_result.converted_days if not is_upgrade else None,
     )
 
 

@@ -694,6 +694,10 @@ class MiniAppTariffSwitchPreviewResponse(BaseModel):
     missing_amount_kopeks: int = 0
     missing_amount_label: str = ''
     is_upgrade: bool = False  # True если новый тариф дороже
+    extra_days: int = 0
+    converted_days: int = 0
+    commission_days: int = 0
+    conversion_fee_percent: int = 10
     message: str | None = None
 
 
@@ -707,6 +711,8 @@ class MiniAppTariffSwitchResponse(BaseModel):
     charged_kopeks: int = 0
     balance_kopeks: int = 0
     balance_label: str = ''
+    extra_days: int | None = None
+    converted_days: int | None = None
 
 
 class MiniAppDailySubscriptionToggleRequest(BaseModel):

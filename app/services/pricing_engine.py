@@ -83,6 +83,10 @@ class TariffSwitchResult:
     group_discount_pct: int
     offer_discount_pct: int
     new_period_days: int = 0  # 0 = keep current end date, >0 = set new subscription period
+    extra_days: int = 0  # extra days awarded on downgrade (сверх своих дней)
+    converted_days: int = 0  # total days on new tariff (remaining_days + extra_days)
+    commission_days: int = 0  # days deducted as commission from bonus
+    commission_pct: int = 10  # commission percentage
 
     @property
     def discount_value(self) -> int:
@@ -269,6 +273,45 @@ class PricingEngine:
         raw_days = numerator // denominator
         return max(1, int(raw_days)) if remaining_days >= 1 else 0
 
+    @staticmethod
+    def calculate_downgrade_extra_days(
+        current_tariff: Tariff,
+        new_tariff: Tariff,
+        remaining_days: int,
+        commission_pct: int = 10,
+    ) -> tuple[int, int]:
+        """Calculate extra days awarded on downgrade ('сверх своих дней') and commission days.
+
+        When switching to a cheaper tariff (new daily rate < current daily rate),
+        the monetary value difference is converted to extra subscription days with
+        a commission deduction (default 10%).
+
+        Returns:
+            (net_extra_days, commission_days)
+        """
+        if remaining_days <= 0 or current_tariff is None or new_tariff is None:
+            return 0, 0
+        cur_price, cur_period = PricingEngine.get_tariff_daily_rate_fraction(current_tariff)
+        new_price, new_period = PricingEngine.get_tariff_daily_rate_fraction(new_tariff)
+        if cur_price <= 0 or cur_period <= 0 or new_price <= 0 or new_period <= 0:
+            return 0, 0
+
+        # Check if current tariff daily rate > new tariff daily rate
+        rate_diff = cur_price * new_period - new_price * cur_period
+        if rate_diff <= 0:
+            return 0, 0
+
+        denominator = cur_period * new_price
+        if denominator <= 0:
+            return 0, 0
+
+        raw_extra = (remaining_days * rate_diff) // denominator
+        factor = max(0, 100 - commission_pct)
+        net_extra = (remaining_days * rate_diff * factor) // (denominator * 100)
+        commission_days = max(0, raw_extra - net_extra)
+
+        return max(0, net_extra), commission_days
+
     def calculate_tariff_switch_cost(
         self,
         current_tariff: Tariff,
@@ -330,6 +373,14 @@ class PricingEngine:
         raw_cost = max(0, numerator // denominator)
 
         if numerator <= 0:
+            commission_pct = 10
+            extra_days, commission_days = self.calculate_downgrade_extra_days(
+                current_tariff,
+                new_tariff,
+                remaining_days,
+                commission_pct=commission_pct,
+            )
+            total_days = remaining_days + extra_days
             return TariffSwitchResult(
                 upgrade_cost=0,
                 is_upgrade=False,
@@ -337,6 +388,10 @@ class PricingEngine:
                 group_discount_pct=0,
                 offer_discount_pct=0,
                 new_period_days=0,
+                extra_days=extra_days,
+                converted_days=total_days,
+                commission_days=commission_days,
+                commission_pct=commission_pct,
             )
 
         # Resolve discounts via resolve_promo_group (get_primary_promo_group first)

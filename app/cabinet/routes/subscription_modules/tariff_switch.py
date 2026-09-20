@@ -170,11 +170,24 @@ async def preview_tariff_switch(
         commission_pct=10,
     )
 
+    # For downgrades, use switch_result calculated values
+    if not is_upgrade:
+        converted_days = switch_result.converted_days
+        extra_days = switch_result.extra_days
+        commission_days = switch_result.commission_days
+        conversion_fee_pct = switch_result.commission_pct
+    else:
+        extra_days = 0
+        commission_days = 0
+        conversion_fee_pct = 10
+
     response: dict[str, Any] = {
         'can_switch': has_enough,
-        'can_convert_days': converted_days > 0,
+        'can_convert_days': converted_days > 0 or (not is_upgrade and extra_days >= 0),
         'converted_days': converted_days,
-        'conversion_fee_percent': 10,
+        'extra_days': extra_days,
+        'commission_days': commission_days,
+        'conversion_fee_percent': conversion_fee_pct,
         'current_tariff_id': current_tariff.id if current_tariff else None,
         'current_tariff_name': current_tariff.name if current_tariff else None,
         'new_tariff_id': new_tariff.id,
@@ -364,7 +377,7 @@ async def switch_tariff(
         )
 
     switch_mode = getattr(request, 'switch_mode', 'prorate_cost') or 'prorate_cost'
-    is_convert_days = switch_mode == 'convert_days'
+    is_convert_days = switch_mode == 'convert_days' and is_upgrade
     converted_days = 0
 
     # Charge if upgrade or handle day conversion
@@ -463,8 +476,15 @@ async def switch_tariff(
             commit=False,
         )
     else:
-        # Free switch (downgrade) — record in history
-        description = f"Переход на тариф '{new_tariff.name}'"
+        # Free switch (downgrade) — record in history with extra days calculation
+        extra_days = switch_result.extra_days
+        converted_days = switch_result.converted_days
+        if extra_days > 0:
+            description = (
+                f"Переход на тариф '{new_tariff.name}' с перерасчётом (+{extra_days} дн. сверх остатка, комиссия {switch_result.commission_pct}%)"
+            )
+        else:
+            description = f"Переход на тариф '{new_tariff.name}'"
         await create_transaction(
             db=db,
             user_id=user.id,
@@ -541,6 +561,14 @@ async def switch_tariff(
 
     if is_convert_days:
         subscription.end_date = datetime.now(UTC) + timedelta(days=converted_days)
+        subscription.is_daily_paused = False
+    elif not is_upgrade and switch_result.extra_days > 0:
+        if subscription.end_date:
+            if subscription.end_date.tzinfo is None:
+                subscription.end_date = subscription.end_date.replace(tzinfo=UTC)
+            subscription.end_date = subscription.end_date + timedelta(days=switch_result.extra_days)
+        else:
+            subscription.end_date = datetime.now(UTC) + timedelta(days=switch_result.converted_days)
         subscription.is_daily_paused = False
     elif switching_to_daily:
         # Switching TO daily - reset end_date to 1 day, set last_daily_charge_at
@@ -655,7 +683,9 @@ async def switch_tariff(
         'balance_kopeks': user.balance_kopeks,
         'balance_label': settings.format_price(user.balance_kopeks),
         'switch_mode': switch_mode,
-        'converted_days': converted_days if is_convert_days else None,
+        'converted_days': switch_result.converted_days if not is_upgrade else (converted_days if is_convert_days else None),
+        'extra_days': switch_result.extra_days if not is_upgrade else None,
+        'is_upgrade': is_upgrade,
     }
 
     # Add discount info if applicable
