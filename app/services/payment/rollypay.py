@@ -429,6 +429,19 @@ class RollyPayPaymentMixin:
             external_id=transaction_external_id,
         )
 
+        # Send WebSocket notification to cabinet frontend
+        try:
+            from app.cabinet.routes.websocket import notify_user_balance_topup
+
+            await notify_user_balance_topup(
+                user_id=payment.user_id,
+                amount_kopeks=payment.amount_kopeks,
+                new_balance_kopeks=user.balance_kopeks,
+                description=description,
+            )
+        except Exception as ws_err:
+            logger.warning('Failed to send WS notification for RollyPay topup', error=ws_err)
+
         topup_status = '\U0001f195 Первое пополнение' if was_first_topup else '\U0001f504 Пополнение'
 
         try:

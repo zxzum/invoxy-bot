@@ -1264,7 +1264,8 @@
   "MENU_PROMOCODE": "🎫 Промокод",
   "MENU_PROMO_GROUPS_INFO": "🎯 Скидки за траты",
   "MENU_PUBLIC_OFFER": "📄 Оферта",
-  "MENU_REFERRALS": "🤝 Партнерка",
+  "MENU_PARTNER": "🤝 Партнерка",
+  "MENU_REFERRALS": "👥 Пригласить и заработать",
   "MENU_RULES": "📋 Правила сервиса",
   "MENU_SERVER_STATUS": "📊 Статус серверов",
   "MENU_SUBSCRIPTION": "📱 Подписка",
@@ -2275,5 +2276,17 @@
   "GIFT_COPY_TEXT_HINT": "Нажмите на текст ниже — он скопируется целиком. Отправьте его получателю.",
   "GIFT_COPY_TEXT_BODY": "🎁 Дарю тебе подписку {tariff_name} на {period_days} дн.\n\nАктивировать: {claim_link}\n\nЕсли ссылка не открывается, введи код в боте: {public_code}",
   "GIFT_ITEM_NOT_CLAIMABLE": "Этот подарок уже активирован — делиться нечем.",
-  "GIFT_MY_BACK_TO_CARD": "◀️ К подарку"
+  "GIFT_MY_BACK_TO_CARD": "◀️ К подарку",
+  "OPEN_PARTNER_CABINET": "🚀 Открыть партнёрский кабинет",
+  "PARTNER_INFO_MESSAGE": "🤝 <b>Партнёрская программа Invoxy</b>\n\nПриглашайте пользователей и получайте отчисления со всех покупок.\n\nДля подачи заявки и управления кампаниями откройте веб-кабинет партнёра.",
+  "CABINET_DEVICES_PURCHASE_SUCCESS": "Устройства успешно добавлены",
+  "CABINET_SUBSCRIPTION_PURCHASE_SUCCESS": "Подписка успешно оформлена",
+  "CABINET_TARIFF_PURCHASE_SUCCESS": "Тариф успешно оплачен",
+  "CABINET_TRAFFIC_PURCHASE_SUCCESS": "Трафик успешно добавлен",
+  "MAIN_TRAFFIC": "Основной трафик",
+  "WHITE_INTERNET": "Белый интернет",
+  "LEGAL_ACCEPT_ALL_BUTTON": "✅ Я прочитал(а) и принимаю",
+  "LEGAL_OFFER_BUTTON": "📄 Публичная оферта",
+  "LEGAL_PRIVACY_BUTTON": "🔒 Политика конфиденциальности",
+  "LEGAL_COMPACT_GREETING": "👋 <b>Добро пожаловать!</b>\n\nПеред началом работы ознакомьтесь с документами сервиса — они откроются по кнопкам ниже.\n\nНажимая «Я прочитал(а) и принимаю», вы подтверждаете согласие с условиями обоих документов."
 }

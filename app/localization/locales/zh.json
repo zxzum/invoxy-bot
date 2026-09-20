@@ -2275,5 +2275,18 @@
   "GIFT_COPY_TEXT_HINT": "点击下方文本即可整段复制，然后发送给接收者。",
   "GIFT_COPY_TEXT_BODY": "🎁 送你一份 {tariff_name} 订阅，为期 {period_days} 天。\n\n激活：{claim_link}\n\n如果链接打不开，请在机器人中输入代码：{public_code}",
   "GIFT_ITEM_NOT_CLAIMABLE": "该礼物已被激活——没有可分享的内容。",
-  "GIFT_MY_BACK_TO_CARD": "◀️ 返回礼物"
+  "GIFT_MY_BACK_TO_CARD": "◀️ 返回礼物",
+  "MENU_PARTNER": "🤝 推广合作",
+  "OPEN_PARTNER_CABINET": "🚀 打开推广合作中心",
+  "PARTNER_INFO_MESSAGE": "🤝 <b>Invoxy 推广合作计划</b>\n\n邀请新用户并在其购买时获取分成。\n\n如需申请并管理推广计划，请打开推广合作中心。",
+  "CABINET_DEVICES_PURCHASE_SUCCESS": "设备添加成功",
+  "CABINET_SUBSCRIPTION_PURCHASE_SUCCESS": "订阅购买成功",
+  "CABINET_TARIFF_PURCHASE_SUCCESS": "套餐支付成功",
+  "CABINET_TRAFFIC_PURCHASE_SUCCESS": "流量添加成功",
+  "MAIN_TRAFFIC": "主要流量",
+  "WHITE_INTERNET": "白名单流量",
+  "LEGAL_ACCEPT_ALL_BUTTON": "✅ 我已阅读并同意",
+  "LEGAL_OFFER_BUTTON": "📄 服务条款",
+  "LEGAL_PRIVACY_BUTTON": "🔒 隐私政策",
+  "LEGAL_COMPACT_GREETING": "👋 <b>欢迎！</b>\n\n在开始使用前，请先查看以下服务条款与隐私政策。\n\n点击“我已阅读并同意”即表示您同意以上两项文档的所有条款。"
 }

@@ -498,6 +498,14 @@ def _build_cabinet_main_menu_keyboard(
                     balance_text = _get_balance_text(cached_styles, language, texts, balance_kopeks)
                     row_buttons.append(_cabinet_button(balance_text, '/balance', 'menu_balance'))
 
+                case 'partner':
+                    if not section_cfg.get('enabled', True):
+                        continue
+                    partner_text = section_cfg.get('labels', {}).get(language, '') or texts.t(
+                        'MENU_PARTNER', '🤝 Партнерка'
+                    )
+                    row_buttons.append(_cabinet_button(partner_text, '/partner', 'menu_partner'))
+
                 case 'referral':
                     if not settings.is_referral_program_enabled():
                         continue

@@ -189,7 +189,7 @@ def _get_method_defaults() -> dict:
             'is_configured': settings.is_rollypay_enabled(),
             'default_min': settings.ROLLYPAY_MIN_AMOUNT_KOPEKS,
             'default_max': settings.ROLLYPAY_MAX_AMOUNT_KOPEKS,
-            'available_sub_options': None,
+            'available_sub_options': _get_rollypay_sub_options(),
         },
         'overpay': {
             'default_display_name': settings.get_overpay_display_name(),
@@ -321,6 +321,13 @@ def _get_overpay_sub_options() -> list[dict]:
     if settings.is_overpay_int_enabled():
         options.append({'id': 'int', 'name': 'Международная карта (EUR)'})
     return options
+
+
+def _get_rollypay_sub_options() -> list[dict]:
+    return [
+        {'id': 'sbp', 'name': '⚡ СБП (0% комиссии)'},
+        {'id': 'card', 'name': '💳 Карты РФ (МИР, Visa, MC)'},
+    ]
 
 
 # Default order of methods

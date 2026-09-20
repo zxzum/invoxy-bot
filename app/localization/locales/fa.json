@@ -2275,5 +2275,18 @@
   "GIFT_COPY_TEXT_HINT": "روی متن زیر بزنید تا کامل کپی شود، سپس آن را برای گیرنده بفرستید.",
   "GIFT_COPY_TEXT_BODY": "🎁 یک اشتراک {tariff_name} به مدت {period_days} روز به تو هدیه می‌دهم.\n\nفعال‌سازی: {claim_link}\n\nاگر لینک باز نشد، این کد را در ربات وارد کن: {public_code}",
   "GIFT_ITEM_NOT_CLAIMABLE": "این هدیه قبلاً فعال شده است — چیزی برای اشتراک‌گذاری نیست.",
-  "GIFT_MY_BACK_TO_CARD": "◀️ بازگشت به هدیه"
+  "GIFT_MY_BACK_TO_CARD": "◀️ بازگشت به هدیه",
+  "MENU_PARTNER": "🤝 همکاری در فروش",
+  "OPEN_PARTNER_CABINET": "🚀 باز کردن پنل همکاری",
+  "PARTNER_INFO_MESSAGE": "🤝 <b>برنامه همکاری Invoxy</b>\n\nکاربران را دعوت کنید و از خرید آنها پورسانت دریافت کنید.\n\nبرای ثبت درخواست و مدیریت کمپین‌ها، پنل همکاری را باز کنید.",
+  "CABINET_DEVICES_PURCHASE_SUCCESS": "دستگاه‌ها با موفقیت اضافه شدند",
+  "CABINET_SUBSCRIPTION_PURCHASE_SUCCESS": "اشتراک با موفقیت فعال شد",
+  "CABINET_TARIFF_PURCHASE_SUCCESS": "تعرفه با موفقیت پرداخت شد",
+  "CABINET_TRAFFIC_PURCHASE_SUCCESS": "ترافیک با موفقیت اضافه شد",
+  "MAIN_TRAFFIC": "ترافیک اصلی",
+  "WHITE_INTERNET": "اینترنت ملی/سفید",
+  "LEGAL_ACCEPT_ALL_BUTTON": "✅ خواندم و می‌پذیرم",
+  "LEGAL_OFFER_BUTTON": "📄 شرایط خدمات",
+  "LEGAL_PRIVACY_BUTTON": "🔒 حریم خصوصی",
+  "LEGAL_COMPACT_GREETING": "👋 <b>خوش آمدید!</b>\n\nپیش از شروع، لطفاً قوانین و حریم خصوصی را با استفاده از دکمه‌های زیر مطالعه فرمایید.\n\nبا زدن «خواندم و می‌پذیرم»، موافقت خود را با هر دو سند اعلام می‌دارید."
 }

@@ -1064,7 +1064,36 @@ async def cancel_withdrawal_request(callback: types.CallbackQuery, db_user: User
     await edit_or_answer_photo(callback, texts.t('REFERRAL_WITHDRAWAL_CANCELLED', '❌ Заявка отменена'), keyboard)
 
 
+async def show_partner_info(callback: types.CallbackQuery, db_user: User):
+    """Показывает информацию о партнерской программе и ссылку в веб-кабинет."""
+    texts = get_texts(db_user.language)
+    from app.utils.miniapp_buttons import build_cabinet_url
+
+    cabinet_url = build_cabinet_url('/partner')
+    text = texts.t(
+        'PARTNER_INFO_MESSAGE',
+        '🤝 <b>Партнёрская программа Invoxy</b>\n\n'
+        'Зарабатывайте до 50% с каждой оплаты привлечённых пользователей.\n\n'
+        '• Индивидуальная ставка и персональные условия\n'
+        '• Личные промокоды и ссылки с аналитикой\n'
+        '• Выплаты на карты и криптовалюту\n\n'
+        'Для подачи заявки и управления кампаниями откройте веб-кабинет партнёра.',
+    )
+    buttons = []
+    if cabinet_url:
+        buttons.append([
+            types.InlineKeyboardButton(
+                text=texts.t('OPEN_PARTNER_CABINET', '🚀 Открыть партнёрский кабинет'),
+                web_app=types.WebAppInfo(url=cabinet_url),
+            )
+        ])
+    buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
+    await edit_or_answer_photo(callback, text, keyboard)
+
+
 def register_handlers(dp: Dispatcher):
+    dp.callback_query.register(show_partner_info, F.data == 'menu_partner')
     dp.callback_query.register(show_referral_info, F.data == 'menu_referrals')
 
     dp.callback_query.register(create_invite_message, F.data == 'referral_create_invite')

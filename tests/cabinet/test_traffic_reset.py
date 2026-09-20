@@ -353,6 +353,7 @@ async def test_auto_purchase_service_handles_traffic_reset():
 
 def test_traffic_routes_have_no_var_keyword_params():
     import inspect
+
     from app.cabinet.routes.subscription_modules.traffic import router
 
     for route in router.routes:

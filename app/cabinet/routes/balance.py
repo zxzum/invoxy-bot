@@ -203,6 +203,13 @@ async def get_payment_methods(
                     definitions = settings.get_platega_method_definitions()
                     info = definitions.get(int(opt_id), {}) if opt_id.isdigit() else {}
                     description = info.get('description') or info.get('name') or ''
+                elif method_id == 'rollypay':
+                    if opt_id == 'sbp':
+                        opt_name = '⚡ СБП (0% комиссии)'
+                        description = 'Мгновенно через приложение любого банка РФ'
+                    elif opt_id in ('card', 'bank_card'):
+                        opt_name = '💳 Карты РФ (МИР, Visa, MC)'
+                        description = 'МИР, Visa, Mastercard любых российских банков'
 
                 formatted_options.append(
                     {
