@@ -4,9 +4,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import CabinetNotification, User
@@ -67,6 +67,21 @@ class CabinetNotificationHistoryResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class NotificationReadResponse(BaseModel):
+    """Response for marking a notification as read."""
+
+    success: bool = True
+    id: int
+    read_at: datetime
+
+
+class NotificationReadAllResponse(BaseModel):
+    """Response for marking all notifications as read."""
+
+    success: bool = True
+    updated_count: int
 
 
 # ============ Helpers ============
@@ -197,4 +212,57 @@ async def get_notification_history(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.post('/read-all', response_model=NotificationReadAllResponse)
+async def mark_all_notifications_as_read(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Mark all unread notifications as read for current user."""
+    stmt = (
+        update(CabinetNotification)
+        .where(
+            CabinetNotification.user_id == user.id,
+            CabinetNotification.read_at.is_(None),
+        )
+        .values(read_at=datetime.now(UTC))
+    )
+    result = await db.execute(stmt)
+    await db.commit()
+
+    return NotificationReadAllResponse(
+        success=True,
+        updated_count=result.rowcount or 0,
+    )
+
+
+@router.post('/{id}/read', response_model=NotificationReadResponse)
+async def mark_notification_as_read(
+    id: int,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Mark a specific notification as read."""
+    query = select(CabinetNotification).where(
+        CabinetNotification.id == id,
+        CabinetNotification.user_id == user.id,
+    )
+    notification = (await db.execute(query)).scalar_one_or_none()
+    if not notification:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Notification not found',
+        )
+
+    if notification.read_at is None:
+        notification.read_at = datetime.now(UTC)
+        await db.commit()
+        await db.refresh(notification)
+
+    return NotificationReadResponse(
+        success=True,
+        id=notification.id,
+        read_at=notification.read_at,
     )
