@@ -268,3 +268,22 @@ class DeepLinkPollRequest(BaseModel):
         pattern=r'^[a-zA-Z0-9_-]+$',
         description='Campaign slug captured from cabinet URL',
     )
+
+
+class AppHandoffResponse(BaseModel):
+    """Response for generating an app handoff link."""
+
+    url: str = Field(..., description='Connect URL for the native mobile app')
+    token_expires_in: int = Field(120, description='Token TTL in seconds')
+
+
+class AppHandoffExchangeRequest(BaseModel):
+    """Request to exchange app handoff token for JWT auth session."""
+
+    token: str = Field(..., min_length=16, max_length=128, description='One-time app handoff token')
+    device_id: str | None = Field(
+        None, max_length=128, description='Client-generated device identifier for audit/session tracking'
+    )
+
+
+AppHandoffRequest = AppHandoffExchangeRequest

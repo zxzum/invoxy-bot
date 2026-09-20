@@ -51,8 +51,11 @@ from app.services.registration_access_service import (
     RegistrationChannel,
 )
 from app.services.web_auth_service import (
+    APP_HANDOFF_TOKEN_TTL,
     WEB_AUTH_TOKEN_TTL,
+    consume_app_handoff_token,
     consume_web_auth_token,
+    create_app_handoff_token,
     create_web_auth_token,
     poll_web_auth_token,
 )
@@ -89,6 +92,8 @@ from ..auth.merge_service import (
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 from ..ip_utils import get_client_ip
 from ..schemas.auth import (
+    AppHandoffExchangeRequest,
+    AppHandoffResponse,
     AuthResponse,
     AutoLoginRequest,
     CampaignBonusInfo,
@@ -2611,3 +2616,97 @@ async def poll_deep_link_token(
     logger.info('Deep link auth successful', user_id=user.id, telegram_id=user.telegram_id)
 
     return response
+
+
+# --- Native app handoff ---
+
+
+@router.post('/app-link', response_model=AppHandoffResponse)
+async def create_app_link(
+    raw_request: Request,
+    user: User = Depends(get_current_cabinet_user),
+):
+    """Generate a one-time handoff link for the native mobile app.
+
+    Requires an authenticated cabinet user session.
+    """
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'app_link_create', limit=30, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    try:
+        token = await create_app_handoff_token(user.id)
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Service temporarily unavailable',
+        )
+
+    base_url = settings.MINIAPP_CUSTOM_URL.rstrip('/') if settings.MINIAPP_CUSTOM_URL else 'https://invoxy.my'
+    url = f'{base_url}/app/connect?token={token}'
+
+    return AppHandoffResponse(
+        url=url,
+        token_expires_in=APP_HANDOFF_TOKEN_TTL,
+    )
+
+
+@router.post('/app-link/exchange', response_model=AuthResponse)
+async def exchange_app_link_token(
+    request: AppHandoffExchangeRequest,
+    raw_request: Request,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Exchange a one-time app handoff token for JWT auth session.
+
+    Single-use atomic consumption: repeats return 410 Gone.
+    """
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'app_link_exchange', limit=60, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    data = await consume_app_handoff_token(request.token)
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail='Token expired or not found',
+        )
+
+    user_id = data.get('user_id')
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail='Invalid token data',
+        )
+
+    user = await get_user_by_id(db, int(user_id))
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='User not found',
+        )
+
+    if user.status != UserStatus.ACTIVE.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Account is deactivated',
+        )
+
+    user.cabinet_last_login = datetime.now(UTC)
+    await db.commit()
+
+    response = await _create_auth_response(user, db)
+    await _store_refresh_token(db, user.id, response.refresh_token, device_info='app_link')
+
+    logger.info('App handoff auth successful', user_id=user.id, device_id=request.device_id)
+
+    return response
+
