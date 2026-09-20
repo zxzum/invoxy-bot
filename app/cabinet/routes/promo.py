@@ -259,7 +259,7 @@ async def get_loyalty_tiers(
     # Calculate progress to next tier
     progress_percent = 0.0
     if next_tier_threshold and next_tier_threshold > 0:
-        progress_percent = min(100.0, (total_spent_rubles / next_tier_threshold) * 100)
+        progress_percent = round(min(100.0, (total_spent_rubles / next_tier_threshold) * 100), 1)
     elif tiers and all(t.is_achieved for t in tiers):
         # All tiers achieved
         progress_percent = 100.0
