@@ -325,8 +325,26 @@ def _get_overpay_sub_options() -> list[dict]:
 
 def _get_rollypay_sub_options() -> list[dict]:
     return [
-        {'id': 'sbp', 'name': '⚡ СБП'},
-        {'id': 'card', 'name': '💳 Карты РФ (МИР, Visa, MC)'},
+        {
+            'id': 'sbp',
+            'name': '⚡ СБП',
+            'description': 'Мгновенно через приложение любого банка РФ',
+        },
+        {
+            'id': 'card',
+            'name': '💳 Карты РФ (МИР, Visa, MC)',
+            'description': 'МИР, Visa, Mastercard любых российских банков',
+        },
+        {
+            'id': 'foreign_card',
+            'name': '🌍 Зарубежные карты',
+            'description': 'Visa / Mastercard зарубежных банков и СНГ',
+        },
+        {
+            'id': 'crypto',
+            'name': '🪙 Криптовалюта',
+            'description': 'USDT, TON, BTC и другие',
+        },
     ]
 
 
@@ -660,14 +678,17 @@ async def get_enabled_methods_for_user(
         # Build options (filter by sub_options config)
         options = None
         available_sub_options = method_def.get('available_sub_options')
-        if available_sub_options and config.sub_options:
-            enabled_options = []
-            for opt in available_sub_options:
-                opt_id = opt['id']
-                if config.sub_options.get(opt_id, True):
-                    enabled_options.append(opt)
-            if enabled_options:
-                options = enabled_options
+        if available_sub_options:
+            if config.sub_options is not None:
+                enabled_options = []
+                for opt in available_sub_options:
+                    opt_id = opt['id']
+                    if config.sub_options.get(opt_id, True):
+                        enabled_options.append(opt)
+                if enabled_options:
+                    options = enabled_options
+            else:
+                options = available_sub_options
 
         result.append(
             {

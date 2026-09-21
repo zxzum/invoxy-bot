@@ -2741,7 +2741,7 @@ class Settings(BaseSettings):
     def get_platega_display_name(self) -> str:
         name = (self.PLATEGA_DISPLAY_NAME or '').strip()
         if not name:
-            return 'Platega'
+            return 'Запасной шлюз #2'
         return name
 
     def get_platega_display_name_html(self) -> str:
@@ -3042,7 +3042,7 @@ class Settings(BaseSettings):
 
     def get_rollypay_display_name(self) -> str:
         name = (self.ROLLYPAY_DISPLAY_NAME or '').strip()
-        return name if name else 'RollyPay'
+        return name if name else 'Платежный шлюз #1'
 
     def get_rollypay_display_name_html(self) -> str:
         return html.escape(self.get_rollypay_display_name())
