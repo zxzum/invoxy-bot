@@ -305,9 +305,12 @@
 - `app/cabinet/routes/admin_withdrawals.py` — Python-модуль
   Классы: нет
   Функции: `list_withdrawals` — List all withdrawal requests., `get_withdrawal_detail` — Get detailed withdrawal request with risk analysis., `approve_withdrawal` — Approve a withdrawal request., `reject_withdrawal` — Reject a withdrawal request., `complete_withdrawal` — Mark a withdrawal as completed (money transferred).
+- `app/cabinet/routes/app_banners.py` — Python-модуль
+  Классы: `AppBannerResponse`, `AppBannerCreateRequest`, `AppBannerUpdateRequest`
+  Функции: `list_active_app_banners` — List active in-app banners for the mobile and desktop clients., `list_all_app_banners` — List all in-app banners for administration., `create_new_app_banner` — Create a new in-app banner., `update_existing_app_banner` — Update an existing in-app banner., `delete_existing_app_banner` — Delete an in-app banner.
 - `app/cabinet/routes/auth.py` — Python-модуль
   Классы: нет
-  Функции: `auth_telegram` — Authenticate using Telegram WebApp initData., `auth_telegram_widget` — Authenticate using Telegram Login Widget data., `auth_telegram_oidc` — Authenticate using Telegram OIDC id_token (popup flow)., `register_email` — Register/link email to existing Telegram account., `verify_email_merge` — Confirm an email account merge with the code mailed to the existing account., `register_email_standalone` — Register new account with email and password., `verify_email` — Verify email with token and return auth tokens., `resend_verification` — Resend verification email., `resend_verification_public` — Повторно отправить письмо подтверждения с экрана «Проверьте почту»., `login_email` — Login with email and password., `refresh_token` — Refresh access token using refresh token., `logout` — Logout and revoke refresh token., `auto_login` — Auto-login using a short-lived JWT from guest purchase success page., `forgot_password` — Request password reset., `reset_password` — Reset password with token., `get_current_user` — Get current authenticated user info., `get_my_avatar` — Фото профиля Telegram для шапки кабинета., `get_my_permissions` — Get current user's RBAC permissions, roles, and level., `check_is_admin` — Check if current user is an admin (legacy config or RBAC)., `request_email_change` — Request email change., `verify_email_change` — Verify email change with code., `cancel_email_change` — Cancel pending email change., `get_email_change_status` — Get pending email change status., `request_deep_link_token` — Generate a one-time deep link auth token., `poll_deep_link_token` — Poll for deep link auth completion.
+  Функции: `auth_telegram` — Authenticate using Telegram WebApp initData., `auth_telegram_widget` — Authenticate using Telegram Login Widget data., `auth_telegram_oidc` — Authenticate using Telegram OIDC id_token (popup flow)., `register_email` — Register/link email to existing Telegram account., `verify_email_merge` — Confirm an email account merge with the code mailed to the existing account., `register_email_standalone` — Register new account with email and password., `verify_email` — Verify email with token and return auth tokens., `resend_verification` — Resend verification email., `resend_verification_public` — Повторно отправить письмо подтверждения с экрана «Проверьте почту»., `login_email` — Login with email and password., `refresh_token` — Refresh access token using refresh token., `logout` — Logout and revoke refresh token., `auto_login` — Auto-login using a short-lived JWT from guest purchase success page., `forgot_password` — Request password reset., `reset_password` — Reset password with token., `get_current_user` — Get current authenticated user info., `get_my_avatar` — Фото профиля Telegram для шапки кабинета., `get_my_permissions` — Get current user's RBAC permissions, roles, and level., `check_is_admin` — Check if current user is an admin (legacy config or RBAC)., `request_email_change` — Request email change., `verify_email_change` — Verify email change with code., `cancel_email_change` — Cancel pending email change., `get_email_change_status` — Get pending email change status., `request_deep_link_token` — Generate a one-time deep link auth token., `poll_deep_link_token` — Poll for deep link auth completion., `create_app_link` — Generate a one-time handoff link for the native mobile app., `exchange_app_link_token` — Exchange a one-time app handoff token for JWT auth session., `generate_pair_code_endpoint` — Generate a short 6-character code for app pairing., `exchange_pair_code_endpoint` — Exchange a 6-character pairing code for JWT auth session.
 - `app/cabinet/routes/balance.py` — Python-модуль
   Классы: нет
   Функции: `get_balance` — Get current user's balance., `get_transactions` — Get transaction history., `get_payment_methods` — Get available payment methods for the current user., `create_stars_invoice` — Создать Telegram Stars invoice для пополнения баланса., `create_topup` — Create payment for balance top-up., `get_pending_payments` — Get user's pending payments for manual verification., `cancel_user_pending_payment` — Cancel user's own pending payment., `get_latest_payment_by_method` — Get user's most recent payment for a given method (any status, not just pending)., `get_pending_payment_details` — Get details of a specific pending payment., `check_payment_status` — Manually check and update payment status., `get_saved_cards` — Get user's saved payment methods (cards) for recurrent payments., `delete_saved_card` — Unlink (deactivate) a saved payment method.
@@ -339,8 +342,8 @@
   Классы: нет
   Функции: `list_categories` — Get list of distinct news categories., `list_published_news` — Get paginated list of published news articles., `get_article_by_slug` — Get a single published news article by slug. Increments view count.
 - `app/cabinet/routes/notifications.py` — Python-модуль
-  Классы: `NotificationSettingsResponse`, `NotificationSettingsUpdate`, `CabinetNotificationItem`, `CabinetNotificationHistoryResponse`
-  Функции: `get_notification_settings` — Get user's notification settings., `update_notification_settings` — Update user's notification settings., `send_test_notification` — Send a test notification to the user., `get_notification_history` — Get user's notification history.
+  Классы: `NotificationSettingsResponse`, `NotificationSettingsUpdate`, `CabinetNotificationItem`, `CabinetNotificationHistoryResponse`, `NotificationReadResponse`, `NotificationReadAllResponse`
+  Функции: `get_notification_settings` — Get user's notification settings., `update_notification_settings` — Update user's notification settings., `send_test_notification` — Send a test notification to the user., `get_notification_history` — Get user's notification history., `mark_all_notifications_as_read` — Mark all unread notifications as read for current user., `mark_notification_as_read` — Mark a specific notification as read.
 - `app/cabinet/routes/oauth.py` — Python-модуль
   Классы: `OAuthProviderInfo`, `OAuthProvidersResponse`, `OAuthAuthorizeResponse`, `OAuthCallbackRequest`
   Функции: `get_oauth_providers` — Get list of enabled OAuth providers., `get_oauth_authorize_url` — Get authorization URL for an OAuth provider., `oauth_callback` — Handle OAuth callback: exchange code, find/create user, return JWT.
@@ -448,7 +451,7 @@
   Классы: `ApplePurchaseRequest` (1 методов), `ApplePurchaseResponse`, `AppleAccountTokenResponse`
   Функции: нет
 - `app/cabinet/schemas/auth.py` — Python-модуль
-  Классы: `TelegramAuthRequest`, `TelegramWidgetAuthRequest`, `TelegramOIDCAuthRequest`, `EmailRegisterRequest`, `EmailVerifyRequest`, `EmailLoginRequest`, `RefreshTokenRequest`, `VerificationResendRequest`, `PasswordForgotRequest`, `PasswordResetRequest`, `AutoLoginRequest`, `TokenResponse`, `UserResponse`, `UserAvatarResponse`, `EmailRegisterStandaloneRequest`, `CampaignBonusInfo`, `AuthResponse`, `RegisterResponse`, `EmailChangeRequest`, `EmailChangeVerifyRequest`, `EmailMergeVerifyRequest`, `EmailChangeResponse`, `DeepLinkTokenResponse`, `DeepLinkPollRequest`
+  Классы: `TelegramAuthRequest`, `TelegramWidgetAuthRequest`, `TelegramOIDCAuthRequest`, `EmailRegisterRequest`, `EmailVerifyRequest`, `EmailLoginRequest`, `RefreshTokenRequest`, `VerificationResendRequest`, `PasswordForgotRequest`, `PasswordResetRequest`, `AutoLoginRequest`, `TokenResponse`, `UserResponse`, `UserAvatarResponse`, `EmailRegisterStandaloneRequest`, `CampaignBonusInfo`, `AuthResponse`, `RegisterResponse`, `EmailChangeRequest`, `EmailChangeVerifyRequest`, `EmailMergeVerifyRequest`, `EmailChangeResponse`, `DeepLinkTokenResponse`, `DeepLinkPollRequest`, `AppHandoffResponse`, `AppHandoffExchangeRequest`, `PairCodeResponse`, `PairCodeExchangeRequest`
   Функции: нет
 - `app/cabinet/schemas/balance.py` — Python-модуль
   Классы: `BalanceResponse`, `TransactionResponse`, `TransactionListResponse`, `PaymentOptionResponse`, `PaymentMethodResponse`, `TopUpRequest`, `TopUpResponse`, `StarsInvoiceRequest`, `StarsInvoiceResponse`, `PendingPaymentResponse`, `PendingPaymentListResponse`, `ManualCheckResponse`, `SavedCardResponse`, `SavedCardsListResponse`
@@ -899,7 +902,7 @@
   Функции: `handle_gift_activate` — Handle gift_activate:{purchase_id} callback from Telegram notification., `register_handlers`
 - `app/handlers/menu.py` — Python-модуль
   Классы: нет
-  Функции: `show_main_menu`, `handle_profile_unavailable`, `show_service_rules`, `show_info_menu`, `show_promo_groups_info`, `show_faq_pages`, `show_faq_page`, `show_privacy_policy`, `show_public_offer`, `show_info_page`, `show_language_menu`, `process_language_change`, `handle_back_to_menu`, `get_main_menu_text`, `handle_activate_button` — Умная кнопка активации — система сама решает что делать:, `register_handlers`
+  Функции: `show_main_menu`, `handle_profile_unavailable`, `show_service_rules`, `show_info_menu`, `show_promo_groups_info`, `show_faq_pages`, `show_faq_page`, `show_privacy_policy`, `show_public_offer`, `show_info_page`, `show_language_menu`, `process_language_change`, `handle_back_to_menu`, `get_main_menu_text`, `handle_activate_button` — Умная кнопка активации — система сама решает что делать:, `build_app_connect_payload`, `handle_app_connect_callback`, `handle_app_connect_command`, `register_handlers`
 - `app/handlers/polls.py` — Python-модуль
   Классы: нет
   Функции: `handle_poll_start`, `handle_poll_answer`, `register_handlers`
@@ -1377,6 +1380,9 @@
 - `app/services/antilopay_service.py` — Python-модуль
   Классы: `AntilopayAPIError` (1 методов), `AntilopayService` (12 методов)
   Функции: нет
+- `app/services/app_banner_service.py` — Python-модуль
+  Классы: нет
+  Функции: `get_app_banners` — Retrieve list of app banners ordered by sort_order., `save_app_banners` — Save raw list of banners to system settings., `create_app_banner` — Create a new app banner and persist., `update_app_banner` — Update an existing app banner., `delete_app_banner` — Delete an app banner by id.
 - `app/services/apple_iap.py` — Python-модуль
   Классы: `AppleFulfillmentResult`, `AppleIAPFulfillmentService` (6 методов), `AppleIAPNotificationService` (9 методов)
   Функции: нет
@@ -1532,6 +1538,9 @@
 - `app/services/overpay_service.py` — Python-модуль
   Классы: `OverpayAPIError` (1 методов), `OverpayService` (13 методов)
   Функции: нет
+- `app/services/pair_code_service.py` — Python-модуль
+  Классы: нет
+  Функции: `create_pair_code` — Generate a 6-character pair code and store it in Redis for user_id., `consume_pair_code` — Atomically consume (get and delete) a pair code.
 - `app/services/pal24_service.py` — Python-модуль
   Классы: `Pal24Service` (9 методов)
   Функции: нет
@@ -1582,7 +1591,7 @@
   Классы: нет
   Функции: `build_start_keyboard`, `send_poll_to_users`, `reward_user_for_poll`, `get_next_question`, `get_question_option`
 - `app/services/pricing_engine.py` — Python-модуль
-  Классы: `TariffBreakdown`, `ClassicBreakdown`, `RenewalPricing` (1 методов), `TariffSwitchResult` (2 методов), `PricingEngine` (21 методов)
+  Классы: `TariffBreakdown`, `ClassicBreakdown`, `RenewalPricing` (1 методов), `TariffSwitchResult` (2 методов), `PricingEngine` (22 методов)
   Функции: нет
 - `app/services/privacy_policy_service.py` — Python-модуль
   Классы: `PrivacyPolicyService` (9 методов)
@@ -1755,7 +1764,7 @@
   Функции: `ensure_default_web_api_token` — Ensure the bootstrap web API token from config exists in the DB.
 - `app/services/web_auth_service.py` — Python-модуль
   Классы: нет
-  Функции: `create_web_auth_token` — Generate a web auth token and store it in Redis (pending state)., `link_web_auth_token` — Link a web auth token to a Telegram user (called by bot on /start)., `poll_web_auth_token` — Poll for web auth token status (non-destructive)., `consume_web_auth_token` — Atomically get and delete a web auth token.
+  Функции: `create_web_auth_token` — Generate a web auth token and store it in Redis (pending state)., `link_web_auth_token` — Link a web auth token to a Telegram user (called by bot on /start)., `poll_web_auth_token` — Poll for web auth token status (non-destructive)., `consume_web_auth_token` — Atomically get and delete a web auth token., `create_app_handoff_token` — Generate an app handoff token and store it in Redis., `consume_app_handoff_token` — Atomically get and delete an app handoff token.
 - `app/services/webhook_service.py` — Python-модуль
   Классы: `DeliveryResult`, `WebhookService` (7 методов)
   Функции: нет
@@ -2887,7 +2896,7 @@
   Классы: нет
   Функции: `test_no_new_undefined_names`, `test_baseline_does_not_rot` — Исправленное имя обязано выпадать из базы, иначе она копит ложь.
 - `tests/test_pricing_engine.py` — Python-модуль
-  Классы: `TestApplyDiscount` (6 методов), `TestStackedDiscounts` (5 методов), `TestPeriodDaysValidation` (3 методов), `TestCalculateServersPrice` (8 методов), `TestCalculateTrafficPrice` (5 методов), `TestCalculateRenewalPriceTariffMode` (7 методов), `TestCalculateRenewalPriceClassicMode` (10 методов), `TestServerPromoGroupFiltering` (2 методов), `TestFromPayloadRoundTrip` (1 методов), `TestFromPayloadLegacyRoundTrip` (1 методов), `TestOriginalPriceIdentity` (3 методов)
+  Классы: `TestApplyDiscount` (6 методов), `TestStackedDiscounts` (5 методов), `TestPeriodDaysValidation` (3 методов), `TestCalculateServersPrice` (8 методов), `TestCalculateTrafficPrice` (5 методов), `TestCalculateRenewalPriceTariffMode` (7 методов), `TestCalculateRenewalPriceClassicMode` (10 методов), `TestServerPromoGroupFiltering` (2 методов), `TestFromPayloadRoundTrip` (1 методов), `TestFromPayloadLegacyRoundTrip` (1 методов), `TestOriginalPriceIdentity` (3 методов), `TestCalculateDowngradeExtraDays` (7 методов)
   Функции: `test_renewal_pricing_is_frozen`
 - `tests/test_promo_group_base_discounts.py` — Python-модуль
   Классы: нет
@@ -3012,6 +3021,9 @@
 - `tests/cabinet/test_admin_user_whitelist.py` — Python-модуль
   Классы: нет
   Функции: `test_build_subscription_info_async_returns_whitelist_fields` — Builder fills whitelist traffic fields, calculations, and purchases., `test_build_subscription_info_async_exhausted_flag` — When used >= limit, whitelist_exhausted is True., `test_add_whitelist_traffic_action` — Adding whitelist traffic invokes add_whitelist_subscription_traffic and syncs panel., `test_add_whitelist_traffic_requires_positive_gb` — traffic_gb must be >= 1 at schema validation level., `test_remove_whitelist_traffic_action` — Removing whitelist traffic purchase decrements counters and syncs panel., `test_reset_whitelist_used_action` — Resetting whitelist used bytes zeroes the counter and syncs panel., `test_permission_users_subscription_registered` — users:subscription must be in the permissions registry.
+- `tests/cabinet/test_app_handoff.py` — Python-модуль
+  Классы: `InMemoryCache` (4 методов)
+  Функции: `bypass_rate_limit` — By default allow all requests through IP rate limiting., `fake_cache` — Provide an in-memory cache for web_auth and handoff tokens., `test_app_handoff_schemas` — Verify AppHandoff schemas validate correctly., `test_create_app_handoff_token_service` — create_app_handoff_token generates token with purpose='app_login' and status='linked'., `test_consume_app_handoff_token_success_and_single_use` — consume_app_handoff_token atomically consumes token and prevents reuse (replay)., `test_consume_app_handoff_token_expired` — consume_app_handoff_token on unknown or expired token returns None., `test_consume_app_handoff_token_audience_mismatch` — consume_app_handoff_token rejects token created with purpose='web_auth'., `test_app_link_create_unauthenticated` — POST /cabinet/auth/app-link without auth header returns 401., `test_app_link_create_authenticated` — POST /cabinet/auth/app-link with valid session returns connect URL and 120s expiry., `test_app_link_exchange_success` — POST /cabinet/auth/app-link/exchange returns AuthResponse and stores device_info='app_link'., `test_app_link_exchange_replay_attempt_410` — Exchanging the same token twice returns 410 on second attempt., `test_app_link_exchange_expired_or_invalid_token_410` — Exchanging invalid/expired token returns 410., `test_app_link_exchange_audience_mismatch_410` — Exchanging a web_auth token on app-link/exchange returns 410., `test_app_link_exchange_inactive_user_403` — Exchanging handoff token for an inactive/blocked user returns 403., `test_app_link_exchange_rate_limited_429` — Rate limited client IP returns 429., `test_deeplink_request_and_poll_backward_compatibility` — Existing /deeplink/request and /deeplink/poll flow remains intact., `test_deeplink_poll_rejects_app_login_token` — POST /cabinet/auth/deeplink/poll rejects tokens with purpose='app_login'.
 - `tests/cabinet/test_autopay_cancels_sbp.py` — Python-модуль
   Классы: нет
   Функции: `test_enable_autopay_cancels_active_sbp_recurring`, `test_disable_autopay_does_not_cancel_sbp` — Disabling balance-autopay must NOT touch SBP — only the enable path, `test_enable_autopay_rejected_for_trial_does_not_cancel_sbp` — A rejected enable (trial subscription -> 400) must not fire the
@@ -3135,6 +3147,9 @@
 - `tests/cabinet/test_my_avatar.py` — Python-модуль
   Классы: нет
   Функции: `test_picks_the_smallest_size_that_is_still_sharp`, `test_falls_back_to_the_largest_when_all_are_small`, `test_no_photos_means_no_avatar`, `test_file_id_is_cached_including_the_absence_of_a_photo`, `test_telegram_error_does_not_break_the_cabinet`, `test_route_returns_signed_media_url`, `test_route_without_telegram_account_returns_nothing`
+- `tests/cabinet/test_notifications_read.py` — Python-модуль
+  Классы: нет
+  Функции: `bypass_rate_limit` — By default allow all requests through IP rate limiting., `test_mark_single_notification_read` — Mark single notification read sets read_at timestamp and returns success., `test_mark_single_notification_read_idempotent` — Marking an already read notification is idempotent and does not overwrite read_at., `test_mark_notification_read_404_nonexistent_or_other_user` — Returns 404 when notification does not exist or belongs to another user., `test_mark_all_read` — Mark-all-read updates all unread for user, leaves read ones and other users untouched., `test_notifications_endpoints_unauthenticated` — Unauthenticated requests to read and read-all endpoints return 401.
 - `tests/cabinet/test_oauth_email_merge_revival.py` — Python-модуль
   Классы: нет
   Функции: `db`, `test_email_merge_revives_deleted_user_when_both_verified` — REGRESSION: with BOTH IdP and local row email_verified, a DELETED row gets revived., `test_email_merge_blocks_409_when_local_email_unverified` — SECURITY: local row with email_verified=False must NOT be merged., `test_email_merge_active_user_links_without_revive` — An ACTIVE local user found by email gets the provider linked, NOT revived.
@@ -3150,6 +3165,9 @@
 - `tests/cabinet/test_oauth_revival_security.py` — Python-модуль
   Классы: нет
   Функции: `test_email_merge_requires_local_user_email_verified` — Source-level guard: the email-merge branch checks user.email_verified., `test_revived_log_field_uses_pre_revival_snapshot` — `revived=<bool>` in the logger.info call must come from a snapshot, `test_revive_called_without_commit_kwarg` — Architect's call: revive_deleted_user no longer accepts `commit=`., `test_revive_service_does_not_commit` — Hard pin: revive_deleted_user implementation does not commit.
+- `tests/cabinet/test_pair_code.py` — Python-модуль
+  Классы: `InMemoryCache` (5 методов)
+  Функции: `bypass_rate_limit`, `fake_cache`, `test_pair_code_service_lifecycle` — Test create_pair_code and consume_pair_code service functions., `test_pair_code_endpoints` — Test POST /cabinet/auth/pair-code and POST /cabinet/auth/pair-code/exchange., `test_pair_code_exchange_invalid` — Exchange non-existent or invalid code returns 410., `test_app_banners_crud` — Test app banners service and public list endpoint.
 - `tests/cabinet/test_platega_recurrent_admin.py` — Python-модуль
   Классы: нет
   Функции: `test_async_builder_populates_sbp_status_when_gate_on`, `test_async_builder_leaves_sbp_status_none_without_active_record` — Gate on, but no active Platega subscription for this subscription_id., `test_async_builder_skips_query_when_gate_off`, `test_sync_builder_never_sets_sbp_fields` — The sync builder has no DB access and must leave both fields at their, `test_route_registered`, `test_cancel_sbp_recurring_owned_subscription_cancels_and_awaits_helper`, `test_cancel_sbp_recurring_wrong_owner_404_and_helper_not_called`, `test_cancel_sbp_recurring_missing_subscription_404` — Same 404 path for a subscription_id that doesn't exist at all.

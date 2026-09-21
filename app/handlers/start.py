@@ -1377,6 +1377,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                     await message.answer_photo(FSInputFile(banner_path), caption=prompt, reply_markup=keyboard)
                 else:
                     await message.answer(prompt, reply_markup=keyboard)
+                return
             else:
                 logger.warning('Web auth attempt from unregistered user', telegram_id=message.from_user.id)
         start_parameter = None  # Invalid token, ignore

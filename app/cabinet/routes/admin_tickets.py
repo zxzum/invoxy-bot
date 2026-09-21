@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.cabinet.routes.media import make_media_token
 from app.cabinet.routes.websocket import notify_user_ticket_reply
+from app.cabinet.services.active_invoice import record_cabinet_notification
 from app.config import settings
 from app.database.crud.ticket import TicketCRUD
 from app.database.crud.ticket_notification import TicketNotificationCRUD
@@ -511,6 +512,15 @@ async def reply_to_ticket(
         notification = await TicketNotificationCRUD.create_user_notification_for_admin_reply(
             db, ticket, request.message
         )
+        await record_cabinet_notification(
+            db,
+            ticket.user_id,
+            'ticket_reply',
+            f'Ответ поддержки по тикету #{ticket.id}',
+            (request.message or 'Вам пришел ответ от службы поддержки')[:300],
+            payload_json={'ticket_id': ticket.id},
+        )
+        await db.commit()
         if notification:
             # Отправить WebSocket уведомление
             await notify_user_ticket_reply(ticket.user_id, ticket.id, (request.message or '')[:100])
