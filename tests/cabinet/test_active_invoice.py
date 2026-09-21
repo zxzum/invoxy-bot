@@ -18,7 +18,9 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
+from app.cabinet.routes import app_banners as app_banners_route
 from app.cabinet.routes import balance as balance_route, notifications as notifications_route
+from app.cabinet.routes.app_banners import AppBannerCreateRequest
 from app.cabinet.routes.subscription_modules import purchase as purchase_route
 from app.cabinet.schemas.balance import TopUpRequest
 from app.cabinet.schemas.subscription import TariffInvoiceRequest
@@ -328,6 +330,46 @@ async def test_cancel_pending_payment_success(monkeypatch):
     assert existing.payment.status == 'canceled'
     mock_notif.assert_awaited_once()
     mock_tg.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_payment_checks_provider_before_cancelling(monkeypatch):
+    user = _make_dummy_user()
+    db = AsyncMock()
+    pending = _make_pending_payment(user=user, local_id=101, status='pending')
+    paid = _make_pending_payment(user=user, local_id=101, status='succeeded', is_paid=True)
+
+    monkeypatch.setattr(balance_route, 'get_payment_record', AsyncMock(return_value=pending))
+    monkeypatch.setattr(balance_route, '_is_checkable', lambda record: True)
+    monkeypatch.setattr(balance_route, 'create_bot', lambda: SimpleNamespace(session=SimpleNamespace(close=AsyncMock())))
+    monkeypatch.setattr(balance_route, 'PaymentService', lambda bot: object())
+    monkeypatch.setattr(balance_route, 'run_manual_check', AsyncMock(return_value=paid))
+    cancel_mock = AsyncMock(side_effect=AssertionError('paid invoice must not be cancelled'))
+    monkeypatch.setattr(balance_route, 'cancel_pending_payment', cancel_mock)
+
+    response = await balance_route.cancel_user_pending_payment(
+        method='yookassa', payment_id=101, user=user, db=db
+    )
+
+    assert response.is_paid is True
+    assert response.status == 'succeeded'
+    cancel_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admin_banner_create_commits(monkeypatch):
+    db = AsyncMock()
+    banner = {'id': 'banner-1', 'title': 'Test', 'text': ''}
+    monkeypatch.setattr(app_banners_route, 'create_app_banner', AsyncMock(return_value=banner))
+
+    response = await app_banners_route.create_new_app_banner(
+        request=AppBannerCreateRequest(title='Test'),
+        admin=_make_dummy_user(),
+        db=db,
+    )
+
+    assert response == banner
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

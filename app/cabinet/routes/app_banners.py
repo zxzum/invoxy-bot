@@ -85,7 +85,9 @@ async def create_new_app_banner(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """Create a new in-app banner."""
-    return await create_app_banner(db, request.model_dump())
+    banner = await create_app_banner(db, request.model_dump())
+    await db.commit()
+    return banner
 
 
 @admin_router.put('/{banner_id}', response_model=AppBannerResponse)
@@ -100,6 +102,7 @@ async def update_existing_app_banner(
     banner = await update_app_banner(db, banner_id, data)
     if not banner:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Banner not found')
+    await db.commit()
     return banner
 
 
@@ -113,4 +116,5 @@ async def delete_existing_app_banner(
     deleted = await delete_app_banner(db, banner_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Banner not found')
+    await db.commit()
     return {'success': True}

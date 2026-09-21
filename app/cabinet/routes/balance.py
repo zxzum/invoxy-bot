@@ -1516,7 +1516,40 @@ async def cancel_user_pending_payment(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Cancel user's own pending payment."""
+    """Check a pending payment once, then cancel it if it is still unpaid."""
+    try:
+        payment_method = PaymentMethod(method)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Invalid payment method: {method}',
+        )
+
+    record = await get_payment_record(db, payment_method, payment_id)
+    if not record or not record.user or record.user.id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Payment not found')
+
+    if record.is_paid:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Cannot cancel an already paid payment',
+        )
+
+    if _is_checkable(record):
+        bot = create_bot()
+        try:
+            checked = await run_manual_check(
+                db,
+                payment_method,
+                payment_id,
+                PaymentService(bot=bot),
+            )
+        finally:
+            await bot.session.close()
+
+        if checked and checked.is_paid:
+            return build_pending_payment_response(checked)
+
     record = await cancel_pending_payment(db, user, method, payment_id)
     return build_pending_payment_response(record)
 

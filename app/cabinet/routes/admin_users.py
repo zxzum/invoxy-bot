@@ -1400,21 +1400,22 @@ async def update_user_balance(
     await db.refresh(user)
 
     try:
-        from app.cabinet.routes.websocket import notify_user_balance_change, notify_user_balance_topup
-        if request.amount_kopeks > 0:
-            await notify_user_balance_topup(
-                user_id=user_id,
-                amount_kopeks=request.amount_kopeks,
-                new_balance_kopeks=user.balance_kopeks,
-                description=request.description or 'Начисление администратором',
-            )
-        else:
-            await notify_user_balance_change(
-                user_id=user_id,
-                amount_kopeks=request.amount_kopeks,
-                new_balance_kopeks=user.balance_kopeks,
-                description=request.description or 'Списание администратором',
-            )
+        # Manual balance adjustments are not payments.  Keep them on the
+        # generic balance-change channel so clients never show a payment
+        # success dialog for an admin credit.
+        from app.cabinet.routes.websocket import notify_user_balance_change
+
+        description = request.description or (
+            'Начисление администратором'
+            if request.amount_kopeks > 0
+            else 'Списание администратором'
+        )
+        await notify_user_balance_change(
+            user_id=user_id,
+            amount_kopeks=request.amount_kopeks,
+            new_balance_kopeks=user.balance_kopeks,
+            description=description,
+        )
     except Exception as ws_err:
         logger.warning('Failed to send WS notification on admin balance update', error=ws_err)
 
