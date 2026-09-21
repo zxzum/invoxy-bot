@@ -1,6 +1,8 @@
 """FastAPI dependencies for cabinet module."""
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from fastapi import Depends, HTTPException, Request, status
@@ -31,6 +33,63 @@ from .ip_utils import get_client_ip
 logger = structlog.get_logger(__name__)
 
 security = HTTPBearer(auto_error=False)
+
+_AUDIT_REDACTED = '[REDACTED]'
+_AUDIT_SENSITIVE_FIELDS = frozenset(
+    {
+        'access_token',
+        'api_key',
+        'api_secret',
+        'authorization',
+        'client_secret',
+        'cookie',
+        'id_token',
+        'init_data',
+        'password',
+        'password_confirmation',
+        'private_key',
+        'refresh_token',
+        'reset_token',
+        'secret',
+        'signature',
+        'telegram_init_data',
+        'token',
+        'verification_code',
+    }
+)
+
+
+def _is_sensitive_audit_field(field_name: str) -> bool:
+    normalized = field_name.strip().lower().replace('-', '_')
+    return normalized in _AUDIT_SENSITIVE_FIELDS or normalized.endswith(('_token', '_secret', '_password'))
+
+
+def _is_secret_setting_name(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.upper()
+    return any(keyword in normalized for keyword in ('TOKEN', 'SECRET', 'PASSWORD', 'PASSPHRASE', 'PRIVATE_KEY'))
+
+
+def _redact_audit_value(value: Any, *, field_name: str = '') -> Any:
+    """Redact credentials before request data is persisted in the audit log."""
+    if _is_sensitive_audit_field(field_name):
+        return _AUDIT_REDACTED
+    if isinstance(value, Mapping):
+        setting_key = value.get('key')
+        return {
+            str(key): (
+                _AUDIT_REDACTED
+                if str(key).lower() == 'value' and _is_secret_setting_name(setting_key)
+                else _redact_audit_value(item, field_name=str(key))
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_audit_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_audit_value(item) for item in value)
+    return value
 
 
 async def get_cabinet_db() -> AsyncSession:
@@ -450,14 +509,14 @@ def require_permission(*permissions: str):
         }
         query_params = dict(request.query_params)
         if query_params:
-            details['query_params'] = query_params
+            details['query_params'] = _redact_audit_value(query_params)
         if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
             try:
                 body = await request.body()
                 if body:
                     import json
 
-                    details['request_body'] = json.loads(body)
+                    details['request_body'] = _redact_audit_value(json.loads(body))
             except Exception:
                 pass
 

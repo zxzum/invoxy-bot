@@ -992,9 +992,9 @@ async def perform_traffic_reset(
 
     return TrafficResetResponse(
         success=True,
-        cleared_gb=round(will_clear_gb, 1),
-        new_used_gb=round(max(0.0, (subscription.whitelist_traffic_used_bytes or 0) / (1024**3)), 2),
-        used_after_gb=round(max(0.0, (subscription.whitelist_traffic_used_bytes or 0) / (1024**3)), 2),
+        cleared_gb=cleared_gb,
+        new_used_gb=remaining_used_gb,
+        used_after_gb=remaining_used_gb,
         limit_gb=subscription.whitelist_traffic_limit_gb or 0,
         remaining_this_month=max(0, (tariff.whitelist_reset_max_per_month or 0) - (subscription.whitelist_reset_count or 0)),
         max_per_month=tariff.whitelist_reset_max_per_month or 0,

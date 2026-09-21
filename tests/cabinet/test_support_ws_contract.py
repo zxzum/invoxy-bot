@@ -44,6 +44,17 @@ def _support_guards_open(monkeypatch):
     monkeypatch.setattr(support_ws.TicketCRUD, 'is_user_globally_blocked', AsyncMock(return_value=None))
     monkeypatch.setattr(support_ws.SupportSettingsService, '_loaded', True)
     monkeypatch.setattr(support_ws.SupportSettingsService, '_data', {'system_mode': 'both'})
+    monkeypatch.setattr(support_ws.settings, 'CABINET_TRUSTED_PROXIES', '127.0.0.1', raising=False)
+
+
+def test_ws_client_ip_ignores_forwarded_for_from_untrusted_peer(monkeypatch) -> None:
+    monkeypatch.setattr(support_ws.settings, 'CABINET_TRUSTED_PROXIES', '', raising=False)
+    websocket = types.SimpleNamespace(
+        headers={'x-forwarded-for': '203.0.113.9'},
+        client=types.SimpleNamespace(host='198.51.100.7'),
+    )
+
+    assert support_ws._ws_client_ip(websocket) == '198.51.100.7'
 
 
 class _FakeDb:

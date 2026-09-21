@@ -12,6 +12,7 @@ import mimetypes
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from ipaddress import ip_address
 from typing import Any
 
 import structlog
@@ -26,6 +27,7 @@ from app.bot_factory import create_bot
 from app.cabinet.auth.jwt_handler import get_token_payload
 from app.cabinet.auth.registration_access import evaluate_public_registration
 from app.cabinet.auth.telegram_auth import validate_telegram_init_data
+from app.cabinet.ip_utils import _is_trusted_proxy
 from app.cabinet.routes.media import (
     _BLOCKED_UPLOAD_CONTENT_TYPES,
     _BLOCKED_UPLOAD_EXTENSIONS,
@@ -523,11 +525,33 @@ async def _has_permission(db: AsyncSession, context: WsUserContext, permission: 
 
 
 def _ws_client_ip(websocket: WebSocket) -> str | None:
-    forwarded_for = websocket.headers.get('x-forwarded-for') if hasattr(websocket, 'headers') else None
-    if forwarded_for:
-        return forwarded_for.split(',', maxsplit=1)[0].strip()
     client = getattr(websocket, 'client', None)
-    return getattr(client, 'host', None)
+    peer_ip = getattr(client, 'host', None)
+    if not peer_ip:
+        return None
+
+    headers = websocket.headers if hasattr(websocket, 'headers') else {}
+    if not _is_trusted_proxy(peer_ip, settings.get_cabinet_trusted_proxies()):
+        return peer_ip
+
+    forwarded_for = headers.get('x-forwarded-for')
+    if forwarded_for:
+        candidate = forwarded_for.split(',', maxsplit=1)[0].strip()
+        try:
+            ip_address(candidate)
+            return candidate
+        except ValueError:
+            pass
+
+    real_ip = headers.get('x-real-ip', '').strip()
+    if real_ip:
+        try:
+            ip_address(real_ip)
+            return real_ip
+        except ValueError:
+            pass
+
+    return peer_ip
 
 
 async def _log_ws_permission_audit(

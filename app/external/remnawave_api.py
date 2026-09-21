@@ -475,12 +475,17 @@ class RemnaWaveAPI:
             logger.debug('Используют локальные заголовки proxy')
             headers.update({'X-Forwarded-Host': 'localhost', 'Host': 'localhost'})
 
-            if self.base_url.startswith('https://'):
+            if self.base_url.startswith('https://') and settings.REMNAWAVE_ALLOW_INSECURE_TLS:
+                if not settings.DEBUG:
+                    raise RuntimeError(
+                        'REMNAWAVE_ALLOW_INSECURE_TLS requires DEBUG=true; '
+                        'install a trusted certificate for production HTTPS panels'
+                    )
                 ssl_context = ssl.create_default_context()
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
                 connector_kwargs['ssl'] = ssl_context
-                logger.debug('SSL проверка отключена для локального HTTPS')
+                logger.warning('SSL certificate verification disabled for local HTTPS in debug mode')
 
         elif conn_type == 'external':
             logger.debug('Используют внешнее подключение с полной SSL проверкой')

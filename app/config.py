@@ -211,6 +211,8 @@ class Settings(BaseSettings):
     REMNAWAVE_API_URL: str | None = None
     REMNAWAVE_API_KEY: str | None = None
     REMNAWAVE_SECRET_KEY: str | None = None
+    # Never disable certificate verification in production, even for an internal HTTPS panel.
+    REMNAWAVE_ALLOW_INSECURE_TLS: bool = False
 
     # HTTP-таймауты запросов к панели RemnaWave (секунды). Self-hosted панели
     # бывают медленными на коннект: раньше connect был зашит в 10с, из-за чего
@@ -4255,8 +4257,16 @@ class Settings(BaseSettings):
         return bool(self.CABINET_ENABLED)
 
     def get_cabinet_jwt_secret(self) -> str:
-        if self.CABINET_JWT_SECRET:
-            return self.CABINET_JWT_SECRET
+        configured_secret = (self.CABINET_JWT_SECRET or '').strip()
+        if configured_secret:
+            return configured_secret
+
+        if self.is_cabinet_enabled() and not self.DEBUG:
+            raise RuntimeError(
+                'CABINET_JWT_SECRET must be configured when CABINET_ENABLED is true and DEBUG is false. '
+                'Use a unique random secret; never derive cabinet JWTs from BOT_TOKEN.'
+            )
+
         import warnings
 
         warnings.warn(
