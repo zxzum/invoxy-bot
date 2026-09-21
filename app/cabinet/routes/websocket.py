@@ -12,6 +12,7 @@ from app.cabinet.auth.jwt_handler import get_token_payload
 from app.config import settings
 from app.database.crud.user import get_user_by_id
 from app.database.database import AsyncSessionLocal
+from app.services.web_auth_service import consume_cabinet_ws_ticket
 
 
 logger = structlog.get_logger(__name__)
@@ -141,6 +142,10 @@ async def verify_cabinet_ws_token(token: str) -> tuple[int | None, bool]:
     except (TypeError, ValueError):
         return None, False
 
+    return await _verify_cabinet_ws_user(user_id)
+
+
+async def _verify_cabinet_ws_user(user_id: int) -> tuple[int | None, bool]:
     try:
         async with AsyncSessionLocal() as db:
             user = await get_user_by_id(db, user_id)
@@ -156,26 +161,43 @@ async def verify_cabinet_ws_token(token: str) -> tuple[int | None, bool]:
         return None, False
 
 
+async def verify_cabinet_ws_ticket(ticket: str) -> tuple[int | None, bool]:
+    """Consume and verify a short-lived cabinet WebSocket ticket."""
+    data = await consume_cabinet_ws_ticket(ticket)
+    if not data:
+        return None, False
+
+    try:
+        user_id = int(data['user_id'])
+    except (KeyError, TypeError, ValueError):
+        return None, False
+
+    return await _verify_cabinet_ws_user(user_id)
+
+
 @router.websocket('/ws')
 async def cabinet_websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint для real-time уведомлений кабинета."""
     client_host = websocket.client.host if websocket.client else 'unknown'
 
-    # Получаем токен из query params
-    token = websocket.query_params.get('token')
+    ticket = websocket.query_params.get('ticket')
+    token = websocket.query_params.get('token') if not ticket else None
 
-    if not token:
-        logger.debug('Cabinet WS: No token from', client_host=client_host)
+    if not ticket and not token:
+        logger.debug('Cabinet WS: No ticket or token from', client_host=client_host)
         # Принимаем и сразу закрываем с кодом ошибки
         await websocket.accept()
-        await websocket.close(code=1008, reason='Unauthorized: No token')
+        await websocket.close(code=1008, reason='Unauthorized: No ticket')
         return
 
-    # Верифицируем токен
-    user_id, is_admin = await verify_cabinet_ws_token(token)
+    if ticket:
+        user_id, is_admin = await verify_cabinet_ws_ticket(ticket)
+    else:
+        logger.warning('Cabinet WS JWT query authentication is deprecated', client_host=client_host)
+        user_id, is_admin = await verify_cabinet_ws_token(token)
 
     if not user_id:
-        logger.debug('Cabinet WS: Invalid token from', client_host=client_host)
+        logger.debug('Cabinet WS: Invalid ticket or token from', client_host=client_host)
         # Принимаем и сразу закрываем с кодом ошибки
         await websocket.accept()
         await websocket.close(code=1008, reason='Unauthorized: Invalid token')

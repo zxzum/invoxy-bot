@@ -24,8 +24,10 @@ logger = structlog.get_logger(__name__)
 WEB_AUTH_TOKEN_TTL = 300  # 5 minutes
 WEB_AUTH_LINKED_TTL = 120  # seconds — poll window after token is linked
 APP_HANDOFF_TOKEN_TTL = 120  # 2 minutes — handoff window for native app login
+CABINET_WS_TICKET_TTL = 45  # short-lived one-time ticket for browser WebSocket upgrades
 WEB_AUTH_TOKEN_MIN_LENGTH = 16
 WEB_AUTH_PREFIX = 'web_auth'
+CABINET_WS_TICKET_PREFIX = 'cabinet_ws_ticket'
 
 DEFAULT_AUTH_PURPOSE = 'web_auth'
 APP_LOGIN_PURPOSE = 'app_login'
@@ -182,6 +184,46 @@ async def consume_app_handoff_token(token: str) -> dict[str, Any] | None:
             status=data.get('status'),
             token_prefix=token[:8],
         )
+        return None
+
+    return data
+
+
+async def create_cabinet_ws_ticket(user_id: int) -> str:
+    """Create a short-lived, one-time ticket for the cabinet WebSocket."""
+    ticket = secrets.token_urlsafe(24)
+    value: dict[str, Any] = {
+        'purpose': 'cabinet_ws',
+        'user_id': user_id,
+        'created_at': datetime.now(UTC).isoformat(),
+    }
+    stored = await cache.set(
+        cache_key(CABINET_WS_TICKET_PREFIX, ticket),
+        value,
+        expire=CABINET_WS_TICKET_TTL,
+    )
+    if not stored:
+        logger.error('Failed to store cabinet WebSocket ticket in Redis', user_id=user_id)
+        raise RuntimeError('Failed to create cabinet WebSocket ticket')
+
+    logger.debug('Cabinet WebSocket ticket created', ticket_prefix=ticket[:8], user_id=user_id)
+    return ticket
+
+
+async def consume_cabinet_ws_ticket(ticket: str) -> dict[str, Any] | None:
+    """Atomically consume a cabinet WebSocket ticket and validate its binding."""
+    if not ticket:
+        return None
+
+    data = await cache.getdel(cache_key(CABINET_WS_TICKET_PREFIX, ticket))
+    if not isinstance(data, dict) or data.get('purpose') != 'cabinet_ws':
+        return None
+
+    try:
+        user_id = int(data.get('user_id'))
+    except (TypeError, ValueError):
+        return None
+    if user_id <= 0:
         return None
 
     return data

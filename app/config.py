@@ -4158,7 +4158,11 @@ class Settings(BaseSettings):
     def get_web_api_allowed_origins(self) -> list[str]:
         raw = (self.WEB_API_ALLOWED_ORIGINS or '').split(',')
         origins = [origin.strip() for origin in raw if origin.strip()]
-        return origins or ['*']
+        if not origins:
+            return ['*'] if self.DEBUG else []
+        if '*' in origins and not self.DEBUG:
+            return []
+        return origins
 
     def get_web_api_docs_config(self) -> dict[str, str | None]:
         if self.WEB_API_DOCS_ENABLED:
@@ -4311,7 +4315,8 @@ class Settings(BaseSettings):
     def get_cabinet_allowed_origins(self) -> list[str]:
         if not self.CABINET_ALLOWED_ORIGINS:
             return []
-        return [o.strip() for o in self.CABINET_ALLOWED_ORIGINS.split(',') if o.strip()]
+        origins = [o.strip() for o in self.CABINET_ALLOWED_ORIGINS.split(',') if o.strip()]
+        return [] if '*' in origins and not self.DEBUG else origins
 
     def is_cabinet_email_verification_enabled(self) -> bool:
         return bool(self.CABINET_EMAIL_VERIFICATION_ENABLED)

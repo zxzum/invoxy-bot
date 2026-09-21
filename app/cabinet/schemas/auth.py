@@ -289,6 +289,13 @@ class AppHandoffExchangeRequest(BaseModel):
 AppHandoffRequest = AppHandoffExchangeRequest
 
 
+class WsTicketResponse(BaseModel):
+    """Response with a short-lived one-time cabinet WebSocket ticket."""
+
+    ticket: str = Field(..., min_length=16, max_length=128, description='One-time WebSocket ticket')
+    expires_in: int = Field(45, description='Ticket TTL in seconds')
+
+
 class PairCodeResponse(BaseModel):
     """Response with a 6-character app pairing code."""
 
@@ -300,9 +307,5 @@ class PairCodeExchangeRequest(BaseModel):
     """Request to exchange 6-character pairing code for JWT auth session."""
 
     code: str = Field(..., min_length=6, max_length=6, description='6-character pairing code')
-    device_id: str | None = Field(
-        None, max_length=128, description='Client-generated device identifier'
-    )
-    device_name: str | None = Field(
-        None, max_length=128, description='Client device name / OS description'
-    )
+    device_id: str | None = Field(None, max_length=128, description='Client-generated device identifier')
+    device_name: str | None = Field(None, max_length=128, description='Client device name / OS description')

@@ -16,6 +16,35 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 api_key_header_scheme = APIKeyHeader(name='X-API-Key', auto_error=False)
+WEBSOCKET_AUTH_SUBPROTOCOL = 'invoxy.webapi.v1'
+
+
+def _subprotocols(websocket: WebSocket) -> list[str]:
+    raw = websocket.headers.get('sec-websocket-protocol', '')
+    return [value.strip() for value in raw.split(',') if value.strip()]
+
+
+def _extract_websocket_auth(websocket: WebSocket) -> tuple[str | None, str | None, str]:
+    """Read bearer/API-key auth without putting the credential in the URL."""
+    headers = websocket.headers
+    authorization = headers.get('authorization', '')
+    scheme, _, credentials = authorization.partition(' ')
+    if scheme.lower() == 'bearer' and credentials.strip():
+        return credentials.strip(), None, 'authorization'
+
+    api_key = headers.get('x-api-key', '').strip()
+    if api_key:
+        return api_key, None, 'x-api-key'
+
+    protocols = _subprotocols(websocket)
+    if WEBSOCKET_AUTH_SUBPROTOCOL in protocols:
+        protocol_index = protocols.index(WEBSOCKET_AUTH_SUBPROTOCOL)
+        for candidate in protocols[protocol_index + 1 :]:
+            if candidate != WEBSOCKET_AUTH_SUBPROTOCOL:
+                return candidate, WEBSOCKET_AUTH_SUBPROTOCOL, 'subprotocol'
+
+    # Legacy compatibility for clients that still send credentials in the URL.
+    return websocket.query_params.get('token') or websocket.query_params.get('api_key'), None, 'query'
 
 
 async def verify_websocket_token(
@@ -24,8 +53,7 @@ async def verify_websocket_token(
 ) -> bool:
     """Проверить токен для WebSocket подключения."""
     if not token:
-        # Пытаемся получить токен из query параметров
-        token = websocket.query_params.get('token') or websocket.query_params.get('api_key')
+        token, _subprotocol, _source = _extract_websocket_auth(websocket)
 
     if not token:
         return False
@@ -53,26 +81,28 @@ async def websocket_endpoint(websocket: WebSocket):
     client_host = websocket.client.host if websocket.client else 'unknown'
     logger.debug('WebSocket connection attempt from', client_host=client_host)
 
-    # Сначала проверяем авторизацию ДО принятия соединения
-    token = websocket.query_params.get('token') or websocket.query_params.get('api_key')
+    # Сначала проверяем авторизацию ДО принятия соединения.
+    token, subprotocol, auth_source = _extract_websocket_auth(websocket)
+    if auth_source == 'query' and token:
+        logger.warning('Web API WS query-token authentication is deprecated')
 
     if not token:
         logger.debug('WebSocket: No token provided from', client_host=client_host)
         # Принимаем и сразу закрываем с кодом ошибки
-        await websocket.accept()
+        await websocket.accept(subprotocol=subprotocol)
         await websocket.close(code=1008, reason='Unauthorized: No token provided')
         return
 
     if not await verify_websocket_token(websocket, token):
         logger.debug('WebSocket: Invalid token from', client_host=client_host)
         # Принимаем и сразу закрываем с кодом ошибки
-        await websocket.accept()
+        await websocket.accept(subprotocol=subprotocol)
         await websocket.close(code=1008, reason='Unauthorized: Invalid token')
         return
 
     # Только после успешной проверки принимаем соединение
     try:
-        await websocket.accept()
+        await websocket.accept(subprotocol=subprotocol)
         logger.debug('WebSocket connection accepted from', client_host=client_host)
     except Exception as e:
         logger.error('WebSocket: Failed to accept connection from', client_host=client_host, e=e)

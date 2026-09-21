@@ -53,10 +53,12 @@ from app.services.registration_access_service import (
 )
 from app.services.web_auth_service import (
     APP_HANDOFF_TOKEN_TTL,
+    CABINET_WS_TICKET_TTL,
     WEB_AUTH_TOKEN_TTL,
     consume_app_handoff_token,
     consume_web_auth_token,
     create_app_handoff_token,
+    create_cabinet_ws_ticket,
     create_web_auth_token,
     poll_web_auth_token,
 )
@@ -121,6 +123,7 @@ from ..schemas.auth import (
     UserAvatarResponse,
     UserResponse,
     VerificationResendRequest,
+    WsTicketResponse,
 )
 from ..services.email_service import email_service
 from ..services.email_template_overrides import get_rendered_override
@@ -2658,6 +2661,31 @@ async def create_app_link(
     )
 
 
+@router.post('/ws-ticket', response_model=WsTicketResponse)
+async def create_ws_ticket(
+    raw_request: Request,
+    user: User = Depends(get_current_cabinet_user),
+):
+    """Issue a one-time ticket for the cabinet WebSocket upgrade."""
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'ws_ticket_create', limit=30, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    try:
+        ticket = await create_cabinet_ws_ticket(user.id)
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Service temporarily unavailable',
+        )
+
+    return WsTicketResponse(ticket=ticket, expires_in=CABINET_WS_TICKET_TTL)
+
+
 @router.post('/app-link/exchange', response_model=AuthResponse)
 async def exchange_app_link_token(
     request: AppHandoffExchangeRequest,
@@ -2799,4 +2827,3 @@ async def exchange_pair_code_endpoint(
     logger.info('Pair code auth successful', user_id=user.id, device_id=request.device_id)
 
     return response
-
