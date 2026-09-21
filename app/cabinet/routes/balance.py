@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -146,6 +146,7 @@ async def get_transactions(
 
 @router.get('/payment-methods', response_model=list[PaymentMethodResponse])
 async def get_payment_methods(
+    response: Response,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -159,6 +160,7 @@ async def get_payment_methods(
     - Sub-options filtering (sub_options)
     - User filters (user_type_filter, first_topup_filter, promo_group_filter)
     """
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     # Check if this is user's first topup
     from sqlalchemy import exists
 

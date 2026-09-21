@@ -255,7 +255,7 @@ async def upload_media(
             'User uploaded',
             telegram_id=user.telegram_id,
             media_type_normalized=media_type_normalized,
-            file_id=media.file_id,
+            file_unique_id=getattr(media, 'file_unique_id', None),
         )
 
         return MediaUploadResponse(
