@@ -35,6 +35,12 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'max_per_row': 1,
         },
         {
+            'id': 'app_connect_row',
+            'buttons': ['app_connect'],
+            'conditions': None,
+            'max_per_row': 1,
+        },
+        {
             'id': 'trial_buy_row',
             'buttons': ['trial', 'buy_subscription'],
             'conditions': None,
@@ -141,6 +147,16 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'visibility': 'all',
             'conditions': None,
             'dynamic_text': True,
+        },
+        'app_connect': {
+            'type': 'builtin',
+            'builtin_id': 'app_connect',
+            'text': {'ru': '📱 Приложение Invoxy VPN', 'en': '📱 Invoxy VPN App'},
+            'action': 'menu_app_connect',
+            'enabled': True,
+            'visibility': 'all',
+            'conditions': None,
+            'dynamic_text': False,
         },
         'trial': {
             'type': 'builtin',

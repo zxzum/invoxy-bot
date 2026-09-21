@@ -573,6 +573,20 @@ def _build_cabinet_main_menu_keyboard(
     if is_moderator and not is_admin:
         keyboard_rows.append([InlineKeyboardButton(text='🧑‍⚖️ Модерация', callback_data='moderator_panel')])
 
+    # -- Ensure prominent App Connect button is present in cabinet menu --
+    has_app_btn = any(
+        btn.callback_data == 'menu_app_connect' or (btn.url and '/app/connect' in btn.url)
+        for row in keyboard_rows
+        for btn in row
+    )
+    if not has_app_btn:
+        app_btn_text = texts.t('MENU_APP_CONNECT', '📱 Приложение Invoxy VPN')
+        insert_idx = min(1, len(keyboard_rows))
+        keyboard_rows.insert(
+            insert_idx,
+            [InlineKeyboardButton(text=app_btn_text, callback_data='menu_app_connect')],
+        )
+
     return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
 
@@ -711,6 +725,9 @@ def get_main_menu_keyboard(
             )
 
     keyboard.append([InlineKeyboardButton(text=balance_button_text, callback_data='menu_balance')])
+    keyboard.append(
+        [InlineKeyboardButton(text=texts.t('MENU_APP_CONNECT', '📱 Приложение Invoxy VPN'), callback_data='menu_app_connect')]
+    )
 
     show_trial = (
         not has_had_paid_subscription

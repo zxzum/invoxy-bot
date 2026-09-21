@@ -1155,6 +1155,20 @@ class MenuLayoutService:
                 for i in range(0, len(row_buttons), max_per_row):
                     keyboard_rows.append(row_buttons[i : i + max_per_row])
 
+        # Гарантируем наличие заметной кнопки приложения Invoxy VPN
+        has_app_btn = any(
+            btn.callback_data == 'menu_app_connect' or (btn.url and '/app/connect' in btn.url)
+            for row in keyboard_rows
+            for btn in row
+        )
+        if not has_app_btn:
+            app_btn_text = texts.t('MENU_APP_CONNECT', '📱 Приложение Invoxy VPN')
+            insert_idx = min(1, len(keyboard_rows))
+            keyboard_rows.insert(
+                insert_idx,
+                [InlineKeyboardButton(text=app_btn_text, callback_data='menu_app_connect')],
+            )
+
         return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
     @classmethod

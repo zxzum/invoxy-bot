@@ -1379,9 +1379,17 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                     await message.answer(prompt, reply_markup=keyboard)
             else:
                 logger.warning('Web auth attempt from unregistered user', telegram_id=message.from_user.id)
-                await message.answer('❌ Сначала зарегистрируйтесь в боте, затем попробуйте войти в кабинет.')
-            return
         start_parameter = None  # Invalid token, ignore
+
+    # Handle app connect deep links: /start app, /start connect, /start app_connect
+    if start_parameter in ('app', 'connect', 'app_connect'):
+        user = db_user or await get_user_by_telegram_id(db, message.from_user.id)
+        if user and user.status != UserStatus.DELETED.value:
+            from app.handlers.menu import handle_app_connect_command
+
+            await handle_app_connect_command(message, user, db)
+            return
+        start_parameter = None
 
     # Handle contests deep link: /start contests — the channel announcement's
     # "🎲 Играть" button opens the bot here (a callback button can't open a
@@ -3425,11 +3433,11 @@ async def process_webauth_confirm(
     if not isinstance(callback.message, types.Message):
         return
 
-    async def edit_auth_message(text: str) -> None:
+    async def edit_auth_message(text: str, reply_markup: types.InlineKeyboardMarkup | None = None) -> None:
         if callback.message.photo:
-            await callback.message.edit_caption(caption=text, reply_markup=None)
+            await callback.message.edit_caption(caption=text, reply_markup=reply_markup, parse_mode='HTML')
         else:
-            await callback.message.edit_text(text, reply_markup=None)
+            await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     if callback.data == 'webauth_deny':
         await edit_auth_message('❌ Вход отменён.')
@@ -3449,8 +3457,30 @@ async def process_webauth_confirm(
     linked = await link_web_auth_token(token, callback.from_user.id, user.id)
     texts = get_texts(user.language)
     if linked:
+        app_keyboard: types.InlineKeyboardMarkup | None = None
+        try:
+            from app.services.web_auth_service import create_app_handoff_token
+
+            app_token = await create_app_handoff_token(user.id)
+            base_url = settings.MINIAPP_CUSTOM_URL.rstrip('/') if settings.MINIAPP_CUSTOM_URL else 'https://invoxy.my'
+            app_connect_url = f'{base_url}/app/connect?token={app_token}'
+            app_keyboard = types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text='📲 Открыть Invoxy VPN',
+                            url=app_connect_url,
+                        ),
+                    ],
+                ]
+            )
+        except Exception as err:
+            logger.warning('Failed to generate app handoff token on webauth confirm', error=err)
+
         await edit_auth_message(
-            texts.t('WEB_AUTH_SUCCESS', '✅ Авторизация в кабинете подтверждена! Вернитесь в браузер.'),
+            '✅ <b>Авторизация в кабинете подтверждена!</b> Вернитесь в браузер.\n\n'
+            '• Если вы входили через <b>приложение Invoxy VPN</b> — нажмите кнопку ниже:',
+            reply_markup=app_keyboard,
         )
     else:
         await edit_auth_message(

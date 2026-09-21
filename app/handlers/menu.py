@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import structlog
 from aiogram import Dispatcher, F, types
-from aiogram.filters import StateFilter
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ from app.database.crud.promo_group import (
 from app.database.crud.transaction import get_user_total_spent_kopeks
 from app.database.crud.user import update_user
 from app.database.crud.user_message import get_random_active_message
-from app.database.models import InfoPage, PromoGroup, User
+from app.database.models import InfoPage, PromoGroup, User, UserStatus
 from app.handlers.subscription.traffic import add_traffic, handle_add_traffic
 from app.keyboards.inline import (
     get_info_menu_keyboard,
@@ -1730,7 +1730,88 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
         )
 
 
+async def build_app_connect_payload(user: User):
+    from app.services.web_auth_service import create_app_handoff_token
+
+    token = await create_app_handoff_token(user.id)
+    base_url = settings.MINIAPP_CUSTOM_URL.rstrip('/') if settings.MINIAPP_CUSTOM_URL else 'https://invoxy.my'
+    connect_url = f'{base_url}/app/connect?token={token}'
+    releases_url = 'https://github.com/zxzum/InvoxyApp/releases/latest'
+
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text='📲 Войти в приложение Invoxy',
+                    url=connect_url,
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text='🔄 Обновить ссылку',
+                    callback_data='menu_app_connect',
+                ),
+                types.InlineKeyboardButton(
+                    text='📥 Скачать приложение',
+                    url=releases_url,
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text='« В главное меню',
+                    callback_data='back_to_menu',
+                ),
+            ],
+        ]
+    )
+
+    text = (
+        '📱 <b>Официальное приложение Invoxy VPN</b>\n\n'
+        'Подключите ваше устройство в 1 клик без ввода логина и паролей:\n'
+        '• 🚀 Умный выбор быстрых серверов\n'
+        '• 🛡 Защита от блокировок ТСПУ и шифрование трафика\n'
+        '• 📊 Мониторинг скорости и расхода трафика в реальном времени\n'
+        '• 🌐 Поддержка Android, macOS, Windows и iOS\n\n'
+        f'⚡ <b>Ссылка для мгновенного входа</b> <i>(действует 2 минуты)</i>:\n'
+        f'<code>{connect_url}</code>\n\n'
+        '<i>Нажмите кнопку «Войти в приложение Invoxy» выше для автоматического входа на этом устройстве.</i>'
+    )
+    return text, keyboard
+
+
+async def handle_app_connect_callback(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+):
+    if not db_user or db_user.status != UserStatus.ACTIVE.value:
+        await callback.answer('❌ Учётная запись неактивна.', show_alert=True)
+        return
+    text, keyboard = await build_app_connect_payload(db_user)
+    await callback.answer()
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+    except Exception:
+        await callback.message.answer(text, reply_markup=keyboard, parse_mode='HTML')
+
+
+async def handle_app_connect_command(
+    message: types.Message,
+    db_user: User,
+    db: AsyncSession,
+):
+    if not db_user or db_user.status != UserStatus.ACTIVE.value:
+        await message.answer('❌ Учётная запись не найдена или неактивна. Запустите бота через /start.')
+        return
+    text, keyboard = await build_app_connect_payload(db_user)
+    await message.answer(text, reply_markup=keyboard, parse_mode='HTML')
+
+
 def register_handlers(dp: Dispatcher):
+    dp.callback_query.register(handle_app_connect_callback, F.data == 'menu_app_connect')
+    dp.message.register(handle_app_connect_command, Command('app'))
+    dp.message.register(handle_app_connect_command, Command('connect'))
+
     dp.callback_query.register(handle_back_to_menu, F.data == 'back_to_menu')
 
     dp.callback_query.register(
