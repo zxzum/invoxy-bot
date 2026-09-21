@@ -205,7 +205,7 @@ async def get_payment_methods(
                     description = info.get('description') or info.get('name') or ''
                 elif method_id == 'rollypay':
                     if opt_id == 'sbp':
-                        opt_name = '⚡ СБП (0% комиссии)'
+                        opt_name = '⚡ СБП'
                         description = 'Мгновенно через приложение любого банка РФ'
                     elif opt_id in ('card', 'bank_card'):
                         opt_name = '💳 Карты РФ (МИР, Visa, MC)'

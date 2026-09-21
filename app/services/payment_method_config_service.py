@@ -325,7 +325,7 @@ def _get_overpay_sub_options() -> list[dict]:
 
 def _get_rollypay_sub_options() -> list[dict]:
     return [
-        {'id': 'sbp', 'name': '⚡ СБП (0% комиссии)'},
+        {'id': 'sbp', 'name': '⚡ СБП'},
         {'id': 'card', 'name': '💳 Карты РФ (МИР, Visa, MC)'},
     ]
 
