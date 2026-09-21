@@ -473,6 +473,34 @@ async def handle_admin_ticket_reply(message: types.Message, state: FSMContext, d
         )
 
 
+async def notify_cabinet_user_about_ticket_reply(ticket: Ticket, reply_text: str, db: AsyncSession) -> None:
+    """Persist and push a cabinet notification for a Telegram admin reply."""
+    try:
+        from app.cabinet.routes.websocket import notify_user_ticket_reply
+        from app.cabinet.services.active_invoice import record_cabinet_notification
+        from app.database.crud.ticket_notification import TicketNotificationCRUD
+
+        notification = await TicketNotificationCRUD.create_user_notification_for_admin_reply(
+            db, ticket, reply_text
+        )
+        if notification is None:
+            return
+
+        await record_cabinet_notification(
+            db,
+            ticket.user_id,
+            'ticket_reply',
+            f'Ответ поддержки по тикету #{ticket.id}',
+            (reply_text or 'Вам пришел ответ от службы поддержки')[:300],
+            payload_json={'ticket_id': ticket.id},
+        )
+        await db.commit()
+        await notify_user_ticket_reply(ticket.user_id, ticket.id, (reply_text or '')[:100])
+    except Exception as error:
+        await db.rollback()
+        logger.warning('Failed to create cabinet notification for Telegram admin reply', error=error)
+
+
 async def mark_ticket_as_answered(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
     """Отметить тикет как отвеченный"""
     ticket_id = int(callback.data.replace('admin_mark_answered_', ''))
@@ -1028,6 +1056,11 @@ async def _notify_ticket_reply_by_email(user: User, ticket: Ticket, reply_text: 
 async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: str, db: AsyncSession):
     """Уведомить пользователя о новом ответе в тикете"""
     try:
+        # Every admin reply path (Telegram, WebAPI, and cabinet) must leave a
+        # durable cabinet notification and wake connected mobile clients.
+        if db is not None:
+            await notify_cabinet_user_about_ticket_reply(ticket, reply_text, db)
+
         # Respect runtime toggle for user ticket notifications
         try:
             if not SupportSettingsService.get_user_ticket_notifications_enabled():

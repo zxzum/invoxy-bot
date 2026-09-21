@@ -324,6 +324,7 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
 
         # Уведомить админов
         await notify_admins_about_new_ticket(ticket, db)
+        await notify_cabinet_admins_about_new_ticket(ticket, db)
 
     except Exception as e:
         logger.error('Error creating ticket', error=e)
@@ -855,6 +856,7 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
 
         # Уведомить админов об ответе пользователя
         logger.info('Attempting to notify admins about ticket reply', ticket_id=ticket_id)
+        await notify_cabinet_admins_about_ticket_reply(ticket, reply_text, db)
         await notify_admins_about_ticket_reply(
             ticket, reply_text, db, media_file_id=media_file_id, media_type=media_type
         )
@@ -865,6 +867,36 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
         await message.answer(
             texts.t('TICKET_REPLY_ERROR', '❌ Произошла ошибка при отправке ответа. Попробуйте позже.')
         )
+
+
+async def notify_cabinet_admins_about_new_ticket(ticket: Ticket, db: AsyncSession) -> None:
+    """Persist and push a cabinet notification for a Telegram-created ticket."""
+    try:
+        from app.cabinet.routes.websocket import notify_admins_new_ticket
+        from app.database.crud.ticket_notification import TicketNotificationCRUD
+
+        notification = await TicketNotificationCRUD.create_admin_notification_for_new_ticket(db, ticket)
+        if notification is not None:
+            await notify_admins_new_ticket(ticket.id, ticket.title, ticket.user_id)
+    except Exception as error:
+        await db.rollback()
+        logger.warning('Failed to create cabinet notification for Telegram ticket', error=error)
+
+
+async def notify_cabinet_admins_about_ticket_reply(ticket: Ticket, reply_text: str, db: AsyncSession) -> None:
+    """Persist and push a cabinet notification for a Telegram user reply."""
+    try:
+        from app.cabinet.routes.websocket import notify_admins_ticket_reply
+        from app.database.crud.ticket_notification import TicketNotificationCRUD
+
+        notification = await TicketNotificationCRUD.create_admin_notification_for_user_reply(
+            db, ticket, reply_text
+        )
+        if notification is not None:
+            await notify_admins_ticket_reply(ticket.id, (reply_text or '')[:100], ticket.user_id)
+    except Exception as error:
+        await db.rollback()
+        logger.warning('Failed to create cabinet notification for Telegram user reply', error=error)
 
 
 async def close_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
