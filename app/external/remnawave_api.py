@@ -488,6 +488,10 @@ class RemnaWaveAPI:
                 logger.warning('SSL certificate verification disabled for local HTTPS in debug mode')
 
         elif conn_type == 'external':
+            if not self.base_url.startswith('https://'):
+                raise RuntimeError(
+                    'Insecure RemnaWave connection: external URL must use HTTPS to protect credentials'
+                )
             logger.debug('Используют внешнее подключение с полной SSL проверкой')
 
         connector = aiohttp.TCPConnector(**connector_kwargs)

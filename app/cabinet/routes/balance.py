@@ -1740,11 +1740,14 @@ async def check_payment_status(
         await bot.session.close()
 
     if not updated:
+        rec_paid = bool(record and getattr(record, 'is_paid', False))
         return ManualCheckResponse(
             success=False,
             message='Не удалось проверить статус платежа',
             payment=_record_to_response(record),
             status_changed=False,
+            is_paid=rec_paid,
+            settled=rec_paid,
         )
 
     status_changed = updated.status != old_status or updated.is_paid != old_is_paid
@@ -1755,6 +1758,7 @@ async def check_payment_status(
     else:
         message = 'Статус не изменился'
 
+    upd_paid = bool(updated and getattr(updated, 'is_paid', False))
     return ManualCheckResponse(
         success=True,
         message=message,
@@ -1762,6 +1766,8 @@ async def check_payment_status(
         status_changed=status_changed,
         old_status=old_status,
         new_status=updated.status,
+        is_paid=upd_paid,
+        settled=upd_paid,
     )
 
 

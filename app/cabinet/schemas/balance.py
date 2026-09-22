@@ -144,6 +144,8 @@ class ManualCheckResponse(BaseModel):
     status_changed: bool = False
     old_status: str | None = None
     new_status: str | None = None
+    is_paid: bool = False
+    settled: bool = False
 
 
 class SavedCardResponse(BaseModel):

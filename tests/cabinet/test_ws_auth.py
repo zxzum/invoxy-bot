@@ -93,6 +93,12 @@ def test_webapi_ws_auth_prefers_header_and_supports_subprotocol() -> None:
         'subprotocol',
     )
 
+    query_ws = SimpleNamespace(
+        headers={},
+        query_params={'token': 'legacy-key', 'api_key': 'legacy-key-2'},
+    )
+    assert _extract_websocket_auth(query_ws) == (None, None, 'none')
+
 
 def test_cabinet_ws_accepts_one_time_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_verify(ticket: str) -> tuple[int, bool]:
@@ -106,6 +112,19 @@ def test_cabinet_ws_accepts_one_time_ticket(monkeypatch: pytest.MonkeyPatch) -> 
     with TestClient(app) as client:
         with client.websocket_connect('/cabinet/ws?ticket=one-time-ticket') as websocket:
             assert websocket.receive_json() == {'type': 'connected', 'user_id': 42, 'is_admin': False}
+
+
+def test_cabinet_ws_rejects_query_token_without_ticket() -> None:
+    from starlette.websockets import WebSocketDisconnect
+
+    app = FastAPI()
+    app.include_router(cabinet_websocket.router, prefix='/cabinet')
+
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            with client.websocket_connect('/cabinet/ws?token=legacy-token') as websocket:
+                websocket.receive_json()
+        assert exc_info.value.code == 1008
 
 
 def test_webapi_ws_accepts_authorized_subprotocol(monkeypatch: pytest.MonkeyPatch) -> None:

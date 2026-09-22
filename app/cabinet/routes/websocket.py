@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -181,26 +182,19 @@ async def cabinet_websocket_endpoint(websocket: WebSocket):
     client_host = websocket.client.host if websocket.client else 'unknown'
 
     ticket = websocket.query_params.get('ticket')
-    token = websocket.query_params.get('token') if not ticket else None
 
-    if not ticket and not token:
-        logger.debug('Cabinet WS: No ticket or token from', client_host=client_host)
-        # Принимаем и сразу закрываем с кодом ошибки
+    if not ticket:
+        logger.debug('Cabinet WS: Rejected connection without one-time ticket (query token auth disabled)', client_host=client_host)
         await websocket.accept()
-        await websocket.close(code=1008, reason='Unauthorized: No ticket')
+        await websocket.close(code=1008, reason='Unauthorized: Single-use ticket required. Token query auth disabled.')
         return
 
-    if ticket:
-        user_id, is_admin = await verify_cabinet_ws_ticket(ticket)
-    else:
-        logger.warning('Cabinet WS JWT query authentication is deprecated', client_host=client_host)
-        user_id, is_admin = await verify_cabinet_ws_token(token)
+    user_id, is_admin = await verify_cabinet_ws_ticket(ticket)
 
     if not user_id:
-        logger.debug('Cabinet WS: Invalid ticket or token from', client_host=client_host)
-        # Принимаем и сразу закрываем с кодом ошибки
+        logger.debug('Cabinet WS: Invalid or expired ticket from', client_host=client_host)
         await websocket.accept()
-        await websocket.close(code=1008, reason='Unauthorized: Invalid token')
+        await websocket.close(code=1008, reason='Unauthorized: Invalid ticket')
         return
 
     # Принимаем соединение
@@ -297,12 +291,17 @@ async def notify_user_balance_topup(
     amount_kopeks: int,
     new_balance_kopeks: int,
     description: str = '',
+    payment_id: int | str | None = None,
+    event_id: str | None = None,
 ) -> None:
     """Уведомить пользователя о пополнении баланса."""
+    effective_event_id = event_id or f'topup_{user_id}_{payment_id or int(time.time() * 1000)}'
     await cabinet_ws_manager.send_to_user(
         user_id,
         {
             'type': 'balance.topup',
+            'event_id': effective_event_id,
+            'payment_id': payment_id,
             'amount_kopeks': amount_kopeks,
             'amount_rubles': amount_kopeks / 100,
             'new_balance_kopeks': new_balance_kopeks,

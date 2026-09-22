@@ -11,3 +11,10 @@ async def test_insecure_local_remnawave_tls_is_debug_only(monkeypatch: pytest.Mo
 
     with pytest.raises(RuntimeError, match='requires DEBUG=true'):
         await RemnaWaveAPI('https://remnawave', 'api-key').__aenter__()
+
+
+@pytest.mark.asyncio
+async def test_external_remnawave_requires_https() -> None:
+    with pytest.raises(RuntimeError, match='Insecure RemnaWave connection: external URL must use HTTPS'):
+        await RemnaWaveAPI('http://external-panel.example.com', 'api-key').__aenter__()
+

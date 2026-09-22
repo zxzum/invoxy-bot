@@ -43,8 +43,8 @@ def _extract_websocket_auth(websocket: WebSocket) -> tuple[str | None, str | Non
             if candidate != WEBSOCKET_AUTH_SUBPROTOCOL:
                 return candidate, WEBSOCKET_AUTH_SUBPROTOCOL, 'subprotocol'
 
-    # Legacy compatibility for clients that still send credentials in the URL.
-    return websocket.query_params.get('token') or websocket.query_params.get('api_key'), None, 'query'
+    # Query parameter authentication is disabled to prevent credentials leaking into reverse-proxy and access logs.
+    return None, None, 'none'
 
 
 async def verify_websocket_token(
