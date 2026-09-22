@@ -146,7 +146,7 @@ async def get_transactions(
 
 @router.get('/payment-methods', response_model=list[PaymentMethodResponse])
 async def get_payment_methods(
-    response: Response,
+    response: Response = None,  # type: ignore[assignment]
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -160,7 +160,8 @@ async def get_payment_methods(
     - Sub-options filtering (sub_options)
     - User filters (user_type_filter, first_topup_filter, promo_group_filter)
     """
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    if response:
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     # Check if this is user's first topup
     from sqlalchemy import exists
 

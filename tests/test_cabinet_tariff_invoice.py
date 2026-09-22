@@ -6,6 +6,7 @@
 
 import types
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -105,13 +106,17 @@ async def test_invoice_creates_cart_and_payment_link(monkeypatch):
 
     monkeypatch.setattr(purchase_module, '_resolve_tariff_purchase_context', fake_context)
     monkeypatch.setattr(purchase_module, 'get_payment_methods', fake_methods)
+    monkeypatch.setattr(purchase_module, 'get_active_invoice_record', AsyncMock(return_value=None))
+    monkeypatch.setattr(purchase_module, 'record_cabinet_notification', AsyncMock())
+    monkeypatch.setattr(purchase_module, 'send_invoice_created_telegram_message', AsyncMock())
     monkeypatch.setattr(purchase_module.user_cart_service, 'save_user_cart', fake_save_cart)
     monkeypatch.setattr(purchase_module, '_create_payment_link', fake_link)
     monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs', raising=False)
     monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: True, raising=False)
 
+    fake_db = types.SimpleNamespace(add=lambda *args: None, commit=AsyncMock())
     request = TariffInvoiceRequest(tariff_id=5, period_days=30, payment_method='yookassa')
-    response = await purchase_module.create_tariff_invoice(request, user=user, db=types.SimpleNamespace())
+    response = await purchase_module.create_tariff_invoice(request, user=user, db=fake_db)
 
     assert response.payment_url == 'https://pay.example/x'
     assert response.amount_kopeks == 5900  # 9900 − 4000
