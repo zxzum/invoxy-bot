@@ -193,6 +193,17 @@ async def _recover_cabinet_user_after_gate(
 
 def _user_to_response(user: User) -> UserResponse:
     """Convert User model to UserResponse."""
+    is_admin = settings.is_admin(
+        telegram_id=user.telegram_id,
+        email=user.email if user.email_verified else None,
+    )
+    if not is_admin and getattr(user, 'user_roles', None):
+        is_admin = any(
+            getattr(getattr(ur, 'role', None), 'level', 0) > 0
+            and getattr(getattr(ur, 'role', None), 'is_active', True)
+            for ur in getattr(user, 'user_roles', [])
+        )
+
     return UserResponse(
         id=user.id,
         telegram_id=user.telegram_id,
@@ -207,6 +218,7 @@ def _user_to_response(user: User) -> UserResponse:
         language=user.language,
         created_at=user.created_at,
         auth_type=getattr(user, 'auth_type', 'telegram'),  # Поддержка старых записей
+        is_admin=is_admin,
     )
 
 

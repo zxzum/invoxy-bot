@@ -4,7 +4,7 @@ import math
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -179,14 +179,27 @@ async def get_referral_earnings(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get referral earnings history."""
-    # Base query
-    query = select(ReferralEarning).where(ReferralEarning.user_id == user.id, not_referee_directed())
+    # Base query — exclude internal registration audit records (referral_registration_pending)
+    # and records with zero amount and zero days.
+    real_earning_filter = and_(
+        ReferralEarning.reason != 'referral_registration_pending',
+        or_(ReferralEarning.amount_kopeks > 0, ReferralEarning.days_granted > 0),
+    )
+    query = select(ReferralEarning).where(
+        ReferralEarning.user_id == user.id,
+        real_earning_filter,
+        not_referee_directed(),
+    )
 
     # Get total count and sum
     count_query = (
         select(func.count())
         .select_from(ReferralEarning)
-        .where(ReferralEarning.user_id == user.id, not_referee_directed())
+        .where(
+            ReferralEarning.user_id == user.id,
+            real_earning_filter,
+            not_referee_directed(),
+        )
     )
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
@@ -196,7 +209,11 @@ async def get_referral_earnings(
     sum_query = select(
         func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0),
         func.coalesce(func.sum(ReferralEarning.days_granted), 0),
-    ).where(ReferralEarning.user_id == user.id, not_referee_directed())
+    ).where(
+        ReferralEarning.user_id == user.id,
+        real_earning_filter,
+        not_referee_directed(),
+    )
     sum_result = await db.execute(sum_query)
     total_amount, total_days = sum_result.one()
 

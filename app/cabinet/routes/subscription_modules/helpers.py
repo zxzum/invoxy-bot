@@ -165,6 +165,7 @@ def _subscription_to_response(
     # Check if this is a daily tariff
     is_daily_paused = getattr(subscription, 'is_daily_paused', False) or False
     tariff_id = getattr(subscription, 'tariff_id', None)
+    tariff = getattr(subscription, 'tariff', None)
 
     # Use subscription's is_daily_tariff property if available
     is_daily = False
@@ -172,13 +173,13 @@ def _subscription_to_response(
 
     if hasattr(subscription, 'is_daily_tariff'):
         is_daily = subscription.is_daily_tariff
-    elif tariff_id and hasattr(subscription, 'tariff') and subscription.tariff:
-        is_daily = getattr(subscription.tariff, 'is_daily', False)
+    elif tariff_id and tariff:
+        is_daily = getattr(tariff, 'is_daily', False)
 
     # Get daily_price_kopeks, tariff_name, traffic_reset_mode from tariff
     traffic_reset_mode = None
-    if tariff_id and hasattr(subscription, 'tariff') and subscription.tariff:
-        daily_price_kopeks = getattr(subscription.tariff, 'daily_price_kopeks', None)
+    if tariff_id and tariff:
+        daily_price_kopeks = getattr(tariff, 'daily_price_kopeks', None)
         # Ровно то, что списывается каждый день: только скидка группы. Промокод —
         # разовый, при покупке; вкладывать его в «цену за день» было бы обманом.
         if daily_price_kopeks and daily_price_kopeks > 0 and user:
@@ -186,9 +187,9 @@ def _subscription_to_response(
 
             daily_price_kopeks, _ = PricingEngine.daily_group_price(daily_price_kopeks, user)
         if not tariff_name:  # Only set if not passed as parameter
-            tariff_name = getattr(subscription.tariff, 'name', None)
+            tariff_name = getattr(tariff, 'name', None)
         traffic_reset_mode = (
-            getattr(subscription.tariff, 'traffic_reset_mode', None) or settings.DEFAULT_TRAFFIC_RESET_STRATEGY
+            getattr(tariff, 'traffic_reset_mode', None) or settings.DEFAULT_TRAFFIC_RESET_STRATEGY
         )
 
     # Calculate next daily charge time (24 hours after last charge)
@@ -203,6 +204,12 @@ def _subscription_to_response(
 
     # Проверяем настройку скрытия ссылки (скрывается только текст, кнопки работают)
     hide_link = settings.should_hide_subscription_link()
+
+    main_traffic_reset_enabled = (
+        getattr(tariff, 'main_traffic_reset_enabled', True)
+        if tariff is not None and getattr(tariff, 'main_traffic_reset_enabled', None) is not None
+        else True
+    )
 
     return SubscriptionResponse(
         id=subscription.id,
@@ -239,5 +246,5 @@ def _subscription_to_response(
         tariff_id=tariff_id,
         tariff_name=tariff_name,
         traffic_reset_mode=traffic_reset_mode,
-        main_traffic_reset_enabled=getattr(tariff, 'main_traffic_reset_enabled', True) if getattr(tariff, 'main_traffic_reset_enabled', None) is not None else True,
+        main_traffic_reset_enabled=main_traffic_reset_enabled,
     )

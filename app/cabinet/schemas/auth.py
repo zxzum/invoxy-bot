@@ -158,6 +158,7 @@ class UserResponse(BaseModel):
     language: str = 'ru'
     created_at: datetime
     auth_type: str = 'telegram'  # "telegram" или "email"
+    is_admin: bool = False
 
     class Config:
         from_attributes = True
