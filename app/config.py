@@ -288,7 +288,7 @@ class Settings(BaseSettings):
     TRIAL_DISABLED_FOR: str = 'none'  # none, email, telegram, all
     DEFAULT_TRAFFIC_LIMIT_GB: int = 100
     DEFAULT_DEVICE_LIMIT: int = 1
-    DEFAULT_TRAFFIC_RESET_STRATEGY: str = 'MONTH'
+    DEFAULT_TRAFFIC_RESET_STRATEGY: str = 'MONTH_ROLLING'
     RESET_TRAFFIC_ON_PAYMENT: bool = False
     RESET_TRAFFIC_ON_TARIFF_SWITCH: bool = True
     RESET_DEVICES_ON_RENEWAL: bool = False

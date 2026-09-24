@@ -119,6 +119,7 @@ class UserListItem(BaseModel):
     id: int
     telegram_id: int | None = None
     username: str | None = None
+    email: str | None = None
     first_name: str | None = None
     last_name: str | None = None
     full_name: str
@@ -386,6 +387,7 @@ class UpdateSubscriptionRequest(BaseModel):
     # For set_traffic action
     traffic_limit_gb: int | None = Field(None, ge=0, description='New traffic limit in GB')
     traffic_used_gb: float | None = Field(None, ge=0, description='Set traffic used in GB')
+    whitelist_traffic_limit_gb: int | None = Field(None, ge=0, description='New LTE/whitelist traffic limit in GB')
 
     # For toggle_autopay
     autopay_enabled: bool | None = Field(None, description='Enable/disable autopay')

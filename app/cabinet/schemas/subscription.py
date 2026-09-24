@@ -279,6 +279,7 @@ class TariffPurchaseRequest(BaseModel):
     traffic_gb: int | None = Field(
         None, ge=0, le=100_000, description='Custom traffic in GB (for custom_traffic_enabled tariffs)'
     )
+    devices: int | None = Field(None, ge=1, le=100, description='Device limit including extra devices')
     # When the user is renewing an EXISTING subscription (multi-tariff
     # mode), the frontend passes the explicit subscription_id so the
     # backend can resolve the target row by ID instead of doing a
@@ -309,6 +310,7 @@ class TariffInvoiceRequest(BaseModel):
     tariff_id: int
     period_days: int | None = None
     traffic_gb: int | None = None
+    devices: int | None = None
     subscription_id: int | None = None
     payment_method: str
     payment_option: str | None = None

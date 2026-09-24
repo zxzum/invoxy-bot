@@ -229,6 +229,11 @@ async def create_tariff(
     traffic_reset_mode: str | None = None,  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = None,
+    # Сброс основного трафика
+    main_traffic_reset_enabled: bool = True,
+    main_traffic_reset_price_kopeks: int | None = None,
+    main_traffic_reset_min_used_gb: int = 100,
+    main_traffic_reset_max_per_month: int = 0,
 ) -> Tariff:
     """Создает новый тариф."""
     normalized_prices = _normalize_period_prices(period_prices)
@@ -281,6 +286,11 @@ async def create_tariff(
         traffic_reset_mode=traffic_reset_mode,
         # Внешний сквад
         external_squad_uuid=external_squad_uuid,
+        # Сброс основного трафика
+        main_traffic_reset_enabled=main_traffic_reset_enabled,
+        main_traffic_reset_price_kopeks=main_traffic_reset_price_kopeks,
+        main_traffic_reset_min_used_gb=max(0, main_traffic_reset_min_used_gb),
+        main_traffic_reset_max_per_month=max(0, main_traffic_reset_max_per_month),
     )
 
     db.add(tariff)
@@ -363,6 +373,11 @@ async def update_tariff(
     traffic_reset_mode: str | None = ...,  # ... = не передан, None = сбросить к глобальной настройке
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = ...,  # ... = не передан, None = убрать внешний сквад
+    # Сброс основного трафика
+    main_traffic_reset_enabled: bool | None = None,
+    main_traffic_reset_price_kopeks: int | None = ...,  # ... = не передан, None = сбросить к дефолту (null)
+    main_traffic_reset_min_used_gb: int | None = None,
+    main_traffic_reset_max_per_month: int | None = None,
 ) -> Tariff:
     """Обновляет существующий тариф."""
     if name is not None:
@@ -466,6 +481,15 @@ async def update_tariff(
     # Внешний сквад
     if external_squad_uuid is not ...:
         tariff.external_squad_uuid = external_squad_uuid
+    # Сброс основного трафика
+    if main_traffic_reset_enabled is not None:
+        tariff.main_traffic_reset_enabled = main_traffic_reset_enabled
+    if main_traffic_reset_price_kopeks is not ...:
+        tariff.main_traffic_reset_price_kopeks = main_traffic_reset_price_kopeks
+    if main_traffic_reset_min_used_gb is not None:
+        tariff.main_traffic_reset_min_used_gb = max(0, main_traffic_reset_min_used_gb)
+    if main_traffic_reset_max_per_month is not None:
+        tariff.main_traffic_reset_max_per_month = max(0, main_traffic_reset_max_per_month)
 
     # Обновляем промогруппы если указаны
     if promo_group_ids is not None:

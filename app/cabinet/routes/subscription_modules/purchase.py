@@ -725,6 +725,7 @@ async def _resolve_tariff_purchase_context(
     period_days: int | None,
     traffic_gb: int | None,
     subscription_id: int | None,
+    requested_devices: int | None = None,
 ) -> TariffPurchaseContext:
     """Validate tariff/period/traffic, resolve the existing subscription and compute the price."""
     # Get tariff
@@ -836,7 +837,21 @@ async def _resolve_tariff_purchase_context(
         existing_subscription = await get_subscription_by_user_id(db, user.id)
     device_limit = None
     effective_device_limit = tariff.device_limit
-    if existing_subscription and existing_subscription.tariff_id == tariff.id:
+    if requested_devices is not None:
+        min_devices = tariff.device_limit or 1
+        max_devices = (
+            tariff.max_device_limit
+            if (tariff.max_device_limit and tariff.max_device_limit > 0)
+            else (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else 100)
+        )
+        if requested_devices < min_devices or requested_devices > max_devices:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f'Количество устройств должно быть от {min_devices} до {max_devices}',
+            )
+        device_limit = requested_devices
+        effective_device_limit = requested_devices
+    elif existing_subscription and existing_subscription.tariff_id == tariff.id:
         device_limit = existing_subscription.device_limit
         if (existing_subscription.device_limit or 0) > (tariff.device_limit or 0):
             effective_device_limit = existing_subscription.device_limit
@@ -929,6 +944,7 @@ async def purchase_tariff(
             period_days=request.period_days,
             traffic_gb=request.traffic_gb,
             subscription_id=request.subscription_id,
+            requested_devices=request.devices,
         )
         tariff = ctx.tariff
         user = ctx.user
@@ -1173,7 +1189,7 @@ async def purchase_tariff(
                         user_id=user.id,
                         duration_days=period_days,
                         traffic_limit_gb=traffic_limit_gb,
-                        device_limit=tariff.device_limit,
+                        device_limit=effective_device_limit,
                         connected_squads=squads,
                         tariff_id=tariff.id,
                         conversion_trial=_conversion_trial,
@@ -1464,6 +1480,7 @@ async def create_tariff_invoice(
         period_days=request.period_days,
         traffic_gb=request.traffic_gb,
         subscription_id=request.subscription_id,
+        requested_devices=request.devices,
     )
 
     if user.balance_kopeks >= ctx.price_kopeks:

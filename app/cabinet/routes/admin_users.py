@@ -227,6 +227,7 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
         id=user.id,
         telegram_id=user.telegram_id,
         username=user.username,
+        email=user.email,
         first_name=user.first_name,
         last_name=user.last_name,
         full_name=user.full_name,
@@ -1416,6 +1417,24 @@ async def update_user_balance(
             new_balance_kopeks=user.balance_kopeks,
             description=description,
         )
+
+        if user.telegram_id and request.amount_kopeks > 0:
+            try:
+                from app.bot.factory import create_bot
+
+                bot = create_bot()
+                amount_rub = request.amount_kopeks / 100
+                new_bal_rub = user.balance_kopeks / 100
+                msg_text = (
+                    '💳 <b>Пополнение баланса</b>\n\n'
+                    f'Вам начислено: <b>+{amount_rub:g} ₽</b>\n'
+                    f'Текущий баланс: <b>{new_bal_rub:g} ₽</b>'
+                )
+                if request.description:
+                    msg_text += f'\n<i>{request.description}</i>'
+                await bot.send_message(user.telegram_id, msg_text, parse_mode='HTML')
+            except Exception as tg_err:
+                logger.warning('Failed to send Telegram message on admin balance topup', error=tg_err)
     except Exception as ws_err:
         logger.warning('Failed to send WS notification on admin balance update', error=ws_err)
 
@@ -1792,6 +1811,9 @@ async def update_user_subscription(
 
         if request.traffic_used_gb is not None:
             subscription.traffic_used_gb = request.traffic_used_gb
+
+        if request.whitelist_traffic_limit_gb is not None:
+            subscription.whitelist_traffic_limit_gb = request.whitelist_traffic_limit_gb
 
         await db.commit()
         await db.refresh(subscription)
