@@ -366,7 +366,8 @@ class UpdateSubscriptionRequest(BaseModel):
         description=(
             'Action: extend, shorten, set_end_date, change_tariff, set_traffic, '
             'toggle_autopay, cancel, reset (zero out the subscription, keep user+tickets), '
-            'add_traffic, remove_traffic, add_whitelist_traffic, remove_whitelist_traffic, reset_whitelist_used'
+            'add_traffic, remove_traffic, add_whitelist_traffic, remove_whitelist_traffic, '
+            'reset_whitelist_used, adjust_whitelist_used, reset_main_traffic'
         ),
     )
 
@@ -394,6 +395,12 @@ class UpdateSubscriptionRequest(BaseModel):
 
     # For remove_traffic action
     traffic_purchase_id: int | None = Field(None, description='Traffic purchase ID to remove')
+
+    # For adjust_whitelist_used action
+    whitelist_traffic_used_gb: float | None = Field(None, ge=0, description='Set LTE used traffic in GB')
+    whitelist_traffic_delta_gb: float | None = Field(
+        None, description='Delta GB to add or subtract from LTE used traffic'
+    )
 
     # For create new subscription
     is_trial: bool | None = Field(None, description='Is trial subscription')

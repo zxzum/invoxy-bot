@@ -498,7 +498,11 @@ async def switch_tariff(
     old_tariff_name = current_tariff.name if current_tariff else 'Unknown'
 
     # Reset device limit to new tariff base (extra purchased devices are not carried over)
-    from app.database.crud.subscription import calc_device_limit_on_tariff_switch
+    from app.database.crud.subscription import (
+        _apply_base_limit_preserving_active_purchases,
+        _apply_whitelist_base_limit_preserving_active_purchases,
+        calc_device_limit_on_tariff_switch,
+    )
     from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
 
     # Смена тарифа делает СБП-привязку Platega несогласованной: она продолжила бы
@@ -515,7 +519,6 @@ async def switch_tariff(
     await db.refresh(subscription)
 
     subscription.tariff_id = new_tariff.id
-    subscription.traffic_limit_gb = new_tariff.traffic_limit_gb
     subscription.device_limit = calc_device_limit_on_tariff_switch(
         current_device_limit=subscription.device_limit,
         old_tariff_device_limit=current_tariff.device_limit if current_tariff else None,
@@ -524,40 +527,23 @@ async def switch_tariff(
     )
     subscription.connected_squads = new_tariff.allowed_squads or []
 
-    # Reset purchased traffic and delete TrafficPurchase records on tariff switch
-    from sqlalchemy import delete as sql_delete
-
-    from app.database.models import (
-        TrafficPurchase,
-        WhitelistTrafficPurchase,
-        WhitelistTrafficUsageSnapshot,
+    # Reset only the base quotas; paid add-ons keep their own expiration.
+    switch_time = datetime.now(UTC)
+    await _apply_base_limit_preserving_active_purchases(
+        db,
+        subscription,
+        new_tariff.traffic_limit_gb or 0,
+        now=switch_time,
+    )
+    await _apply_whitelist_base_limit_preserving_active_purchases(
+        db,
+        subscription,
+        new_tariff.whitelist_traffic_limit_gb or 0,
+        now=switch_time,
     )
 
-    await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
-    subscription.purchased_traffic_gb = 0
-    subscription.traffic_reset_at = None
-    # White Internet has the same tariff-switch invariant as regular traffic:
-    # the target tariff's base quota replaces the old one and old top-up
-    # packages do not survive the switch.
-    await db.execute(
-        sql_delete(WhitelistTrafficPurchase).where(
-            WhitelistTrafficPurchase.subscription_id == subscription.id
-        )
-    )
-    subscription.whitelist_traffic_limit_gb = new_tariff.whitelist_traffic_limit_gb or 0
-    subscription.whitelist_traffic_purchased_gb = 0
-    subscription.whitelist_traffic_reset_at = None
-
-    # Счётчик трафика обнуляет оплаченное переключение или конвертацию дней
-    reset_used_traffic = should_reset_used_traffic(upgrade_cost) or is_convert_days
-    if reset_used_traffic:
-        await db.execute(
-            sql_delete(WhitelistTrafficUsageSnapshot).where(
-                WhitelistTrafficUsageSnapshot.subscription_id == subscription.id
-            )
-        )
-        subscription.traffic_used_gb = 0.0
-        subscription.whitelist_traffic_used_bytes = 0
+    # Переход не покупает квоту заново: сохраняем расход и LTE-срезы.
+    reset_used_traffic = should_reset_used_traffic(upgrade_cost)
 
     if is_convert_days:
         subscription.end_date = datetime.now(UTC) + timedelta(days=converted_days)

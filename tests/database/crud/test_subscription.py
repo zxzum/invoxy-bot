@@ -42,7 +42,7 @@ async def test_create_trial_subscription_uses_all_available_squads_by_default(mo
     add_user_to_servers_mock.assert_awaited_once_with(db, [11, 12])
 
 
-async def test_extend_subscription_convert_trial_false_keeps_trial(monkeypatch):
+async def test_extend_subscription_tariff_change_preserves_usage_and_trial(monkeypatch):
     """Bug #629889 guardrail: subscription_crud.extend_subscription(tariff_id=..., convert_trial=False)
     must NOT clear is_trial. A free relabel keeps the sub a trial so it stays gated
     out of try_auto_extend_expired_after_topup and never self-renews to a full period.
@@ -51,6 +51,20 @@ async def test_extend_subscription_convert_trial_false_keeps_trial(monkeypatch):
 
     monkeypatch.setattr('app.database.crud.subscription._lock_subscription_row', AsyncMock())
     monkeypatch.setattr('app.database.crud.subscription._housekeep_expired_purchases', AsyncMock())
+    monkeypatch.setattr(
+        'app.database.crud.subscription._get_tariff_whitelist_limit', AsyncMock(return_value=5)
+    )
+    monkeypatch.setattr(
+        'app.database.crud.subscription._apply_base_limit_preserving_active_purchases',
+        AsyncMock(return_value=(0, 20)),
+    )
+    apply_whitelist_limit = AsyncMock()
+    monkeypatch.setattr(
+        'app.database.crud.subscription._apply_whitelist_base_limit_preserving_active_purchases',
+        apply_whitelist_limit,
+    )
+    monkeypatch.setattr(subscription_crud.settings, 'RESET_TRAFFIC_ON_TARIFF_SWITCH', True)
+    monkeypatch.setattr(subscription_crud.settings, 'RESET_TRAFFIC_ON_PAYMENT', True)
     monkeypatch.setattr('app.database.crud.subscription.clear_notifications', AsyncMock())
     monkeypatch.setattr(
         'app.database.crud.tariff.get_tariff_by_id', AsyncMock(return_value=SimpleNamespace(is_daily=False))
@@ -71,18 +85,98 @@ async def test_extend_subscription_convert_trial_false_keeps_trial(monkeypatch):
         end_date=now + timedelta(days=1),
         tariff_id=1,
         traffic_limit_gb=10,
-        traffic_used_gb=0.0,
+        traffic_used_gb=4.5,
+        whitelist_traffic_limit_gb=5,
+        whitelist_traffic_purchased_gb=0,
+        whitelist_traffic_used_bytes=2 * 1024**3,
         device_limit=1,
         connected_squads=[],
         purchased_traffic_gb=0,
         updated_at=now,
     )
 
-    result = await subscription_crud.extend_subscription(db, sub, 14, tariff_id=2, convert_trial=False, commit=False)
+    result = await subscription_crud.extend_subscription(
+        db,
+        sub,
+        14,
+        tariff_id=2,
+        traffic_limit_gb=20,
+        convert_trial=False,
+        commit=False,
+    )
 
     assert result.is_trial is True  # NOT converted on a free relabel
     assert result.tariff_id == 2  # the relabel still applied
+    assert result.traffic_used_gb == 4.5
+    assert result.whitelist_traffic_used_bytes == 2 * 1024**3
+    apply_whitelist_limit.assert_awaited_once()
     deactivate_mock.assert_not_awaited()  # other trials not killed
+
+
+class _ScalarsResult:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+async def test_paid_traffic_addons_are_suspended_not_deleted_on_unlimited_plan(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from app.database.crud.subscription import _apply_base_limit_preserving_active_purchases
+
+    monkeypatch.setattr(subscription_crud, '_lock_subscription_row', AsyncMock())
+    now = datetime.now(UTC)
+    package = SimpleNamespace(traffic_gb=25, expires_at=now + timedelta(days=10))
+    db = SimpleNamespace(execute=AsyncMock(side_effect=[Mock(), _ScalarsResult([package])]))
+    sub = SimpleNamespace(id=3, traffic_limit_gb=100, purchased_traffic_gb=25, traffic_reset_at=package.expires_at)
+
+    assert await _apply_base_limit_preserving_active_purchases(db, sub, 0, now=now) == (25, 0)
+    assert (sub.traffic_limit_gb, sub.purchased_traffic_gb, sub.traffic_reset_at) == (0, 0, None)
+
+    db.execute = AsyncMock(side_effect=[Mock(), _ScalarsResult([package])])
+    assert await _apply_base_limit_preserving_active_purchases(db, sub, 50, now=now) == (25, 75)
+    assert (sub.traffic_limit_gb, sub.purchased_traffic_gb, sub.traffic_reset_at) == (
+        75,
+        25,
+        package.expires_at,
+    )
+
+
+async def test_paid_whitelist_addons_are_suspended_not_deleted_on_non_lte_plan(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from app.database.crud.subscription import _apply_whitelist_base_limit_preserving_active_purchases
+
+    monkeypatch.setattr(subscription_crud, '_lock_subscription_row', AsyncMock())
+    now = datetime.now(UTC)
+    package = SimpleNamespace(traffic_gb=50, expires_at=now + timedelta(days=10))
+    db = SimpleNamespace(execute=AsyncMock(side_effect=[Mock(), _ScalarsResult([package])]))
+    sub = SimpleNamespace(
+        id=3,
+        whitelist_traffic_limit_gb=50,
+        whitelist_traffic_purchased_gb=50,
+        whitelist_traffic_reset_at=package.expires_at,
+    )
+
+    assert await _apply_whitelist_base_limit_preserving_active_purchases(db, sub, 0, now=now) == (50, 0)
+    assert (
+        sub.whitelist_traffic_limit_gb,
+        sub.whitelist_traffic_purchased_gb,
+        sub.whitelist_traffic_reset_at,
+    ) == (0, 0, None)
+
+    db.execute = AsyncMock(side_effect=[Mock(), _ScalarsResult([package])])
+    assert await _apply_whitelist_base_limit_preserving_active_purchases(db, sub, 50, now=now) == (50, 100)
+    assert (
+        sub.whitelist_traffic_limit_gb,
+        sub.whitelist_traffic_purchased_gb,
+        sub.whitelist_traffic_reset_at,
+    ) == (100, 50, package.expires_at)
 
 
 async def test_extend_subscription_default_converts_trial_on_purchase(monkeypatch):

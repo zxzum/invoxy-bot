@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import BroadcastHistory, Subscription, SubscriptionStatus, Tariff, User
-from app.handlers.admin.messages import get_target_users_count
+from app.database.models import BroadcastHistory, CabinetNotification, Subscription, SubscriptionStatus, Tariff, User
+from app.handlers.admin.messages import get_custom_users, get_target_users, get_target_users_count
 from app.keyboards.admin import BROADCAST_BUTTONS, DEFAULT_BROADCAST_BUTTONS
 from app.services.broadcast_service import (
     BroadcastConfig,
@@ -258,6 +258,17 @@ def _validate_target(target: str, tariff_ids: set) -> bool:
     return False
 
 
+async def _get_app_broadcast_recipients(db: AsyncSession, target: str, category: str) -> list[User]:
+    if target.startswith('custom_'):
+        recipients = await get_custom_users(db, target.removeprefix('custom_'))
+    else:
+        recipients = await get_target_users(db, target)
+
+    from app.utils.notification_prefs import filter_users_by_broadcast_category
+
+    return filter_users_by_broadcast_category(recipients, category)
+
+
 def _validate_buttons(buttons: list[str]) -> bool:
     """Validate button keys."""
     return all(button in BROADCAST_BUTTONS for button in buttons)
@@ -388,7 +399,11 @@ async def preview_broadcast(
         )
 
     try:
-        count = await get_target_users_count(db, request.target)
+        if request.channel == 'app':
+            recipients = await _get_app_broadcast_recipients(db, request.target, request.category)
+            count = len(recipients)
+        else:
+            count = await get_target_users_count(db, request.target)
     except Exception as e:
         logger.error('Failed to get count for target', target=request.target, error=e)
         raise HTTPException(
@@ -611,7 +626,7 @@ async def create_combined_broadcast(
     admin_name = admin.username or f'Admin #{admin.id}'
 
     # Validate based on channel
-    if request.channel in ('telegram', 'both'):
+    if request.channel in ('telegram', 'both', 'app'):
         # Validate telegram target
         if not _validate_target(request.target, tariff_ids):
             raise HTTPException(
@@ -623,15 +638,21 @@ async def create_combined_broadcast(
         if not request.message_text or not request.message_text.strip():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Message text is required for Telegram broadcast',
+                detail='Message text is required for broadcast',
+            )
+
+        if request.channel == 'app' and request.media:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Media is not supported for app notifications',
             )
 
         # Та же граница, что у POST '' выше: именно этот эндпоинт использует кабинет.
-        if request.media:
+        if request.media and request.channel in ('telegram', 'both'):
             _ensure_media_caption_fits(request.media.caption or request.message_text.strip())
 
         # Validate buttons
-        if not _validate_buttons(request.selected_buttons):
+        if request.channel in ('telegram', 'both') and not _validate_buttons(request.selected_buttons):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Invalid button key',
@@ -679,6 +700,39 @@ async def create_combined_broadcast(
         email_subject=request.email_subject.strip() if request.email_subject else None,
         email_html_content=request.email_html_content.strip() if request.email_html_content else None,
     )
+
+    if request.channel == 'app':
+        recipients = await _get_app_broadcast_recipients(db, request.target, request.category)
+        now = datetime.now(UTC)
+        broadcast.total_count = len(recipients)
+        broadcast.sent_count = len(recipients)
+        broadcast.status = 'completed'
+        broadcast.created_at = now
+        broadcast.completed_at = now
+        db.add(broadcast)
+        db.add_all(
+            [
+                CabinetNotification(
+                    user_id=recipient.id,
+                    type='broadcast',
+                    title='Сообщение от Invoxy VPN',
+                    body=request.message_text.strip(),
+                    created_at=now,
+                )
+                for recipient in recipients
+            ]
+        )
+        await db.commit()
+        await db.refresh(broadcast)
+        logger.info(
+            'Admin created app notification broadcast',
+            admin_id=admin.id,
+            broadcast_id=broadcast.id,
+            target=request.target,
+            recipient_count=len(recipients),
+        )
+        return _serialize_broadcast(broadcast)
+
     db.add(broadcast)
     await db.commit()
     await db.refresh(broadcast)

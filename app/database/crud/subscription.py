@@ -1095,8 +1095,8 @@ async def _apply_base_limit_preserving_active_purchases(
     у каждого свой срок жизни, и renewal/смена тарифа основной подписки не должна их
     обнулять. Без этого юзер видит «трафик слетел после продления».
 
-    Если `base_limit_gb == 0` (безлимит) — total остаётся 0, докупки не складываются с
-    безлимитом (это семантически не имеет смысла). Истёкшие пакеты всё равно подчищаем.
+    Если `base_limit_gb == 0` (безлимит), активные пакеты остаются в хранилище до
+    своего срока, но не влияют на лимит. При возврате на лимитный тариф они восстановятся.
 
     Возвращает (active_purchased_gb, fresh_total_limit_gb).
     """
@@ -1104,37 +1104,6 @@ async def _apply_base_limit_preserving_active_purchases(
 
     # Lock subscription row — защита от lost update с конкурентным add_subscription_traffic
     await _lock_subscription_row(db, subscription)
-
-    # Безлимит — на безлимитном тарифе докупки не имеют смысла. Удаляем ВСЕ
-    # TrafficPurchase (включая активные), чтобы они не "воскресли" при возврате
-    # на лимитный тариф. Логируем для аудита: если у юзера были оплаченные
-    # активные пакеты, это видно в логе (полезно для решений о компенсации).
-    if base_limit_gb == 0:
-        active_check = await db.execute(
-            select(TrafficPurchase).where(
-                TrafficPurchase.subscription_id == subscription.id,
-                TrafficPurchase.expires_at > now,
-            )
-        )
-        dropped_active = active_check.scalars().all()
-        if dropped_active:
-            logger.warning(
-                '⚠️ Переход на безлимит при активных TrafficPurchase — пакеты удаляются',
-                subscription_id=subscription.id,
-                user_id=subscription.user_id,
-                dropped_count=len(dropped_active),
-                dropped_total_gb=sum(p.traffic_gb for p in dropped_active),
-                dropped_ids=[p.id for p in dropped_active],
-            )
-        await db.execute(
-            delete(TrafficPurchase)
-            .where(TrafficPurchase.subscription_id == subscription.id)
-            .execution_options(synchronize_session='fetch')
-        )
-        subscription.traffic_limit_gb = 0
-        subscription.purchased_traffic_gb = 0
-        subscription.traffic_reset_at = None
-        return 0, 0
 
     await db.execute(
         delete(TrafficPurchase)
@@ -1154,6 +1123,13 @@ async def _apply_base_limit_preserving_active_purchases(
 
     purchased_gb = sum(p.traffic_gb for p in active_packages) if active_packages else 0
     nearest_expiry = min((p.expires_at for p in active_packages), default=None)
+
+    if base_limit_gb == 0:
+        # Unlimited plans suspend active top-ups instead of voiding paid data.
+        subscription.traffic_limit_gb = 0
+        subscription.purchased_traffic_gb = 0
+        subscription.traffic_reset_at = None
+        return purchased_gb, 0
 
     subscription.traffic_limit_gb = base_limit_gb + purchased_gb
     subscription.purchased_traffic_gb = purchased_gb
@@ -1224,6 +1200,12 @@ async def _apply_whitelist_base_limit_preserving_active_purchases(
     )
     active_packages = active_result.scalars().all()
     purchased_gb = sum(p.traffic_gb for p in active_packages) if active_packages else 0
+    if base_limit_gb <= 0:
+        subscription.whitelist_traffic_limit_gb = 0
+        subscription.whitelist_traffic_purchased_gb = 0
+        subscription.whitelist_traffic_reset_at = None
+        return purchased_gb, 0
+
     subscription.whitelist_traffic_limit_gb = max(0, base_limit_gb) + purchased_gb
     subscription.whitelist_traffic_purchased_gb = purchased_gb
     subscription.whitelist_traffic_reset_at = min(
@@ -1443,11 +1425,8 @@ async def extend_subscription(
 
     if traffic_limit_gb is not None:
         old_traffic = subscription.traffic_limit_gb
-        # Сброс использованного трафика: при смене тарифа — по настройке, при продлении — всегда
-        if is_tariff_change:
-            if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
-                subscription.traffic_used_gb = 0.0
-        else:
+        # Смена тарифа меняет лимит, но не покупает новый пакет трафика.
+        if not is_tariff_change:
             subscription.traffic_used_gb = 0.0
 
         if is_tariff_change or was_expired:
@@ -1481,7 +1460,7 @@ async def extend_subscription(
                 preserved_purchased=purchased,
             )
             _housekeeping_done = True
-    elif settings.RESET_TRAFFIC_ON_PAYMENT:
+    elif settings.RESET_TRAFFIC_ON_PAYMENT and not is_tariff_change:
         subscription.traffic_used_gb = 0.0
         if subscription.tariff_id is None or was_expired:
             # Истекают только истёкшие пакеты, активные сохраняются.
@@ -1579,12 +1558,11 @@ async def extend_subscription(
             _housekeeping_done = True
 
     # Локальный WHITELIST-счётчик живёт отдельно от RemnaWave trafficLimitBytes.
-    # При платном продлении/смене тарифа обновляем базу, сохраняя активные
-    # отдельные покупки, и сбрасываем текущий расход вместе с месячным baseline.
+    # При платном продлении/смене тарифа обновляем базу и сохраняем активные
+    # отдельные покупки. Смена тарифа сохраняет месячный LTE-расход.
     if days > 0 and subscription.tariff_id is not None and whitelist_base_limit is not None:
         should_reset_whitelist_usage = (
-            (is_tariff_change and settings.RESET_TRAFFIC_ON_TARIFF_SWITCH)
-            or (not is_tariff_change and settings.RESET_TRAFFIC_ON_PAYMENT)
+            not is_tariff_change and settings.RESET_TRAFFIC_ON_PAYMENT
         )
         current_whitelist_limit = getattr(subscription, 'whitelist_traffic_limit_gb', 0)
         current_whitelist_purchased = getattr(subscription, 'whitelist_traffic_purchased_gb', 0)
@@ -2005,6 +1983,141 @@ async def reset_whitelist_subscription_traffic(
         'new_used_gb': new_used_gb,
         'limit_gb': limit_gb,
         'price_kopeks': getattr(tariff, 'whitelist_reset_price_kopeks', 15000) if tariff else 15000,
+    })
+
+
+class ResetMainTrafficResult(dict):
+    """Wrapper to support both dict access and tuple unpacking (cleared_gb, new_used_gb)."""
+
+    def __iter__(self):
+        yield self['cleared_gb']
+        yield self['new_used_gb']
+
+
+async def reset_main_subscription_traffic(
+    db: AsyncSession | object = None,
+    subscription: Subscription | None = None,
+    *,
+    session: AsyncSession | None = None,
+    subscription_id: int | None = None,
+    user_id: int | None = None,
+    commit: bool = True,
+    now: datetime | None = None,
+) -> ResetMainTrafficResult:
+    """Reset main traffic usage to 0.0 GB and update panel.
+
+    Returns:
+        ResetMainTrafficResult (dict with tuple unpacking of (cleared_gb, new_used_gb))
+    """
+    db = session or db
+    now = now or datetime.now(UTC)
+
+    locked_sub = await _lock_subscription_row(db, subscription)
+    if locked_sub is not None:
+        subscription = locked_sub
+
+    if subscription is None:
+        if subscription_id is not None and hasattr(db, 'execute'):
+            from app.database.crud.subscription import get_subscription_by_id_for_user
+
+            try:
+                subscription = await get_subscription_by_id_for_user(db, subscription_id, user_id=user_id)
+            except Exception:
+                pass
+
+    if subscription is None:
+        raise ValueError('Subscription not found')
+
+    tariff = getattr(subscription, 'tariff', None)
+    if tariff is None and getattr(subscription, 'tariff_id', None) is not None and hasattr(db, 'execute'):
+        from app.database.crud.tariff import get_tariff_by_id
+
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+
+    used_gb = round(float(getattr(subscription, 'traffic_used_gb', 0.0) or 0.0), 2)
+    min_used_gb = int(getattr(tariff, 'main_traffic_reset_min_used_gb', 100) or 100) if tariff else 100
+    if used_gb < min_used_gb:
+        raise ValueError('below_min_used')
+
+    max_per_month = int(getattr(tariff, 'main_traffic_reset_max_per_month', 0) or 0) if tariff else 0
+    from app.utils.traffic_topup_limits import get_local_month_period_key
+
+    current_period = get_local_month_period_key(now)
+    used_this_month = (
+        subscription.main_reset_count
+        if getattr(subscription, 'main_reset_period_key', None) == current_period
+        else 0
+    )
+    if max_per_month > 0 and used_this_month >= max_per_month:
+        raise ValueError('monthly_limit_exceeded')
+
+    cleared_gb = used_gb
+    subscription.traffic_used_gb = 0.0
+
+    if getattr(subscription, 'main_reset_period_key', None) != current_period:
+        subscription.main_reset_period_key = current_period
+        subscription.main_reset_count = 1
+    else:
+        subscription.main_reset_count = (subscription.main_reset_count or 0) + 1
+
+    # Reactivate if status is LIMITED
+    if getattr(subscription, 'status', None) in ('limited', SubscriptionStatus.LIMITED.value):
+        subscription.status = SubscriptionStatus.ACTIVE.value
+
+    subscription.updated_at = now
+
+    if commit and hasattr(db, 'commit'):
+        await db.commit()
+        if hasattr(db, 'refresh'):
+            await db.refresh(subscription)
+    elif hasattr(db, 'flush'):
+        await db.flush()
+
+    # Call RemnaWave API to reset traffic in panel
+    panel_user_id = getattr(subscription, 'remnawave_id', None)
+    if not panel_user_id and not settings.is_multi_tariff_enabled():
+        panel_user_id = getattr(getattr(subscription, 'user', None), 'remnawave_id', None)
+
+    try:
+        from app.services.remnawave_service import RemnaWaveService
+
+        remnawave = RemnaWaveService()
+        if remnawave.is_configured:
+            async with remnawave.get_api_client() as api:
+                if not panel_user_id:
+                    _short_uuid = (getattr(subscription, 'remnawave_short_uuid', None) or '').strip()
+                    if _short_uuid:
+                        _adopted = await api.get_user_by_short_uuid(_short_uuid)
+                        if _adopted is not None:
+                            panel_user_id = _adopted.id
+                            subscription.remnawave_id = _adopted.id
+                if panel_user_id:
+                    await api.reset_user_traffic(panel_user_id)
+                else:
+                    logger.warning(
+                        'Panel user ID not found for main traffic reset',
+                        subscription_id=getattr(subscription, 'id', None),
+                    )
+    except Exception as exc:
+        logger.warning(
+            'Failed to reset RemnaWave user traffic in panel (non-fatal)',
+            subscription_id=getattr(subscription, 'id', None),
+            error=str(exc),
+        )
+
+    limit_gb = getattr(subscription, 'traffic_limit_gb', 0) or 0
+    price_kopeks = (
+        tariff.get_main_traffic_reset_price_kopeks(30)
+        if tariff and hasattr(tariff, 'get_main_traffic_reset_price_kopeks')
+        else 0
+    )
+
+    return ResetMainTrafficResult({
+        'success': True,
+        'cleared_gb': cleared_gb,
+        'new_used_gb': 0.0,
+        'limit_gb': limit_gb,
+        'price_kopeks': price_kopeks,
     })
 
 

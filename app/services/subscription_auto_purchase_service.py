@@ -2364,13 +2364,109 @@ async def _auto_reset_traffic(
     if not tariff and subscription.tariff_id:
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
 
+    now = datetime.now(UTC)
+    current_period = get_local_month_period_key(now)
+    scope = cart_data.get('scope', 'whitelist')
+
+    if scope == 'regular':
+        can_reset = bool(
+            tariff and (
+                getattr(tariff, 'can_reset_main_traffic', lambda: getattr(tariff, 'main_traffic_reset_enabled', True))()
+                if callable(getattr(tariff, 'can_reset_main_traffic', None))
+                else getattr(tariff, 'main_traffic_reset_enabled', True)
+            )
+        )
+        if not tariff or not can_reset:
+            logger.warning('Автопокупка traffic_reset: сброс основного трафика выключен на тарифе', user_id=user.id)
+            await _delete_cart_for_subscription(user.id, cart_data)
+            return False
+
+        max_per_month = int(getattr(tariff, 'main_traffic_reset_max_per_month', 0) or 0)
+        used_this_month = (
+            subscription.main_reset_count
+            if getattr(subscription, 'main_reset_period_key', None) == current_period
+            else 0
+        )
+        if max_per_month > 0 and used_this_month >= max_per_month:
+            logger.warning('Автопокупка traffic_reset: месячный лимит основного трафика исчерпан', user_id=user.id)
+            await _delete_cart_for_subscription(user.id, cart_data)
+            return False
+
+        used_gb = round(float(getattr(subscription, 'traffic_used_gb', 0.0) or 0.0), 2)
+        min_used_gb = int(getattr(tariff, 'main_traffic_reset_min_used_gb', 100) or 100)
+        if used_gb < min_used_gb:
+            logger.warning('Автопокупка traffic_reset: расход меньше min_used_gb', user_id=user.id, used_gb=used_gb)
+            await _delete_cart_for_subscription(user.id, cart_data)
+            return False
+
+        user = await lock_user_for_pricing(db, user.id)
+
+        base_price = int(
+            tariff.get_main_traffic_reset_price_kopeks(30)
+            if hasattr(tariff, 'get_main_traffic_reset_price_kopeks')
+            else (
+                getattr(tariff, 'main_traffic_reset_price_kopeks', None)
+                or (tariff.get_price_for_period(30) if hasattr(tariff, 'get_price_for_period') else 0)
+                or 0
+            )
+        )
+        discount_result = _apply_addon_discount(user, 'traffic', base_price, 30)
+        final_price = discount_result['discounted']
+        if 0 < discount_result['percent'] < 100 and final_price > 0:
+            final_price = max(100, final_price)
+
+        if user.balance_kopeks < final_price:
+            logger.info(
+                'Автопокупка traffic_reset: недостаточно средств',
+                user_id=user.id,
+                balance=user.balance_kopeks,
+                price=final_price,
+            )
+            return False
+
+        description = f'Сброс {used_gb} ГБ основного трафика'
+        success = await subtract_user_balance(db, user, final_price, description, commit=False)
+        if not success:
+            return False
+
+        await create_transaction(
+            db=db,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=final_price,
+            description=description,
+            commit=False,
+        )
+
+        from app.database.crud.subscription import reset_main_subscription_traffic
+
+        reset_res = await reset_main_subscription_traffic(
+            db,
+            subscription,
+            commit=True,
+            now=now,
+        )
+        cleared_gb = reset_res['cleared_gb']
+
+        await _delete_cart_for_subscription(user.id, cart_data)
+
+        try:
+            await notify_telegram_user_about_cabinet_purchase(
+                user,
+                f'✅ <b>Основной трафик сброшен!</b>\n\n'
+                f'📉 Списано расхода: {cleared_gb} ГБ (обнуление до 0)\n'
+                f'💰 Списано: {settings.format_price(final_price)}',
+            )
+        except Exception as e:
+            logger.warning('Failed to notify user about auto-purchase main traffic reset', error=e)
+
+        logger.info('✅ Автопокупка regular traffic_reset успешно выполнена', user_id=user.id, subscription_id=subscription.id)
+        return True
+
     if not tariff or not getattr(tariff, 'can_reset_whitelist_traffic', lambda: False)():
         logger.warning('Автопокупка traffic_reset: сброс выключен на тарифе', user_id=user.id)
         await _delete_cart_for_subscription(user.id, cart_data)
         return False
-
-    now = datetime.now(UTC)
-    current_period = get_local_month_period_key(now)
     used_this_month = (
         subscription.whitelist_reset_count
         if subscription.whitelist_reset_period_key == current_period

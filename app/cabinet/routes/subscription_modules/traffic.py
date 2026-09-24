@@ -80,10 +80,110 @@ def build_traffic_reset_status(
     sub: object | None = None,
     used_this_month: int | None = None,
     now: datetime | None = None,
+    scope: Literal['whitelist', 'regular'] = 'whitelist',
 ) -> TrafficResetStatusResponse:
-    """Build standardized status and calculations for LTE traffic reset."""
+    """Build standardized status and calculations for LTE or regular traffic reset."""
     subscription = subscription or sub
     now = now or datetime.now(UTC)
+
+    if scope == 'regular':
+        can_reset = bool(
+            tariff and (
+                getattr(tariff, 'can_reset_main_traffic', lambda: getattr(tariff, 'main_traffic_reset_enabled', True))()
+                if callable(getattr(tariff, 'can_reset_main_traffic', None))
+                else getattr(tariff, 'main_traffic_reset_enabled', True)
+            )
+        )
+        if not subscription or not tariff or not can_reset:
+            used_gb = round(float(getattr(subscription, 'traffic_used_gb', 0.0) or 0.0), 2) if subscription else 0.0
+            limit_gb = int(getattr(subscription, 'traffic_limit_gb', 0) or 0) if subscription else 0
+            return TrafficResetStatusResponse(
+                enabled=False,
+                chunk_gb=limit_gb,
+                price_kopeks=0,
+                price_rubles=0.0,
+                min_used_gb=100,
+                used_gb=used_gb,
+                limit_gb=limit_gb,
+                will_clear_gb=0.0,
+                used_after_gb=used_gb,
+                max_per_month=0,
+                used_this_month=0,
+                remaining_this_month=0,
+                next_available_at=None,
+                unavailable_reason='disabled',
+                exhausted=bool(limit_gb > 0 and used_gb >= limit_gb),
+            )
+
+        min_used_gb = int(getattr(tariff, 'main_traffic_reset_min_used_gb', 100) or 100)
+        max_per_month = int(getattr(tariff, 'main_traffic_reset_max_per_month', 0) or 0)
+        base_price_kopeks = int(
+            tariff.get_main_traffic_reset_price_kopeks(30)
+            if hasattr(tariff, 'get_main_traffic_reset_price_kopeks')
+            else (
+                getattr(tariff, 'main_traffic_reset_price_kopeks', None)
+                or (tariff.get_price_for_period(30) if hasattr(tariff, 'get_price_for_period') else 0)
+                or 0
+            )
+        )
+
+        used_gb = round(float(getattr(subscription, 'traffic_used_gb', 0.0) or 0.0), 2)
+        limit_gb = int(getattr(subscription, 'traffic_limit_gb', 0) or 0)
+        chunk_gb = limit_gb
+        will_clear_gb = used_gb
+        used_after_gb = 0.0
+
+        if used_this_month is None:
+            current_period = get_local_month_period_key(now)
+            if getattr(subscription, 'main_reset_period_key', None) == current_period:
+                used_this_month = int(getattr(subscription, 'main_reset_count', 0) or 0)
+            else:
+                used_this_month = 0
+
+        remaining_this_month = max(0, max_per_month - used_this_month) if max_per_month > 0 else 999
+        exhausted = bool(limit_gb > 0 and used_gb >= limit_gb)
+
+        # Promo discount calculation (category: 'traffic')
+        if user is not None:
+            discount_result = _apply_addon_discount(user, 'traffic', base_price_kopeks, 30)
+            final_price_kopeks = discount_result['discounted']
+            discount_percent = discount_result['percent']
+            if 0 < discount_percent < 100 and final_price_kopeks > 0:
+                final_price_kopeks = max(100, final_price_kopeks)
+        else:
+            final_price_kopeks = base_price_kopeks
+            discount_percent = 0
+
+        if max_per_month > 0 and remaining_this_month <= 0:
+            unavailable_reason = 'monthly_limit'
+            next_available_at = get_next_local_month_start_utc(now)
+        elif used_gb < min_used_gb:
+            unavailable_reason = 'below_min_used'
+            next_available_at = None
+        else:
+            unavailable_reason = None
+            next_available_at = None
+
+        return TrafficResetStatusResponse(
+            enabled=True,
+            chunk_gb=chunk_gb,
+            price_kopeks=final_price_kopeks,
+            price_rubles=final_price_kopeks / 100,
+            base_price_kopeks=base_price_kopeks if discount_percent > 0 else None,
+            discount_percent=discount_percent,
+            min_used_gb=min_used_gb,
+            used_gb=used_gb,
+            limit_gb=limit_gb,
+            will_clear_gb=will_clear_gb,
+            used_after_gb=used_after_gb,
+            max_per_month=max_per_month,
+            used_this_month=used_this_month,
+            remaining_this_month=remaining_this_month,
+            next_available_at=next_available_at,
+            unavailable_reason=unavailable_reason,
+            exhausted=exhausted,
+        )
+
     can_reset = bool(
         tariff and getattr(tariff, 'can_reset_whitelist_traffic', lambda: False)()
     )
@@ -821,9 +921,10 @@ async def get_traffic_reset(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
     subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+    scope: Literal['whitelist', 'regular'] = QueryParam('whitelist', description='Scope: whitelist or regular'),
     session: Any = Depends(lambda: None),
 ):
-    """Get status and calculations for LTE (White Internet) traffic reset."""
+    """Get status and calculations for LTE (White Internet) or regular traffic reset."""
     db = session or db
     subscription = await _get_single_active_subscription(db, user.id)
     if not subscription:
@@ -839,7 +940,7 @@ async def get_traffic_reset(
 
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
 
-    return build_traffic_reset_status(subscription, tariff, user)
+    return build_traffic_reset_status(subscription, tariff, user, scope=scope)
 
 
 @router.post('/traffic-reset', response_model=TrafficResetResponse)
@@ -847,9 +948,10 @@ async def perform_traffic_reset(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
     subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+    scope: Literal['whitelist', 'regular'] = QueryParam('whitelist', description='Scope: whitelist or regular'),
     session: Any = Depends(lambda: None),
 ):
-    """Reset LTE traffic usage by up to 50 GB."""
+    """Reset LTE or main traffic usage."""
     db = session or db
     if getattr(user, 'restriction_subscription', False):
         raise HTTPException(
@@ -872,6 +974,154 @@ async def perform_traffic_reset(
     if subscription.tariff_id:
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
 
+    now = datetime.now(UTC)
+    current_period = get_local_month_period_key(now)
+
+    if scope == 'regular':
+        can_reset = bool(
+            tariff and (
+                getattr(tariff, 'can_reset_main_traffic', lambda: getattr(tariff, 'main_traffic_reset_enabled', True))()
+                if callable(getattr(tariff, 'can_reset_main_traffic', None))
+                else getattr(tariff, 'main_traffic_reset_enabled', True)
+            )
+        )
+        if not tariff or not can_reset:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    'code': 'reset_disabled',
+                    'message': 'Сброс основного трафика недоступен для этого тарифа',
+                },
+            )
+
+        max_per_month = int(getattr(tariff, 'main_traffic_reset_max_per_month', 0) or 0)
+        used_this_month = (
+            subscription.main_reset_count
+            if getattr(subscription, 'main_reset_period_key', None) == current_period
+            else 0
+        )
+        if max_per_month > 0 and used_this_month >= max_per_month:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    'code': 'monthly_limit',
+                    'message': 'Лимит сбросов трафика на этот месяц исчерпан',
+                },
+            )
+
+        used_gb = round(float(getattr(subscription, 'traffic_used_gb', 0.0) or 0.0), 2)
+        min_used_gb = int(getattr(tariff, 'main_traffic_reset_min_used_gb', 100) or 100)
+        if used_gb < min_used_gb:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    'code': 'below_min_used',
+                    'message': f'Сброс доступен после {min_used_gb} ГБ расхода трафика',
+                },
+            )
+
+        base_price_kopeks = int(
+            tariff.get_main_traffic_reset_price_kopeks(30)
+            if hasattr(tariff, 'get_main_traffic_reset_price_kopeks')
+            else (
+                getattr(tariff, 'main_traffic_reset_price_kopeks', None)
+                or (tariff.get_price_for_period(30) if hasattr(tariff, 'get_price_for_period') else 0)
+                or 0
+            )
+        )
+        discount_result = _apply_addon_discount(user, 'traffic', base_price_kopeks, 30)
+        final_price = discount_result['discounted']
+        if 0 < discount_result['percent'] < 100 and final_price > 0:
+            final_price = max(100, final_price)
+
+        from app.database.crud.user import lock_user_for_pricing
+
+        user = await lock_user_for_pricing(db, user.id)
+
+        if final_price > 0 and user.balance_kopeks < final_price:
+            missing = final_price - user.balance_kopeks
+            cart_data = {
+                'cart_mode': 'traffic_reset',
+                'scope': 'regular',
+                'subscription_id': subscription.id,
+                'price_kopeks': final_price,
+            }
+            try:
+                await user_cart_service.save_cart(user.id, cart_data)
+            except Exception as e:
+                logger.error('Error saving cart for traffic_reset', error=e)
+
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={
+                    'code': 'insufficient_funds',
+                    'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
+                    'missing_amount': missing,
+                    'cart_saved': True,
+                    'cart_mode': 'traffic_reset',
+                },
+            )
+
+        description = f'Сброс {used_gb} ГБ основного трафика'
+        success = await subtract_user_balance(db, user, final_price, description, commit=False)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail='Failed to charge balance',
+            )
+
+        await create_transaction(
+            db=db,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=final_price,
+            description=description,
+            commit=False,
+        )
+
+        from app.database.crud.subscription import reset_main_subscription_traffic
+
+        reset_res = await reset_main_subscription_traffic(
+            db,
+            subscription,
+            commit=True,
+            now=now,
+        )
+        cleared_gb = reset_res['cleared_gb']
+
+        try:
+            await user_cart_service.delete_cart(user.id)
+        except Exception:
+            pass
+
+        try:
+            await notify_telegram_user_about_cabinet_purchase(
+                user,
+                f'✅ <b>Основной трафик сброшен!</b>\n\n'
+                f'📉 Списано расхода: {cleared_gb} ГБ (обнуление до 0)\n'
+                f'💰 Списано: {settings.format_price(final_price)}',
+            )
+        except Exception as e:
+            logger.warning('Failed to notify telegram user about main traffic reset', error=e)
+
+        remaining_resets = (
+            max(0, max_per_month - (subscription.main_reset_count or 0))
+            if max_per_month > 0
+            else 999
+        )
+        return TrafficResetResponse(
+            success=True,
+            cleared_gb=cleared_gb,
+            new_used_gb=0.0,
+            used_after_gb=0.0,
+            limit_gb=subscription.traffic_limit_gb or 0,
+            remaining_this_month=remaining_resets,
+            max_per_month=max_per_month,
+            price_kopeks=final_price,
+            amount_paid_kopeks=final_price,
+            message=f'Сброшено {cleared_gb} ГБ основного трафика',
+        )
+
     if not tariff or not getattr(tariff, 'can_reset_whitelist_traffic', lambda: False)():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -881,8 +1131,6 @@ async def perform_traffic_reset(
             },
         )
 
-    now = datetime.now(UTC)
-    current_period = get_local_month_period_key(now)
     used_this_month = (
         subscription.whitelist_reset_count
         if subscription.whitelist_reset_period_key == current_period
@@ -925,6 +1173,7 @@ async def perform_traffic_reset(
         missing = final_price - user.balance_kopeks
         cart_data = {
             'cart_mode': 'traffic_reset',
+            'scope': 'whitelist',
             'subscription_id': subscription.id,
             'price_kopeks': final_price,
         }
@@ -1009,12 +1258,14 @@ async def save_traffic_reset_cart(
     request: TrafficResetSaveCartRequest | None = None,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
+    scope: Literal['whitelist', 'regular'] = QueryParam('whitelist'),
     session: Any = Depends(lambda: None),
     payload: Any = Depends(lambda: None),
 ):
-    """Explicitly save an LTE traffic reset cart for auto-purchase."""
+    """Explicitly save an LTE or main traffic reset cart for auto-purchase."""
     req = request or payload or TrafficResetSaveCartRequest()
     db = session or db
+    effective_scope = getattr(req, 'scope', None) or (payload.scope if hasattr(payload, 'scope') else None) or scope or 'whitelist'
 
     subscription = await _get_single_active_subscription(db, user.id)
     if not subscription:
@@ -1026,10 +1277,32 @@ async def save_traffic_reset_cart(
     if not tariff and subscription.tariff_id:
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
 
-    if not tariff or not getattr(tariff, 'can_reset_whitelist_traffic', lambda: False)():
-        raise HTTPException(status_code=400, detail='Traffic reset not enabled for this tariff')
+    if effective_scope == 'regular':
+        can_reset = bool(
+            tariff and (
+                getattr(tariff, 'can_reset_main_traffic', lambda: getattr(tariff, 'main_traffic_reset_enabled', True))()
+                if callable(getattr(tariff, 'can_reset_main_traffic', None))
+                else getattr(tariff, 'main_traffic_reset_enabled', True)
+            )
+        )
+        if not tariff or not can_reset:
+            raise HTTPException(status_code=400, detail='Traffic reset not enabled for this tariff')
 
-    base_price = tariff.whitelist_reset_price_kopeks or 15000
+        base_price = int(
+            tariff.get_main_traffic_reset_price_kopeks(30)
+            if hasattr(tariff, 'get_main_traffic_reset_price_kopeks')
+            else (
+                getattr(tariff, 'main_traffic_reset_price_kopeks', None)
+                or (tariff.get_price_for_period(30) if hasattr(tariff, 'get_price_for_period') else 0)
+                or 0
+            )
+        )
+    else:
+        if not tariff or not getattr(tariff, 'can_reset_whitelist_traffic', lambda: False)():
+            raise HTTPException(status_code=400, detail='Traffic reset not enabled for this tariff')
+
+        base_price = tariff.whitelist_reset_price_kopeks or 15000
+
     discount_result = _apply_addon_discount(user, 'traffic', base_price, 30)
     final_price = discount_result['discounted']
     if 0 < discount_result['percent'] < 100 and final_price > 0:
@@ -1037,6 +1310,7 @@ async def save_traffic_reset_cart(
 
     cart_data = {
         'cart_mode': 'traffic_reset',
+        'scope': effective_scope,
         'subscription_id': subscription.id,
         'price_kopeks': final_price,
     }
@@ -1046,6 +1320,7 @@ async def save_traffic_reset_cart(
         'success': True,
         'cart_saved': True,
         'cart_mode': 'traffic_reset',
+        'scope': effective_scope,
         'price_kopeks': final_price,
     }
 

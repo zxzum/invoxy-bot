@@ -63,6 +63,7 @@ class SubscriptionData(BaseModel):
     tariff_id: int | None = None
     tariff_name: str | None = None
     traffic_reset_mode: str | None = None
+    main_traffic_reset_enabled: bool = True
 
     class Config:
         from_attributes = True
@@ -169,9 +170,10 @@ class TrafficResetResponse(BaseModel):
 
 
 class TrafficResetSaveCartRequest(BaseModel):
-    """Request to save an LTE traffic reset cart for auto-purchase."""
+    """Request to save an LTE or main traffic reset cart for auto-purchase."""
 
     subscription_id: int | None = None
+    scope: Literal['whitelist', 'regular'] = 'whitelist'
 
 
 class TrafficPurchaseRequest(BaseModel):

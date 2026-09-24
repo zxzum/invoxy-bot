@@ -10,7 +10,7 @@ from .media import TELEGRAM_FILE_ID_PATTERN
 
 # ============ Channel Types ============
 
-BroadcastChannel = Literal['telegram', 'email', 'both']
+BroadcastChannel = Literal['telegram', 'email', 'both', 'app']
 
 
 # ============ Filters ============
@@ -180,6 +180,8 @@ class BroadcastPreviewRequest(BaseModel):
     """Request to preview broadcast recipients count."""
 
     target: str
+    channel: BroadcastChannel | None = None
+    category: Literal['system', 'news', 'promo'] = 'system'
 
 
 class BroadcastPreviewResponse(BaseModel):
@@ -212,7 +214,7 @@ class EmailFiltersResponse(BaseModel):
 
 
 class CombinedBroadcastCreateRequest(BaseModel):
-    """Request to create a combined (telegram/email/both) broadcast."""
+    """Request to create a Telegram, email, or in-app broadcast."""
 
     channel: BroadcastChannel
     target: str

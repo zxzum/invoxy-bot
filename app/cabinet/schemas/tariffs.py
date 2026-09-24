@@ -97,6 +97,10 @@ class TariffDetailResponse(BaseModel):
     whitelist_reset_price_kopeks: int = 15000
     whitelist_reset_min_used_gb: int = 10
     whitelist_reset_max_per_month: int = 0
+    main_traffic_reset_enabled: bool = True
+    main_traffic_reset_price_kopeks: int | None = None
+    main_traffic_reset_min_used_gb: int = 100
+    main_traffic_reset_max_per_month: int = 0
     whitelist_traffic_topup_enabled: bool = False
     whitelist_traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
     traffic_limit_gb: int
@@ -169,6 +173,10 @@ class TariffCreateRequest(BaseModel):
     whitelist_reset_price_kopeks: int = Field(15000, ge=0)
     whitelist_reset_min_used_gb: int = Field(10, ge=0)
     whitelist_reset_max_per_month: int = Field(0, ge=0)
+    main_traffic_reset_enabled: bool = True
+    main_traffic_reset_price_kopeks: int | None = Field(None, ge=0)
+    main_traffic_reset_min_used_gb: int = Field(100, ge=0)
+    main_traffic_reset_max_per_month: int = Field(0, ge=0)
     whitelist_traffic_limit_gb: int = Field(0, ge=0)
     whitelist_traffic_topup_enabled: bool = False
     whitelist_traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
@@ -224,6 +232,10 @@ class TariffUpdateRequest(BaseModel):
     whitelist_reset_price_kopeks: int | None = Field(None, ge=0)
     whitelist_reset_min_used_gb: int | None = Field(None, ge=0)
     whitelist_reset_max_per_month: int | None = Field(None, ge=0)
+    main_traffic_reset_enabled: bool | None = None
+    main_traffic_reset_price_kopeks: int | None = Field(None, ge=0)
+    main_traffic_reset_min_used_gb: int | None = Field(None, ge=0)
+    main_traffic_reset_max_per_month: int | None = Field(None, ge=0)
     whitelist_traffic_limit_gb: int | None = Field(None, ge=0)
     whitelist_traffic_topup_enabled: bool | None = None
     whitelist_traffic_topup_packages: dict[str, int] | None = None

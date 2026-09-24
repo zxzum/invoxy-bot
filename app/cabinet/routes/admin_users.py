@@ -2191,6 +2191,113 @@ async def update_user_subscription(
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
+    if request.action == 'adjust_whitelist_used':
+        if request.whitelist_traffic_used_gb is None and request.whitelist_traffic_delta_gb is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Either whitelist_traffic_used_gb or whitelist_traffic_delta_gb is required',
+            )
+
+        if request.whitelist_traffic_used_gb is not None:
+            new_used_bytes = max(0, int(request.whitelist_traffic_used_gb * (1024**3)))
+        else:
+            delta_bytes = int(request.whitelist_traffic_delta_gb * (1024**3))
+            new_used_bytes = max(0, int((subscription.whitelist_traffic_used_bytes or 0) + delta_bytes))
+
+        subscription.whitelist_traffic_used_bytes = new_used_bytes
+        subscription.updated_at = datetime.now(UTC)
+
+        from app.database.models import WhitelistTrafficUsageSnapshot
+        from app.utils.traffic_topup_limits import get_local_month_period_key
+
+        current_period = get_local_month_period_key(datetime.now(UTC))
+        snap_res = await db.execute(
+            select(WhitelistTrafficUsageSnapshot).where(
+                WhitelistTrafficUsageSnapshot.subscription_id == subscription.id,
+                WhitelistTrafficUsageSnapshot.period_key == current_period,
+            )
+        )
+        snapshot = snap_res.scalar_one_or_none()
+        if snapshot is None:
+            sub_panel_id = getattr(subscription, 'remnawave_id', None)
+            panel_user_id = (
+                sub_panel_id
+                if settings.is_multi_tariff_enabled()
+                else (sub_panel_id or getattr(user, 'remnawave_id', None))
+            )
+            db.add(
+                WhitelistTrafficUsageSnapshot(
+                    subscription_id=subscription.id,
+                    panel_user_id=int(panel_user_id) if panel_user_id else 0,
+                    period_key=current_period,
+                    measured_bytes=0,
+                    sampled_at=datetime.now(UTC),
+                )
+            )
+
+        await db.commit()
+        await db.refresh(subscription)
+
+        # Sync squads immediately to RemnaWave panel
+        await _sync_whitelist_squads_to_panel(subscription, user)
+
+        logger.info(
+            'Admin adjusted whitelist traffic used for user',
+            admin_id=admin.id,
+            user_id=user_id,
+            subscription_id=subscription.id,
+            new_used_bytes=new_used_bytes,
+        )
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message=f'White Internet traffic usage updated to {new_used_bytes / (1024**3):.2f} GB',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
+    if request.action in ('reset_main_traffic', 'reset_traffic'):
+        sub_panel_id = getattr(subscription, 'remnawave_id', None)
+        panel_user_id = (
+            sub_panel_id
+            if settings.is_multi_tariff_enabled()
+            else (sub_panel_id or getattr(user, 'remnawave_id', None))
+        )
+        if panel_user_id:
+            try:
+                from app.services.remnawave_service import RemnaWaveService
+
+                remnawave = RemnaWaveService()
+                if remnawave.is_configured:
+                    async with remnawave.get_api_client() as api:
+                        await api.reset_user_traffic(panel_user_id)
+                        if subscription.status == SubscriptionStatus.LIMITED.value:
+                            try:
+                                await api.enable_user(panel_user_id)
+                            except Exception as enable_err:
+                                logger.warning(
+                                    'Failed to enable user in panel during traffic reset', error=str(enable_err)
+                                )
+            except Exception as reset_exc:
+                logger.warning('Failed to reset RemnaWave traffic in panel', error=str(reset_exc))
+
+        subscription.traffic_used_gb = 0.0
+        if subscription.status == SubscriptionStatus.LIMITED.value:
+            subscription.status = SubscriptionStatus.ACTIVE.value
+        subscription.updated_at = datetime.now(UTC)
+        await db.commit()
+        await db.refresh(subscription)
+        logger.info(
+            'Admin reset main traffic for user',
+            admin_id=admin.id,
+            user_id=user_id,
+            subscription_id=subscription.id,
+        )
+        return UpdateSubscriptionResponse(
+            success=True,
+            message='Main traffic usage reset to 0 in database and RemnaWave',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
     if request.action == 'set_device_limit':
         if request.device_limit is None:
             raise HTTPException(

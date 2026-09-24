@@ -1,8 +1,10 @@
 """Authentication schemas for cabinet."""
 
+import unicodedata
 from datetime import datetime
+from itertools import pairwise
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class TelegramAuthRequest(BaseModel):
@@ -159,6 +161,35 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class UpdateMyNameRequest(BaseModel):
+    first_name: str = Field(..., min_length=2, max_length=32)
+
+    @field_validator('first_name', mode='before')
+    @classmethod
+    def validate_first_name(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError('Имя должно быть текстом')
+        name = unicodedata.normalize('NFC', ' '.join(value.split()))
+        separators = " -'’"
+        if (
+            not 2 <= len(name) <= 32
+            or not name[0].isalpha()
+            or not name[-1].isalpha()
+            or any(left in separators and right in separators for left, right in pairwise(name))
+            or any(
+                char not in separators and not char.isalpha() and not unicodedata.category(char).startswith('M')
+                for char in name
+            )
+            or any(
+                unicodedata.category(char).startswith('M')
+                and (i == 0 or not (name[i - 1].isalpha() or unicodedata.category(name[i - 1]).startswith('M')))
+                for i, char in enumerate(name)
+            )
+        ):
+            raise ValueError('Имя должно содержать 2–32 буквы; допустимы пробел, дефис и апостроф')
+        return name
 
 
 class UserAvatarResponse(BaseModel):

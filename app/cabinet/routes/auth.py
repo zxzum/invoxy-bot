@@ -120,6 +120,7 @@ from ..schemas.auth import (
     TelegramOIDCAuthRequest,
     TelegramWidgetAuthRequest,
     TokenResponse,
+    UpdateMyNameRequest,
     UserAvatarResponse,
     UserResponse,
     VerificationResendRequest,
@@ -2164,6 +2165,22 @@ async def get_current_user(
     user: User = Depends(get_current_cabinet_user),
 ):
     """Get current authenticated user info."""
+    return _user_to_response(user)
+
+
+@router.patch('/me/name', response_model=UserResponse)
+async def update_current_user_name(
+    request: UpdateMyNameRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> UserResponse:
+    """Let users set their name once when their account has no name."""
+    if (user.first_name or '').strip() or (user.last_name or '').strip():
+        raise HTTPException(status.HTTP_409_CONFLICT, 'Имя уже указано')
+
+    user.first_name = request.first_name
+    await db.commit()
+    await db.refresh(user)
     return _user_to_response(user)
 
 

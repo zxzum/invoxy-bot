@@ -248,9 +248,9 @@ class WhitelistTrafficAccountingService:
         snapshot = result.scalar_one_or_none()
         measured_bytes = max(0, measured_bytes)
         if snapshot is None:
-            # First sample is a baseline: never charge traffic that was used
-            # before this worker started or before a new accounting month.
-            subscription.whitelist_traffic_used_bytes = 0
+            # The panel query is month-to-date, so include usage from before
+            # this worker started instead of hiding it until the next month.
+            subscription.whitelist_traffic_used_bytes = measured_bytes
             db.add(
                 WhitelistTrafficUsageSnapshot(
                     subscription_id=subscription.id,
@@ -260,7 +260,7 @@ class WhitelistTrafficAccountingService:
                     sampled_at=sampled_at,
                 )
             )
-            return 0
+            return measured_bytes
 
         if snapshot.panel_user_id != panel_user_id:
             delta = 0

@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -10,11 +9,14 @@ from app.cabinet.routes.subscription_modules.traffic import (
     TrafficResetSaveCartRequest,
     build_traffic_reset_status,
     get_traffic_packages,
+    perform_traffic_reset,
     purchase_traffic,
     save_traffic_reset_cart,
 )
 from app.database.crud.subscription import (
+    ResetMainTrafficResult,
     add_subscription_traffic,
+    reset_main_subscription_traffic,
     reset_whitelist_subscription_traffic,
 )
 from app.database.models import Subscription, Tariff, User
@@ -33,6 +35,7 @@ def _make_lte_tariff(
         id=1,
         name='Стандарт 🌐 LTE',
         traffic_limit_gb=350,
+        period_prices={'30': 20000},
         whitelist_traffic_limit_gb=whitelist_limit_gb,
         traffic_topup_enabled=False,
         traffic_topup_packages={},
@@ -42,20 +45,36 @@ def _make_lte_tariff(
         whitelist_reset_price_kopeks=reset_price_kopeks,
         whitelist_reset_min_used_gb=reset_min_used_gb,
         whitelist_reset_max_per_month=reset_max_per_month,
+        main_traffic_reset_enabled=True,
+        main_traffic_reset_price_kopeks=None,
+        main_traffic_reset_min_used_gb=100,
+        main_traffic_reset_max_per_month=0,
         allowed_squads=['vpn-uuid', 'whitelist-uuid'],
     )
 
 
-def _make_standard_tariff() -> Tariff:
+def _make_standard_tariff(
+    *,
+    price_30_days: int = 10000,
+    main_reset_enabled: bool = True,
+    main_reset_price_kopeks: int | None = None,
+    main_reset_min_used_gb: int = 100,
+    main_reset_max_per_month: int = 0,
+) -> Tariff:
     return Tariff(
         id=2,
         name='Стандарт 🛡️',
         traffic_limit_gb=350,
+        period_prices={'30': price_30_days},
         whitelist_traffic_limit_gb=0,
         traffic_topup_enabled=True,
         traffic_topup_packages={'100': 5000},
         traffic_topup_max_per_month=2,
         whitelist_reset_enabled=False,
+        main_traffic_reset_enabled=main_reset_enabled,
+        main_traffic_reset_price_kopeks=main_reset_price_kopeks,
+        main_traffic_reset_min_used_gb=main_reset_min_used_gb,
+        main_traffic_reset_max_per_month=main_reset_max_per_month,
         allowed_squads=['vpn-uuid'],
     )
 
@@ -364,4 +383,242 @@ def test_traffic_routes_have_no_var_keyword_params():
                 assert param.kind != inspect.Parameter.VAR_KEYWORD, (
                     f"Route {route.path} has VAR_KEYWORD param '{param_name}' which FastAPI treats as required query parameter"
                 )
+
+
+def test_build_traffic_reset_status_regular_scope():
+    # 1. Default price (30-day tariff price: 10000 kopeks = 100 rubles)
+    tariff = _make_standard_tariff(price_30_days=10000, main_reset_min_used_gb=100)
+    sub = SimpleNamespace(
+        id=10,
+        traffic_limit_gb=350,
+        traffic_used_gb=125.0,
+    )
+
+    status = build_traffic_reset_status(
+        tariff=tariff,
+        sub=sub,
+        used_this_month=0,
+        scope='regular',
+    )
+    assert status.enabled is True
+    assert status.price_kopeks == 10000
+    assert status.price_rubles == 100.0
+    assert status.used_gb == 125.0
+    assert status.limit_gb == 350
+    assert status.will_clear_gb == 125.0
+    assert status.used_after_gb == 0.0
+    assert status.remaining_this_month == 999  # 0 max_per_month = unlimited
+    assert status.unavailable_reason is None
+
+    # 2. Admin override price (e.g. 25000 kopeks = 250 rubles)
+    tariff_override = _make_standard_tariff(
+        price_30_days=10000,
+        main_reset_price_kopeks=25000,
+        main_reset_min_used_gb=100,
+    )
+    status_override = build_traffic_reset_status(
+        tariff=tariff_override,
+        sub=sub,
+        used_this_month=0,
+        scope='regular',
+    )
+    assert status_override.price_kopeks == 25000
+    assert status_override.price_rubles == 250.0
+
+    # 3. Below min used GB (e.g. 85 GB < 100 GB)
+    sub_low = SimpleNamespace(
+        id=10,
+        traffic_limit_gb=350,
+        traffic_used_gb=85.0,
+    )
+    status_low = build_traffic_reset_status(
+        tariff=tariff,
+        sub=sub_low,
+        used_this_month=0,
+        scope='regular',
+    )
+    assert status_low.unavailable_reason == 'below_min_used'
+
+    # 4. Feature disabled on tariff
+    tariff_disabled = _make_standard_tariff(main_reset_enabled=False)
+    status_disabled = build_traffic_reset_status(
+        tariff=tariff_disabled,
+        sub=sub,
+        used_this_month=0,
+        scope='regular',
+    )
+    assert status_disabled.enabled is False
+    assert status_disabled.unavailable_reason == 'disabled'
+
+    # 5. Monthly limit reached
+    tariff_limited = _make_standard_tariff(main_reset_max_per_month=2)
+    status_limited = build_traffic_reset_status(
+        tariff=tariff_limited,
+        sub=sub,
+        used_this_month=2,
+        scope='regular',
+    )
+    assert status_limited.unavailable_reason == 'monthly_limit'
+    assert status_limited.remaining_this_month == 0
+
+
+@pytest.mark.asyncio
+async def test_reset_main_subscription_traffic_logic():
+    session = AsyncMock()
+    tariff = _make_standard_tariff(
+        main_reset_min_used_gb=100,
+        main_reset_max_per_month=2,
+    )
+    sub = Subscription(
+        id=10,
+        user_id=1,
+        status='limited',
+        traffic_limit_gb=350,
+        traffic_used_gb=125.0,
+        tariff_id=2,
+        remnawave_id='uuid-test-123',
+    )
+    sub.tariff = tariff
+
+    mock_panel = AsyncMock()
+    mock_panel.reset_user_traffic = AsyncMock(return_value=True)
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__.return_value = mock_panel
+    mock_cm.__aexit__.return_value = None
+
+    with patch('app.database.crud.subscription._lock_subscription_row', return_value=sub), \
+         patch('app.services.remnawave_service.RemnaWaveService') as mock_rw_cls:
+        mock_rw = mock_rw_cls.return_value
+        mock_rw.is_configured = True
+        mock_rw.get_api_client.return_value = mock_cm
+
+        resp = await reset_main_subscription_traffic(
+            session=session,
+            subscription=sub,
+            commit=False,
+        )
+
+        assert resp['success'] is True
+        assert resp['cleared_gb'] == 125.0
+        assert resp['new_used_gb'] == 0.0
+
+        # Tuple unpacking compatibility test
+        cleared, new_used = resp
+        assert cleared == 125.0
+        assert new_used == 0.0
+
+        # DB values updated
+        assert sub.traffic_used_gb == 0.0
+        # Limited reactivated to active!
+        assert sub.status == 'active'
+        assert sub.main_reset_count == 1
+        assert sub.main_reset_period_key is not None
+
+        # Panel called
+        mock_panel.reset_user_traffic.assert_awaited_once_with('uuid-test-123')
+
+
+@pytest.mark.asyncio
+async def test_reset_main_subscription_traffic_rejects_below_min_used():
+    session = AsyncMock()
+    tariff = _make_standard_tariff(main_reset_min_used_gb=100)
+    sub = Subscription(
+        id=10,
+        user_id=1,
+        status='active',
+        traffic_limit_gb=350,
+        traffic_used_gb=75.0,
+        tariff_id=2,
+    )
+    sub.tariff = tariff
+
+    with patch('app.database.crud.subscription._lock_subscription_row', return_value=sub):
+        with pytest.raises(ValueError, match='below_min_used'):
+            await reset_main_subscription_traffic(
+                session=session,
+                subscription=sub,
+                commit=False,
+            )
+
+
+@pytest.mark.asyncio
+async def test_reset_main_subscription_traffic_rejects_monthly_limit():
+    from app.utils.traffic_topup_limits import get_local_month_period_key
+
+    session = AsyncMock()
+    tariff = _make_standard_tariff(main_reset_max_per_month=1)
+    now = datetime.now(UTC)
+    current_period = get_local_month_period_key(now)
+    sub = Subscription(
+        id=10,
+        user_id=1,
+        status='active',
+        traffic_limit_gb=350,
+        traffic_used_gb=125.0,
+        tariff_id=2,
+        main_reset_period_key=current_period,
+        main_reset_count=1,
+    )
+    sub.tariff = tariff
+
+    with patch('app.database.crud.subscription._lock_subscription_row', return_value=sub):
+        with pytest.raises(ValueError, match='monthly_limit_exceeded'):
+            await reset_main_subscription_traffic(
+                session=session,
+                subscription=sub,
+                commit=False,
+                now=now,
+            )
+
+
+@pytest.mark.asyncio
+async def test_cabinet_traffic_routes_regular_scope():
+    user = User(id=1, balance_kopeks=50000)
+    session = AsyncMock()
+    tariff = _make_standard_tariff(price_30_days=10000, main_reset_min_used_gb=100)
+    sub = Subscription(
+        id=20,
+        user_id=1,
+        status='active',
+        is_trial=False,
+        traffic_limit_gb=350,
+        traffic_used_gb=120.0,
+        tariff_id=2,
+    )
+    sub.tariff = tariff
+
+    # 1. Save cart with regular scope
+    with patch('app.cabinet.routes.subscription_modules.traffic._get_single_active_subscription', return_value=sub), \
+         patch('app.database.crud.tariff.get_tariff_by_id', AsyncMock(return_value=tariff)), \
+         patch('app.cabinet.routes.subscription_modules.traffic.save_pending_subscription_cart', AsyncMock()):
+        cart_resp = await save_traffic_reset_cart(
+            payload=TrafficResetSaveCartRequest(subscription_id=20, scope='regular'),
+            user=user,
+            session=session,
+        )
+        assert cart_resp['status'] == 'ok'
+        assert cart_resp['cart_mode'] == 'traffic_reset'
+        assert cart_resp['price_kopeks'] == 10000
+
+    # 2. Perform traffic reset with regular scope
+    with patch('app.cabinet.routes.subscription_modules.traffic._get_single_active_subscription', return_value=sub), \
+         patch('app.database.crud.tariff.get_tariff_by_id', AsyncMock(return_value=tariff)), \
+         patch('app.database.crud.user.lock_user_for_pricing', return_value=user), \
+         patch('app.cabinet.routes.subscription_modules.traffic.subtract_user_balance', AsyncMock(return_value=True)) as mock_subtract, \
+         patch('app.cabinet.routes.subscription_modules.traffic.create_transaction', AsyncMock()) as mock_tx, \
+         patch('app.database.crud.subscription.reset_main_subscription_traffic', AsyncMock(return_value=ResetMainTrafficResult(cleared_gb=120.0, new_used_gb=0.0))) as mock_reset, \
+         patch('app.services.cabinet_purchase_notification_service.notify_telegram_user_about_cabinet_purchase', AsyncMock()):
+
+        resp = await perform_traffic_reset(
+            subscription_id=20,
+            scope='regular',
+            user=user,
+            session=session,
+        )
+        assert resp.success is True
+        assert resp.cleared_gb == 120.0
+        assert resp.new_used_gb == 0.0
+        assert mock_subtract.called
+        assert mock_tx.called
+        assert mock_reset.called
 

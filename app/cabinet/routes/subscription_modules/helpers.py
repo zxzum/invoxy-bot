@@ -239,4 +239,5 @@ def _subscription_to_response(
         tariff_id=tariff_id,
         tariff_name=tariff_name,
         traffic_reset_mode=traffic_reset_mode,
+        main_traffic_reset_enabled=getattr(tariff, 'main_traffic_reset_enabled', True) if getattr(tariff, 'main_traffic_reset_enabled', None) is not None else True,
     )

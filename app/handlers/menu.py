@@ -1736,7 +1736,6 @@ async def build_app_connect_payload(user: User):
     token = await create_app_handoff_token(user.id)
     base_url = settings.MINIAPP_CUSTOM_URL.rstrip('/') if settings.MINIAPP_CUSTOM_URL else 'https://invoxy.my'
     connect_url = f'{base_url}/app/connect?token={token}'
-    releases_url = 'https://github.com/zxzum/InvoxyApp/releases/latest'
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1753,7 +1752,7 @@ async def build_app_connect_payload(user: User):
                 ),
                 types.InlineKeyboardButton(
                     text='📥 Скачать приложение',
-                    url=releases_url,
+                    url=connect_url,
                 ),
             ],
             [
@@ -1766,12 +1765,14 @@ async def build_app_connect_payload(user: User):
     )
 
     text = (
-        '📱 <b>Официальное приложение Invoxy VPN</b>\n\n'
+        '📱 <b>Дополнительное приложение Invoxy VPN</b>\n\n'
+        'Для обычного подключения рекомендуем HAPP или INCY.\n'
+        'Invoxy VPN — отдельный клиент для Android, Windows и macOS; на iOS он недоступен.\n\n'
         'Подключите ваше устройство в 1 клик без ввода логина и паролей:\n'
         '• 🚀 Умный выбор быстрых серверов\n'
         '• 🛡 Защита от блокировок ТСПУ и шифрование трафика\n'
         '• 📊 Мониторинг скорости и расхода трафика в реальном времени\n'
-        '• 🌐 Поддержка Android, macOS, Windows и iOS\n\n'
+        '• 🌐 Поддержка Android, Windows и macOS\n\n'
         f'⚡ <b>Ссылка для мгновенного входа</b> <i>(действует 2 минуты)</i>:\n'
         f'<code>{connect_url}</code>\n\n'
         '<i>Нажмите кнопку «Войти в приложение Invoxy» выше для автоматического входа на этом устройстве.</i>'

@@ -46,6 +46,19 @@ def test_flow_asks_policy_before_resetting_traffic(rel_path):
     assert 'should_reset_used_traffic' in source, f'{rel_path} не спрашивает политику про сброс трафика'
 
 
+def test_cabinet_conversion_does_not_bypass_traffic_policy():
+    source = (APP / SWITCH_FLOWS[0]).read_text(encoding='utf-8')
+    assert 'reset_used_traffic = should_reset_used_traffic(upgrade_cost)' in source
+    assert 'should_reset_used_traffic(upgrade_cost) or is_convert_days' not in source
+
+
+def test_cabinet_switch_preserves_paid_regular_and_lte_topups():
+    source = (APP / SWITCH_FLOWS[0]).read_text(encoding='utf-8')
+    assert '_apply_base_limit_preserving_active_purchases(' in source
+    assert '_apply_whitelist_base_limit_preserving_active_purchases(' in source
+    assert 'sql_delete(TrafficPurchase)' not in source
+
+
 # Кто ещё вправе читать выключатель напрямую. Все — оплаченные или админские
 # пути, где бесплатного прыжка быть не может.
 ALLOWED_DIRECT_READERS = {

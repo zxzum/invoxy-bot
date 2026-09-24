@@ -1,12 +1,14 @@
 import importlib.util
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from app.database.models import Tariff
+from app.database.models import Tariff, WhitelistTrafficUsageSnapshot
 from app.services.whitelist_traffic_service import (
+    WhitelistTrafficAccountingService,
     _effective_whitelist_squads,
     _panel_squad_ids,
     _usage_by_user,
@@ -35,7 +37,6 @@ class _Result:
     def all(self):
         return self.rows
 
-
 class _BootstrapDb:
     def __init__(self, tariffs):
         self.tariffs = tariffs
@@ -45,6 +46,11 @@ class _BootstrapDb:
         return _Result([] if entity.__name__ == 'PromoGroup' else self.tariffs)
 
     async def refresh(self, *_args):
+        return None
+
+
+class _SnapshotResult:
+    def scalar_one_or_none(self):
         return None
 
 
@@ -81,6 +87,26 @@ def test_effective_whitelist_squads_removes_and_restores_access():
 
     subscription.whitelist_traffic_limit_gb = 10
     assert _effective_whitelist_squads(subscription, 'white-list') == ['regular', 'WHITE-LIST']
+
+
+@pytest.mark.asyncio
+async def test_first_monthly_sample_counts_existing_panel_usage():
+    db = SimpleNamespace(execute=AsyncMock(return_value=_SnapshotResult()), add=Mock())
+    subscription = SimpleNamespace(id=42, whitelist_traffic_used_bytes=7 * 1024**3)
+    measured_bytes = 1_230_000_000
+    sampled_at = datetime(2026, 9, 23, tzinfo=UTC)
+
+    added = await WhitelistTrafficAccountingService._apply_sample(
+        db, subscription, 123, measured_bytes, '2026-09', sampled_at
+    )
+
+    assert added == measured_bytes
+    assert subscription.whitelist_traffic_used_bytes == measured_bytes
+    snapshot = db.add.call_args.args[0]
+    assert isinstance(snapshot, WhitelistTrafficUsageSnapshot)
+    assert snapshot.panel_user_id == 123
+    assert snapshot.measured_bytes == measured_bytes
+    assert snapshot.period_key == '2026-09'
 
 
 @pytest.mark.asyncio

@@ -2050,6 +2050,12 @@ class Tariff(Base):
     whitelist_reset_min_used_gb = Column(Integer, default=10, nullable=False)
     whitelist_reset_max_per_month = Column(Integer, default=0, nullable=False)
 
+    # Сброс основного трафика
+    main_traffic_reset_enabled = Column(Boolean, default=True, nullable=False)
+    main_traffic_reset_price_kopeks = Column(Integer, nullable=True, default=None)
+    main_traffic_reset_min_used_gb = Column(Integer, default=100, nullable=False)
+    main_traffic_reset_max_per_month = Column(Integer, default=0, nullable=False)
+
     # Суточный тариф - ежедневное списание
     is_daily = Column(Boolean, default=False, nullable=False)  # Является ли тариф суточным
     daily_price_kopeks = Column(Integer, default=0, nullable=False)  # Цена за день в копейках
@@ -2213,6 +2219,15 @@ class Tariff(Base):
             and (getattr(self, 'whitelist_reset_max_per_month', 0) or 0) > 0
             and (getattr(self, 'whitelist_traffic_limit_gb', 0) or 0) > 0
         )
+
+    def can_reset_main_traffic(self) -> bool:
+        """Проверяет, доступен ли сброс основного трафика на тарифе."""
+        return bool(self.main_traffic_reset_enabled)
+
+    def get_main_traffic_reset_price_kopeks(self, period_days: int = 30) -> int:
+        if self.main_traffic_reset_price_kopeks and self.main_traffic_reset_price_kopeks > 0:
+            return self.main_traffic_reset_price_kopeks
+        return self.get_price_for_period(period_days) or 0
 
     def get_daily_price_rubles(self) -> float:
         """Возвращает суточную цену в рублях."""
@@ -2529,6 +2544,8 @@ class Subscription(Base):
     whitelist_traffic_topup_last_purchased_at = Column(AwareDateTime(), nullable=True)
     whitelist_reset_period_key = Column(String(7), nullable=True)
     whitelist_reset_count = Column(Integer, default=0, nullable=False)
+    main_reset_period_key = Column(String(7), nullable=True)
+    main_reset_count = Column(Integer, default=0, nullable=False)
 
     subscription_url = Column(String, nullable=True)
     subscription_crypto_link = Column(String, nullable=True)

@@ -52,13 +52,13 @@ def test_defaults_to_current_time():
 
 
 class TestTrafficReset:
-    def test_paid_switch_resets(self, monkeypatch):
+    def test_paid_switch_keeps_used_traffic(self, monkeypatch):
         monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_TARIFF_SWITCH', True)
-        assert should_reset_used_traffic(1) is True
-        assert should_reset_used_traffic(500_00) is True
+        assert should_reset_used_traffic(1) is False
+        assert should_reset_used_traffic(500_00) is False
 
     def test_free_switch_keeps_used_traffic(self, monkeypatch):
-        """Иначе понизил тариф — счётчик с нуля, вернулся — ещё раз."""
+        """Neither a free downgrade nor a paid upgrade grants a fresh quota."""
         monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_TARIFF_SWITCH', True)
         assert should_reset_used_traffic(0) is False
 
@@ -120,4 +120,3 @@ class TestConvertedDays:
         # 3.0 / 13.33 = 0.22 -> guarantees at least 1 day
         days = PricingEngine.calculate_converted_days(basic, premium, 1, commission_pct=10)
         assert days == 1
-
