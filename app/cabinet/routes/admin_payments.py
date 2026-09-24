@@ -299,120 +299,102 @@ def _extract_decline_reason(record: PendingPayment) -> str | None:
 
 def _detect_source_platform(record: PendingPayment) -> str:
     """Определяет источник платежа: 'mini-app', 'web', 'app', 'bot'."""
-    payment = getattr(record, 'payment', None)
+    try:
+        method = record.method
+        if method == PaymentMethod.APPLE_IAP:
+            return 'app'
+        if method == PaymentMethod.TELEGRAM_STARS:
+            return 'bot'
 
-    # 1. Проверяем metadata_json, если есть
-    metadata = getattr(payment, 'metadata_json', None)
-    if isinstance(metadata, dict):
-        platform = (
-            metadata.get('source_platform')
-            or metadata.get('client_platform')
-            or metadata.get('platform')
-        )
-        if platform:
-            plat = str(platform).lower()
-            if plat in ('mini-app', 'miniapp', 'tma'):
-                return 'mini-app'
-            if plat in ('web', 'site', 'cabinet'):
-                return 'web'
-            if plat in ('app', 'mobile', 'ios', 'android', 'flutter'):
-                return 'app'
-            if plat in ('bot', 'telegram_bot'):
-                return 'bot'
+        payment = getattr(record, 'payment', None)
+        p_dict = getattr(payment, '__dict__', {}) if payment is not None else {}
 
-        source = metadata.get('source')
-        if source:
-            src = str(source).lower()
-            if src in ('mini-app', 'miniapp', 'tma'):
-                return 'mini-app'
-            if src in ('landing', 'cabinet', 'web', 'site'):
-                return 'web'
-            if src in ('app', 'mobile'):
-                return 'app'
-            if src in ('bot', 'telegram'):
-                return 'bot'
+        # 1. Проверяем metadata_json, если есть в уже загруженных данных
+        metadata = p_dict.get('metadata_json')
+        if isinstance(metadata, dict):
+            platform = (
+                metadata.get('source_platform')
+                or metadata.get('client_platform')
+                or metadata.get('platform')
+            )
+            if platform:
+                plat = str(platform).lower()
+                if plat in ('mini-app', 'miniapp', 'tma'):
+                    return 'mini-app'
+                if plat in ('web', 'site', 'cabinet'):
+                    return 'web'
+                if plat in ('app', 'mobile', 'ios', 'android', 'flutter'):
+                    return 'app'
+                if plat in ('bot', 'telegram_bot'):
+                    return 'bot'
 
-    # 2. Проверяем callback_payload
-    payload_raw = getattr(payment, 'callback_payload', None)
-    payload_str = ''
-    if isinstance(payload_raw, dict):
-        cb_source = payload_raw.get('source_platform') or payload_raw.get('source')
-        if cb_source:
-            cs = str(cb_source).lower()
-            if cs in ('mini-app', 'miniapp', 'tma'):
-                return 'mini-app'
-            if cs in ('web', 'cabinet', 'landing'):
-                return 'web'
-            if cs in ('app', 'mobile'):
-                return 'app'
-            if cs in ('bot', 'telegram'):
-                return 'bot'
-        payload_str = str(payload_raw).lower()
-    elif isinstance(payload_raw, str):
-        payload_str = payload_raw.lower()
+            source = metadata.get('source')
+            if source:
+                src = str(source).lower()
+                if src in ('mini-app', 'miniapp', 'tma'):
+                    return 'mini-app'
+                if src in ('landing', 'cabinet', 'web', 'site'):
+                    return 'web'
+                if src in ('app', 'mobile'):
+                    return 'app'
+                if src in ('bot', 'telegram'):
+                    return 'bot'
 
-    if 'mini_app' in payload_str or 'miniapp' in payload_str or 'tma' in payload_str:
-        return 'mini-app'
-    if 'invoxyapp' in payload_str or 'mobile_app' in payload_str:
-        return 'app'
+        # 2. Проверяем callback_payload
+        payload_raw = p_dict.get('callback_payload')
+        payload_str = ''
+        if isinstance(payload_raw, dict):
+            cb_source = payload_raw.get('source_platform') or payload_raw.get('source')
+            if cb_source:
+                cs = str(cb_source).lower()
+                if cs in ('mini-app', 'miniapp', 'tma'):
+                    return 'mini-app'
+                if cs in ('web', 'cabinet', 'landing'):
+                    return 'web'
+                if cs in ('app', 'mobile'):
+                    return 'app'
+                if cs in ('bot', 'telegram'):
+                    return 'bot'
+            payload_str = str(payload_raw).lower()
+        elif isinstance(payload_raw, str):
+            payload_str = payload_raw.lower()
 
-    # 3. Проверяем description / payload / bill_id / order_id
-    fields_to_check = [
-        getattr(payment, 'description', None),
-        getattr(payment, 'order_id', None),
-        getattr(payment, 'payload', None),
-        getattr(payment, 'bill_id', None),
-    ]
-    for field in fields_to_check:
-        if field and isinstance(field, str):
-            f_lower = field.lower()
-            if 'mini-app' in f_lower or 'miniapp' in f_lower:
-                return 'mini-app'
-            if 'cabinet' in f_lower or 'landing' in f_lower:
-                return 'web'
-            if 'bot' in f_lower:
-                return 'bot'
+        if 'mini_app' in payload_str or 'miniapp' in payload_str or 'tma' in payload_str:
+            return 'mini-app'
+        if 'invoxyapp' in payload_str or 'mobile_app' in payload_str:
+            return 'app'
 
-    # 4. Специфичные методы
-    method = record.method
-    if method == PaymentMethod.APPLE_IAP:
-        return 'app'
-    if method == PaymentMethod.TELEGRAM_STARS:
-        return 'bot'
+        # 3. Проверяем description / payload / bill_id / order_id
+        for key in ('description', 'order_id', 'payload', 'bill_id'):
+            val = p_dict.get(key)
+            if val and isinstance(val, str):
+                f_lower = val.lower()
+                if 'mini-app' in f_lower or 'miniapp' in f_lower:
+                    return 'mini-app'
+                if 'cabinet' in f_lower or 'landing' in f_lower:
+                    return 'web'
+                if 'bot' in f_lower:
+                    return 'bot'
 
-    # 5. Пользователь без telegram_id (только email)
-    user = getattr(record, 'user', None)
-    if user and not user.telegram_id and user.email:
+        # 4. Проверка URL возврата / ссылки
+        for key in ('return_url', 'link_url', 'link_page_url', 'payment_url'):
+            u = p_dict.get(key)
+            if u and isinstance(u, str):
+                if 'cabinet' in u.lower() or 'invoxy.net' in u.lower():
+                    return 'web'
+
+        user = getattr(record, 'user', None)
+        u_dict = getattr(user, '__dict__', {}) if user is not None else {}
+        tg_id = u_dict.get('telegram_id')
+        user_email = u_dict.get('email')
+
+        # 5. Пользователь без telegram_id (только email)
+        if user_email and not tg_id:
+            return 'web'
+
+        return 'bot' if tg_id else 'web'
+    except Exception:
         return 'web'
-
-    # 6. Если в payment есть transaction
-    transaction = getattr(payment, 'transaction', None)
-    if transaction:
-        tx_desc = (getattr(transaction, 'description', '') or '').lower()
-        tx_comment = (getattr(transaction, 'comment', '') or '').lower()
-        for text in (tx_desc, tx_comment):
-            if 'cabinet' in text or 'сайт' in text:
-                return 'web'
-            if 'bot' in text or 'бот' in text:
-                return 'bot'
-            if 'app' in text or 'приложени' in text:
-                return 'app'
-            if 'mini' in text:
-                return 'mini-app'
-
-    # 7. Проверка URL возврата / ссылки
-    urls = [
-        getattr(payment, 'return_url', None),
-        getattr(payment, 'link_url', None),
-        getattr(payment, 'link_page_url', None),
-        getattr(payment, 'payment_url', None),
-    ]
-    for u in urls:
-        if u and isinstance(u, str):
-            if 'cabinet' in u.lower() or 'invoxy.net' in u.lower():
-                return 'web'
-
-    return 'bot' if (user and user.telegram_id) else 'web'
 
 
 def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
