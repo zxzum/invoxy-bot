@@ -1607,18 +1607,20 @@ async def update_user_subscription(
 
         logger.info('Admin created subscription for user', admin_id=admin.id, user_id=user_id)
 
-        try:
-            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+        if not request.silent:
+            try:
+                from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
 
-            await AdminSubscriptionNotifyService.notify_subscription_granted(
-                db=db,
-                user=user,
-                subscription=new_sub,
-                days=days,
-                tariff_name=tariff.name if tariff else None,
-            )
-        except Exception as notif_err:
-            logger.warning('Failed to send admin subscription grant notification', user_id=user_id, error=str(notif_err))
+                await AdminSubscriptionNotifyService.notify_subscription_granted(
+                    db=db,
+                    user=user,
+                    subscription=new_sub,
+                    days=days,
+                    tariff_name=tariff.name if tariff else None,
+                    reason=request.reason,
+                )
+            except Exception as notif_err:
+                logger.warning('Failed to send admin subscription grant notification', user_id=user_id, error=str(notif_err))
 
         return UpdateSubscriptionResponse(
             success=True,
@@ -1651,17 +1653,19 @@ async def update_user_subscription(
             'Admin extended subscription for user by days', admin_id=admin.id, user_id=user_id, days=request.days
         )
 
-        try:
-            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+        if not request.silent:
+            try:
+                from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
 
-            await AdminSubscriptionNotifyService.notify_subscription_extended(
-                db=db,
-                user=user,
-                subscription=subscription,
-                days=request.days,
-            )
-        except Exception as notif_err:
-            logger.warning('Failed to send admin subscription extend notification', user_id=user_id, error=str(notif_err))
+                await AdminSubscriptionNotifyService.notify_subscription_extended(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                    days=request.days,
+                    reason=request.reason,
+                )
+            except Exception as notif_err:
+                logger.warning('Failed to send admin subscription extend notification', user_id=user_id, error=str(notif_err))
 
         return UpdateSubscriptionResponse(
             success=True,
@@ -1700,24 +1704,26 @@ async def update_user_subscription(
             'Admin shortened subscription for user by days', admin_id=admin.id, user_id=user_id, days=request.days
         )
 
-        try:
-            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+        if not request.silent:
+            try:
+                from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
 
-            if subscription.status == SubscriptionStatus.EXPIRED.value:
-                await AdminSubscriptionNotifyService.notify_subscription_cancelled(
-                    db=db,
-                    user=user,
-                    subscription=subscription,
-                    reason=f'Срок сокращён на {request.days} дн.',
-                )
-            else:
-                await AdminSubscriptionNotifyService.notify_subscription_extended(
-                    db=db,
-                    user=user,
-                    subscription=subscription,
-                )
-        except Exception as notif_err:
-            logger.warning('Failed to send admin subscription shorten notification', user_id=user_id, error=str(notif_err))
+                if subscription.status == SubscriptionStatus.EXPIRED.value:
+                    await AdminSubscriptionNotifyService.notify_subscription_cancelled(
+                        db=db,
+                        user=user,
+                        subscription=subscription,
+                        reason=request.reason or f'Срок сокращён на {request.days} дн.',
+                    )
+                else:
+                    await AdminSubscriptionNotifyService.notify_subscription_extended(
+                        db=db,
+                        user=user,
+                        subscription=subscription,
+                        reason=request.reason,
+                    )
+            except Exception as notif_err:
+                logger.warning('Failed to send admin subscription shorten notification', user_id=user_id, error=str(notif_err))
 
         return UpdateSubscriptionResponse(
             success=True,
@@ -1749,24 +1755,26 @@ async def update_user_subscription(
 
         logger.info('Admin set end_date for user subscription', admin_id=admin.id, user_id=user_id)
 
-        try:
-            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+        if not request.silent:
+            try:
+                from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
 
-            if subscription.status == SubscriptionStatus.EXPIRED.value:
-                await AdminSubscriptionNotifyService.notify_subscription_cancelled(
-                    db=db,
-                    user=user,
-                    subscription=subscription,
-                    reason='Дата окончания установлена в прошлое',
-                )
-            else:
-                await AdminSubscriptionNotifyService.notify_subscription_extended(
-                    db=db,
-                    user=user,
-                    subscription=subscription,
-                )
-        except Exception as notif_err:
-            logger.warning('Failed to send admin subscription set_end_date notification', user_id=user_id, error=str(notif_err))
+                if subscription.status == SubscriptionStatus.EXPIRED.value:
+                    await AdminSubscriptionNotifyService.notify_subscription_cancelled(
+                        db=db,
+                        user=user,
+                        subscription=subscription,
+                        reason=request.reason or 'Дата окончания установлена в прошлое',
+                    )
+                else:
+                    await AdminSubscriptionNotifyService.notify_subscription_extended(
+                        db=db,
+                        user=user,
+                        subscription=subscription,
+                        reason=request.reason,
+                    )
+            except Exception as notif_err:
+                logger.warning('Failed to send admin subscription set_end_date notification', user_id=user_id, error=str(notif_err))
 
         return UpdateSubscriptionResponse(
             success=True,
@@ -1961,16 +1969,18 @@ async def update_user_subscription(
 
         logger.info('Admin cancelled subscription for user', admin_id=admin.id, user_id=user_id)
 
-        try:
-            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+        if not request.silent:
+            try:
+                from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
 
-            await AdminSubscriptionNotifyService.notify_subscription_cancelled(
-                db=db,
-                user=user,
-                subscription=subscription,
-            )
-        except Exception as notif_err:
-            logger.warning('Failed to send admin subscription cancel notification', user_id=user_id, error=str(notif_err))
+                await AdminSubscriptionNotifyService.notify_subscription_cancelled(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                    reason=request.reason or 'Отмена подписки администратором',
+                )
+            except Exception as notif_err:
+                logger.warning('Failed to send admin subscription cancel notification', user_id=user_id, error=str(notif_err))
 
         return UpdateSubscriptionResponse(
             success=True,
@@ -2029,17 +2039,18 @@ async def update_user_subscription(
             panel_disabled=result.get('panel_disabled'),
         )
 
-        try:
-            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+        if not request.silent:
+            try:
+                from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
 
-            await AdminSubscriptionNotifyService.notify_subscription_cancelled(
-                db=db,
-                user=user,
-                subscription=subscription,
-                reason='Сброс подписки администратором',
-            )
-        except Exception as notif_err:
-            logger.warning('Failed to send admin subscription reset notification', user_id=user_id, error=str(notif_err))
+                await AdminSubscriptionNotifyService.notify_subscription_cancelled(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                    reason=request.reason or 'Сброс подписки администратором',
+                )
+            except Exception as notif_err:
+                logger.warning('Failed to send admin subscription reset notification', user_id=user_id, error=str(notif_err))
 
         return UpdateSubscriptionResponse(
             success=True,
@@ -2073,6 +2084,27 @@ async def update_user_subscription(
         )
 
         logger.info('Admin activated subscription for user', admin_id=admin.id, user_id=user_id)
+
+        if not request.silent:
+            try:
+                from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+
+                remaining_days = 30
+                if subscription.end_date:
+                    diff = int((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400)
+                    if diff > 0:
+                        remaining_days = diff
+
+                await AdminSubscriptionNotifyService.notify_subscription_granted(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                    days=remaining_days,
+                    tariff_name=subscription.tariff.name if getattr(subscription, 'tariff', None) else None,
+                    reason=request.reason or 'Активация подписки администратором',
+                )
+            except Exception as notif_err:
+                logger.warning('Failed to send admin subscription activate notification', user_id=user_id, error=str(notif_err))
 
         return UpdateSubscriptionResponse(
             success=True,
@@ -2490,6 +2522,8 @@ async def delete_user_subscription(
     user_id: int,
     sub_id: int,
     force: bool = Query(False, description='Allow deleting an active paid subscription'),
+    silent: bool = Query(False, description='Do not send notification to user'),
+    reason: str | None = Query(None, description='Reason for deletion'),
     admin: User = Depends(require_permission('users:subscription')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -2536,7 +2570,7 @@ async def delete_user_subscription(
         forced=force,
     )
 
-    if was_active:
+    if was_active and not silent:
         user = await get_user_by_id(db, user_id)
         if user:
             try:
@@ -2546,7 +2580,7 @@ async def delete_user_subscription(
                     db=db,
                     user=user,
                     subscription=subscription,
-                    reason='Удаление подписки администратором',
+                    reason=reason or 'Удаление подписки администратором',
                 )
             except Exception as notif_err:
                 logger.warning('Failed to send admin subscription delete notification', user_id=user_id, error=str(notif_err))

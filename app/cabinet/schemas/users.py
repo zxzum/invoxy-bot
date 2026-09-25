@@ -408,6 +408,10 @@ class UpdateSubscriptionRequest(BaseModel):
     is_trial: bool | None = Field(None, description='Is trial subscription')
     device_limit: int | None = Field(None, ge=1, description='Device limit')
 
+    # Notification & audit options
+    reason: str | None = Field(None, max_length=500, description='Reason or admin note')
+    silent: bool | None = Field(False, description='Do not send notification to user')
+
 
 class UpdateSubscriptionResponse(BaseModel):
     """Response after subscription update."""

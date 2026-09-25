@@ -129,6 +129,7 @@ async def try_send_rich_notification(
     *,
     keyboard: InlineKeyboardMarkup | None = None,
     with_logo: bool = False,
+    banner_url: str | None = None,
     timeout: float | None = None,
 ) -> bool:
     """Шлёт уведомление rich-сообщением. ``False`` — отправить классическое.
@@ -141,6 +142,8 @@ async def try_send_rich_notification(
     публичной ссылкой в ``<img>``, а не загрузкой файла. Так уведомления
     мониторинга не теряют логотип при переходе на rich.
 
+    ``banner_url`` явно задаёт URL изображения-шапки (баннера) вместо дефолтного логотипа.
+
     ``timeout`` ограничивает ОДНУ попытку. Он обязателен там, где отправка идёт
     по списку получателей: без него залипший запрос держит await до таймаута
     сессии и блокирует хвост цикла.
@@ -148,7 +151,12 @@ async def try_send_rich_notification(
     if not settings.USER_NOTIFICATIONS_RICH_ENABLED or not is_rich_menu_enabled():
         return False
 
-    logo_url = _resolve_rich_logo_url() if with_logo else ''
+    if banner_url:
+        logo_url = banner_url
+    elif with_logo:
+        logo_url = _resolve_rich_logo_url()
+    else:
+        logo_url = ''
     rich_html = build_notification_rich_html(text, logo_url=logo_url)
     if rich_html is None or len(rich_html) > RICH_TEXT_LIMIT:
         return False

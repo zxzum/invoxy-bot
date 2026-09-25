@@ -550,6 +550,51 @@ async def get_bot_logo():
     )
 
 
+@router.get('/banners/{banner_name}')
+async def get_notification_banner(banner_name: str):
+    """
+    Get notification banner image by name (e.g. sub_issued.png, sub_extended.png, sub_cancelled.png).
+    Publicly accessible so Telegram Bot API can fetch rich media images.
+    """
+    clean_name = Path(banner_name).name
+    if not clean_name.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid image filename')
+
+    search_dirs = [
+        Path('/app/assets/banners'),
+        Path(__file__).resolve().parent.parent.parent.parent / 'assets' / 'banners',
+        Path('assets/banners'),
+    ]
+
+    target_file = None
+    for d in search_dirs:
+        p = d / clean_name
+        if p.is_file():
+            target_file = p
+            break
+
+    if not target_file:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Banner not found')
+
+    suffix = target_file.suffix.lower()
+    media_types = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp',
+    }
+    media_type = media_types.get(suffix, 'image/png')
+
+    return FileResponse(
+        target_file,
+        media_type=media_type,
+        headers={
+            'Cache-Control': 'public, max-age=86400',
+            'X-Content-Type-Options': 'nosniff',
+        },
+    )
+
+
 class BotStartVideoResponse(BaseModel):
     """Состояние видео стартового меню бота."""
 
