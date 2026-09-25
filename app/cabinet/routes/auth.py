@@ -2078,14 +2078,12 @@ async def forgot_password(
     if not user:
         return {'message': 'If the email exists, a password reset link has been sent'}
 
-    # Auto-fix guest-created email users who have a password but weren't verified
-    if not user.email_verified and user.password_hash and user.auth_type == 'email':
+    # Auto-fix unverified email users who have a password
+    if not user.email_verified and user.password_hash:
         user.email_verified = True
         user.email_verified_at = datetime.now(UTC)
         await db.commit()
 
-    if not user.email_verified:
-        return {'message': 'If the email exists, a password reset link has been sent'}
 
     # Generate reset token
     reset_token = generate_password_reset_token()
@@ -2162,10 +2160,13 @@ async def reset_password(
             detail='Reset token has expired',
         )
 
-    # Update password
+    # Update password and auto-verify email (inbox access verified by reset token)
     user.password_hash = hash_password(request.password)
     user.password_reset_token = None
     user.password_reset_expires = None
+    if not user.email_verified:
+        user.email_verified = True
+        user.email_verified_at = datetime.now(UTC)
 
     await db.commit()
 
