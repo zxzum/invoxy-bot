@@ -81,7 +81,7 @@ def _build_support_buttons(lang: str) -> list[InlineKeyboardButton]:
             style='primary',
         )
     ]
-    support_url = settings.get_support_contact_url() or 'https://t.me/invoxyvpn'
+    support_url = settings.get_support_contact_url() or 'https://t.me/fpobetby'
     buttons.append(InlineKeyboardButton(text=tg_support_btn_text, url=support_url))
     return buttons
 
