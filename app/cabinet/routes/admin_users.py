@@ -1553,13 +1553,21 @@ async def update_user_subscription(
 
         from app.database.crud.subscription import create_paid_subscription
 
-        days = request.days or 30
+        target_end = None
+        if request.end_date:
+            now = datetime.now(UTC)
+            target_end = request.end_date if request.end_date.tzinfo else request.end_date.replace(tzinfo=UTC)
+            days = max(1, int((target_end - now).total_seconds() / 86400))
+        else:
+            days = request.days or 30
+
         is_trial = request.is_trial or False
         traffic_limit = request.traffic_limit_gb or 100
         device_limit = request.device_limit or 1
         connected_squads = []
 
         # Get tariff for settings if provided
+        tariff = None
         if request.tariff_id:
             tariff = await get_tariff_by_id(db, request.tariff_id)
             if tariff:
@@ -1583,6 +1591,10 @@ async def update_user_subscription(
                 tariff_id=request.tariff_id,
                 connected_squads=connected_squads,
             )
+            if target_end and new_sub:
+                new_sub.end_date = target_end
+                await db.commit()
+                await db.refresh(new_sub)
         except IntegrityError:
             await db.rollback()
             raise HTTPException(
@@ -1594,6 +1606,19 @@ async def update_user_subscription(
         await _sync_subscription_to_panel(db, user, new_sub)
 
         logger.info('Admin created subscription for user', admin_id=admin.id, user_id=user_id)
+
+        try:
+            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+
+            await AdminSubscriptionNotifyService.notify_subscription_granted(
+                db=db,
+                user=user,
+                subscription=new_sub,
+                days=days,
+                tariff_name=tariff.name if tariff else None,
+            )
+        except Exception as notif_err:
+            logger.warning('Failed to send admin subscription grant notification', user_id=user_id, error=str(notif_err))
 
         return UpdateSubscriptionResponse(
             success=True,
@@ -1625,6 +1650,18 @@ async def update_user_subscription(
         logger.info(
             'Admin extended subscription for user by days', admin_id=admin.id, user_id=user_id, days=request.days
         )
+
+        try:
+            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+
+            await AdminSubscriptionNotifyService.notify_subscription_extended(
+                db=db,
+                user=user,
+                subscription=subscription,
+                days=request.days,
+            )
+        except Exception as notif_err:
+            logger.warning('Failed to send admin subscription extend notification', user_id=user_id, error=str(notif_err))
 
         return UpdateSubscriptionResponse(
             success=True,
@@ -1663,6 +1700,25 @@ async def update_user_subscription(
             'Admin shortened subscription for user by days', admin_id=admin.id, user_id=user_id, days=request.days
         )
 
+        try:
+            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+
+            if subscription.status == SubscriptionStatus.EXPIRED.value:
+                await AdminSubscriptionNotifyService.notify_subscription_cancelled(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                    reason=f'Срок сокращён на {request.days} дн.',
+                )
+            else:
+                await AdminSubscriptionNotifyService.notify_subscription_extended(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                )
+        except Exception as notif_err:
+            logger.warning('Failed to send admin subscription shorten notification', user_id=user_id, error=str(notif_err))
+
         return UpdateSubscriptionResponse(
             success=True,
             message=f'Subscription shortened by {request.days} days',
@@ -1692,6 +1748,25 @@ async def update_user_subscription(
         )
 
         logger.info('Admin set end_date for user subscription', admin_id=admin.id, user_id=user_id)
+
+        try:
+            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+
+            if subscription.status == SubscriptionStatus.EXPIRED.value:
+                await AdminSubscriptionNotifyService.notify_subscription_cancelled(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                    reason='Дата окончания установлена в прошлое',
+                )
+            else:
+                await AdminSubscriptionNotifyService.notify_subscription_extended(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                )
+        except Exception as notif_err:
+            logger.warning('Failed to send admin subscription set_end_date notification', user_id=user_id, error=str(notif_err))
 
         return UpdateSubscriptionResponse(
             success=True,
@@ -1886,6 +1961,17 @@ async def update_user_subscription(
 
         logger.info('Admin cancelled subscription for user', admin_id=admin.id, user_id=user_id)
 
+        try:
+            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+
+            await AdminSubscriptionNotifyService.notify_subscription_cancelled(
+                db=db,
+                user=user,
+                subscription=subscription,
+            )
+        except Exception as notif_err:
+            logger.warning('Failed to send admin subscription cancel notification', user_id=user_id, error=str(notif_err))
+
         return UpdateSubscriptionResponse(
             success=True,
             message='Subscription cancelled',
@@ -1942,6 +2028,18 @@ async def update_user_subscription(
             subscription_id=subscription.id,
             panel_disabled=result.get('panel_disabled'),
         )
+
+        try:
+            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+
+            await AdminSubscriptionNotifyService.notify_subscription_cancelled(
+                db=db,
+                user=user,
+                subscription=subscription,
+                reason='Сброс подписки администратором',
+            )
+        except Exception as notif_err:
+            logger.warning('Failed to send admin subscription reset notification', user_id=user_id, error=str(notif_err))
 
         return UpdateSubscriptionResponse(
             success=True,
@@ -2420,6 +2518,8 @@ async def delete_user_subscription(
             detail='Subscription is active and paid; pass force=true to delete it anyway',
         )
 
+    was_active = subscription.is_active
+
     try:
         await delete_subscription_record(db, subscription, deleted_by=f'admin:{admin.id}')
     except GraceAccessDeletionBlocked as error:
@@ -2435,6 +2535,22 @@ async def delete_user_subscription(
         subscription_id=sub_id,
         forced=force,
     )
+
+    if was_active:
+        user = await get_user_by_id(db, user_id)
+        if user:
+            try:
+                from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+
+                await AdminSubscriptionNotifyService.notify_subscription_cancelled(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                    reason='Удаление подписки администратором',
+                )
+            except Exception as notif_err:
+                logger.warning('Failed to send admin subscription delete notification', user_id=user_id, error=str(notif_err))
+
     return {'status': 'deleted'}
 
 

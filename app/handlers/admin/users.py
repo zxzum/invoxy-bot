@@ -3407,6 +3407,19 @@ async def _reset_user_subscription(
             subscription_id=subscription.id,
             panel_disabled=result.get('panel_disabled'),
         )
+
+        try:
+            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+
+            await AdminSubscriptionNotifyService.notify_subscription_cancelled(
+                db=db,
+                user=user,
+                subscription=subscription,
+                reason='Сброс подписки администратором',
+            )
+        except Exception as notif_err:
+            logger.warning('Failed to send TG admin reset notification', user_id=user_id, error=str(notif_err))
+
         return True
 
     except Exception as e:
@@ -4513,6 +4526,36 @@ async def _extend_subscription_by_days(
             logger.info(
                 'Админ сократил подписку пользователя на дней', admin_id=admin_id, user_id=user_id, value=abs(days)
             )
+
+        try:
+            from app.database.crud.user import get_user_by_id
+            from app.services.admin_subscription_notify_service import AdminSubscriptionNotifyService
+
+            target_user = await get_user_by_id(db, user_id)
+            if target_user:
+                if days > 0:
+                    await AdminSubscriptionNotifyService.notify_subscription_extended(
+                        db=db,
+                        user=target_user,
+                        subscription=subscription,
+                        days=days,
+                    )
+                elif subscription.status == SubscriptionStatus.EXPIRED.value:
+                    await AdminSubscriptionNotifyService.notify_subscription_cancelled(
+                        db=db,
+                        user=target_user,
+                        subscription=subscription,
+                        reason=f'Срок сокращён на {abs(days)} дн.',
+                    )
+                else:
+                    await AdminSubscriptionNotifyService.notify_subscription_extended(
+                        db=db,
+                        user=target_user,
+                        subscription=subscription,
+                    )
+        except Exception as notif_err:
+            logger.warning('Failed to send TG admin extend/shorten notification', user_id=user_id, error=str(notif_err))
+
         return True
 
     except Exception as e:
