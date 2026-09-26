@@ -1533,25 +1533,31 @@ async def update_user_subscription(
         subscription = next((s for s in subs if s.is_active), subs[0] if subs else None)
 
     if request.action == 'create':
-        # In multi-tariff mode, allow creating additional subscriptions
-        if subscription and not is_multi_tariff:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail='User already has a subscription. Enable multi-tariff mode to add more.',
-            )
+        target_sub = None
+        has_active = any(s.is_active for s in subs)
 
-        # Проверка: нельзя создать вторую активную подписку с тем же тарифом
-        if is_multi_tariff and request.tariff_id:
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+        if is_multi_tariff:
+            if request.tariff_id:
+                from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-            existing = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
-            if existing:
+                existing = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
+                if existing and existing.is_active:
+                    if not request.overwrite:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail='User already has an active subscription for this tariff. Confirmation required to overwrite.',
+                        )
+                    target_sub = existing
+        elif has_active:
+            if not request.overwrite:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail='User already has an active subscription for this tariff. Extend it instead.',
+                    detail='User already has an active subscription. Confirmation required to overwrite.',
                 )
-
-        from app.database.crud.subscription import create_paid_subscription
+            target_sub = next((s for s in subs if s.is_active), subs[0] if subs else None)
+        elif subs:
+            # Single-tariff with expired subscription: reuse record in place to preserve panel identity
+            target_sub = subs[0]
 
         target_end = None
         if request.end_date:
@@ -1578,34 +1584,74 @@ async def update_user_subscription(
                 if tariff.allowed_squads:
                     connected_squads = tariff.allowed_squads
 
-        from sqlalchemy.exc import IntegrityError
+        if target_sub:
+            from app.database.crud.subscription import replace_subscription
+            from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
+            from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
-        try:
-            new_sub = await create_paid_subscription(
+            await cancel_platega_recurring_for_subscription_safe(db, target_sub.id)
+            await cancel_lava_recurring_for_subscription_safe(db, target_sub.id)
+
+            final_sub = await replace_subscription(
                 db=db,
-                user_id=user.id,
+                subscription=target_sub,
                 duration_days=days,
                 traffic_limit_gb=traffic_limit,
                 device_limit=device_limit,
+                connected_squads=connected_squads,
                 is_trial=is_trial,
                 tariff_id=request.tariff_id,
-                connected_squads=connected_squads,
+                update_server_counters=True,
+                commit=True,
             )
-            if target_end and new_sub:
-                new_sub.end_date = target_end
+            if target_end and final_sub:
+                final_sub.end_date = target_end
                 await db.commit()
-                await db.refresh(new_sub)
-        except IntegrityError:
-            await db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail='User already has an active subscription for this tariff. Extend it instead.',
-            )
+                await db.refresh(final_sub)
+
+            if not is_multi_tariff:
+                for other_sub in subs:
+                    if other_sub.id != final_sub.id and other_sub.is_active:
+                        other_sub.status = SubscriptionStatus.EXPIRED.value
+                        other_sub.remnawave_id = None
+                await db.commit()
+        else:
+            from sqlalchemy.exc import IntegrityError
+
+            from app.database.crud.subscription import create_paid_subscription
+
+            try:
+                final_sub = await create_paid_subscription(
+                    db=db,
+                    user_id=user.id,
+                    duration_days=days,
+                    traffic_limit_gb=traffic_limit,
+                    device_limit=device_limit,
+                    is_trial=is_trial,
+                    tariff_id=request.tariff_id,
+                    connected_squads=connected_squads,
+                )
+                if target_end and final_sub:
+                    final_sub.end_date = target_end
+                    await db.commit()
+                    await db.refresh(final_sub)
+            except IntegrityError:
+                await db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail='User already has an active subscription for this tariff. Extend it instead or overwrite.',
+                )
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, new_sub)
+        await _sync_subscription_to_panel(db, user, final_sub)
 
-        logger.info('Admin created subscription for user', admin_id=admin.id, user_id=user_id)
+        logger.info(
+            'Admin issued subscription for user',
+            admin_id=admin.id,
+            user_id=user_id,
+            subscription_id=final_sub.id,
+            overwritten=bool(request.overwrite),
+        )
 
         if not request.silent:
             try:
@@ -1614,7 +1660,7 @@ async def update_user_subscription(
                 await AdminSubscriptionNotifyService.notify_subscription_granted(
                     db=db,
                     user=user,
-                    subscription=new_sub,
+                    subscription=final_sub,
                     days=days,
                     tariff_name=tariff.name if tariff else None,
                     reason=request.reason,
@@ -1625,7 +1671,7 @@ async def update_user_subscription(
         return UpdateSubscriptionResponse(
             success=True,
             message=f'Subscription created for {days} days',
-            subscription=await _build_subscription_info_async(db, new_sub),
+            subscription=await _build_subscription_info_async(db, final_sub),
         )
 
     if not subscription:

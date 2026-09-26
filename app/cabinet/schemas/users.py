@@ -407,6 +407,7 @@ class UpdateSubscriptionRequest(BaseModel):
     # For create new subscription
     is_trial: bool | None = Field(None, description='Is trial subscription')
     device_limit: int | None = Field(None, ge=1, description='Device limit')
+    overwrite: bool | None = Field(False, description='Overwrite active subscription if user already has one')
 
     # Notification & audit options
     reason: str | None = Field(None, max_length=500, description='Reason or admin note')
