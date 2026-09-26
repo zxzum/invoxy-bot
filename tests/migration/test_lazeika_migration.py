@@ -166,11 +166,11 @@ async def test_execute_user_migration_full_flow():
     with (
         patch('app.services.migration.migration_service.check_migration_eligibility', new_callable=AsyncMock) as mock_check,
         patch('app.services.migration.migration_service.RemnaWaveService', return_value=mock_remna_service),
-        patch('app.services.migration.migration_service.get_active_subscriptions_by_user_id', new_callable=AsyncMock) as mock_subs,
+        patch('app.services.migration.migration_service.get_subscription_by_user_id', new_callable=AsyncMock, return_value=None),
+        patch('app.services.migration.migration_service.generate_unique_short_id', new_callable=AsyncMock, return_value='abc123'),
         patch.object(LazeikaClient, 'annul_subscription', new_callable=AsyncMock) as mock_annul,
     ):
         mock_check.return_value = candidate
-        mock_subs.return_value = []
         mock_annul.return_value = True
 
         result = await execute_user_migration(mock_db, user, telegram_id=123456789)

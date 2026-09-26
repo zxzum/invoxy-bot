@@ -7,7 +7,11 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.crud.subscription import get_active_subscriptions_by_user_id
+from app.database.crud.subscription import (
+    generate_unique_short_id,
+    get_active_subscriptions_by_user_id,
+    get_subscription_by_user_id,
+)
 from app.database.models import Subscription, SubscriptionStatus, User
 from app.external.remnawave_api import UserStatus
 from app.services.migration.lazeika_client import LazeikaClient
@@ -196,8 +200,7 @@ async def execute_user_migration(
     user.remnawave_uuid = str(panel_user_id)
 
     # Check if user has an existing subscription record
-    existing_subs = await get_active_subscriptions_by_user_id(db, user.id)
-    subscription: Subscription | None = existing_subs[0] if existing_subs else None
+    existing_sub = await get_subscription_by_user_id(db, user.id)
 
     sub_url = (
         updated_panel_user.subscription_url
@@ -205,7 +208,10 @@ async def execute_user_migration(
         else f'{settings.REMNAWAVE_SUBSCRIPTION_PUBLIC_URL}/{updated_panel_user.short_uuid}'
     )
 
-    if subscription:
+    if existing_sub:
+        subscription = existing_sub
+        if not getattr(subscription, 'remnawave_short_id', None):
+            subscription.remnawave_short_id = await generate_unique_short_id(db)
         # Replace existing subscription parameters
         subscription.tariff_id = candidate.target_tariff_id
         subscription.status = SubscriptionStatus.ACTIVE.value
@@ -225,6 +231,7 @@ async def execute_user_migration(
         subscription.connected_squads = squads
     else:
         # Create new subscription row
+        short_id = await generate_unique_short_id(db)
         subscription = Subscription(
             user_id=user.id,
             tariff_id=candidate.target_tariff_id,
@@ -241,6 +248,7 @@ async def execute_user_migration(
             remnawave_id=panel_user_id,
             remnawave_uuid=str(panel_user_id),
             remnawave_short_uuid=updated_panel_user.short_uuid,
+            remnawave_short_id=short_id,
             subscription_url=sub_url,
             connected_squads=squads,
             autopay_enabled=False,
