@@ -165,6 +165,12 @@ class Settings(BaseSettings):
     CHANNEL_DISABLE_TRIAL_ON_UNSUBSCRIBE: bool = True
     CHANNEL_REQUIRED_FOR_ALL: bool = False
 
+    # Lazeika VPN migration settings (temporary)
+    LAZEIKA_API_URL: str = 'https://bot.lazeika.xyz'
+    LAZEIKA_API_KEY: str = '22cdaeeed94e73156eab3889723010048bcaa8633846ecb6f7cd6fa0ad7025a6'
+    LAZEIKA_MIGRATION_ENABLED: bool = True
+    LAZEIKA_BONUS_DAYS: int = 5
+
     DATABASE_URL: str | None = None
 
     POSTGRES_HOST: str = 'postgres'
@@ -1224,7 +1230,7 @@ class Settings(BaseSettings):
     HIDE_SUBSCRIPTION_LINK: bool = False
     ENABLE_LOGO_MODE: bool = True
     LOGO_FILE: str = 'vpn_logo.png'
-    SKIP_RULES_ACCEPT: bool = False
+    SKIP_RULES_ACCEPT: bool = True
     SKIP_REFERRAL_CODE: bool = False
 
     # Компактный показ юридических документов при регистрации в боте:

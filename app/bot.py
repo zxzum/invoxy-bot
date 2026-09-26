@@ -9,6 +9,7 @@ from app.handlers import (
     common,
     contests as user_contests,
     menu,
+    migration,
     polls as user_polls,
     promocode,
     referral,
@@ -242,6 +243,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     user_contests.register_handlers(dp)
     user_polls.register_handlers(dp)
     simple_subscription.register_simple_subscription_handlers(dp)
+    migration.register_handlers(dp)
     logger.info('⭐ Зарегистрированы обработчики Telegram Stars платежей')
     logger.info('⚡ Зарегистрированы обработчики простой покупки')
     logger.info('⚡ Зарегистрированы обработчики простой подписки')

@@ -60,6 +60,7 @@ from .info import router as info_router
 from .info_pages import router as info_pages_router
 from .landing import router as landing_router
 from .media import router as media_router
+from .migration import router as migration_router
 from .news import router as news_router
 from .notifications import router as notifications_router
 from .oauth import router as oauth_router
@@ -102,6 +103,7 @@ router.include_router(subscription_router)
 router.include_router(multi_tariff_subscription_router)
 router.include_router(balance_router)
 router.include_router(referral_router)
+router.include_router(migration_router)
 
 # Apple IAP routes
 router.include_router(apple_iap_router)

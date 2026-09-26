@@ -66,7 +66,6 @@ from app.services.pinned_message_service import (
     deliver_pinned_message_to_user,
     get_active_pinned_message,
 )
-from app.services.privacy_policy_service import PrivacyPolicyService
 from app.services.referral_service import (
     process_referral_registration,
     save_pending_campaign,
@@ -1378,8 +1377,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 else:
                     await message.answer(prompt, reply_markup=keyboard)
                 return
-            else:
-                logger.warning('Web auth attempt from unregistered user', telegram_id=message.from_user.id)
+            logger.warning('Web auth attempt from unregistered user', telegram_id=message.from_user.id)
         start_parameter = None  # Invalid token, ignore
 
     # Handle app connect deep links: /start app, /start connect, /start app_connect
@@ -1636,6 +1634,11 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         )
         has_active_subscription, subscription_is_active = _calculate_subscription_flags(first_sub_for_flags)
 
+        if not has_active_subscription:
+            from app.handlers.migration import check_and_prompt_lazeika_migration
+            if await check_and_prompt_lazeika_migration(message, state, db, user):
+                return
+
         pinned_message = await get_active_pinned_message(db)
 
         if pinned_message and pinned_message.send_before_menu:
@@ -1778,6 +1781,10 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             await db.rollback()
     else:
         logger.info('🆕 Новый пользователь, начинаем регистрацию')
+
+    from app.handlers.migration import check_and_prompt_lazeika_migration
+    if await check_and_prompt_lazeika_migration(message, state, db, None):
+        return
 
     data = await state.get_data() or {}
     if not data.get('language'):
@@ -1955,13 +1962,9 @@ async def _show_privacy_policy_after_rules(
 ) -> bool:
     """
     Показывает политику конфиденциальности после принятия правил.
-    Возвращает True, если политика была показана, False если её нет или произошла ошибка.
+    INVOXY: согласие с политикой отключено в боте (достаточно документов на сайте/в кабинете).
     """
-    policy = await PrivacyPolicyService.get_policy(db, language, fallback=True)
-
-    if not policy or not policy.is_enabled:
-        logger.info('⚠️ Политика конфиденциальности не включена, пропускаем её показ')
-        return False
+    return False
 
     if not policy.content or not policy.content.strip():
         privacy_policy_text = get_privacy_policy(language)
