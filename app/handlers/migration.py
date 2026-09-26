@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.crud.user import create_user_no_commit, get_user_by_telegram_id
 from app.database.models import User
 from app.services.migration import check_migration_eligibility, execute_user_migration
-from app.utils.rich_menu import try_answer_rich_main_menu
 
 
 logger = structlog.get_logger(__name__)
@@ -41,7 +40,7 @@ def get_migration_success_keyboard() -> types.InlineKeyboardMarkup:
             [
                 types.InlineKeyboardButton(
                     text='📱 В главное меню',
-                    callback_data='menu:main',
+                    callback_data='back_to_menu',
                 )
             ]
         ]
@@ -128,6 +127,7 @@ async def handle_migration_execute(
             '<i>Все ваши подключённые устройства и ключи продолжают работать без перенастройки!</i>'
         )
 
+        await state.clear()
         try:
             await callback.message.edit_text(
                 success_text,
@@ -173,13 +173,21 @@ async def handle_migration_skip(
     await callback.answer()
     telegram_id = callback.from_user.id
     user = await get_user_by_telegram_id(db, telegram_id)
-    if user:
-        await try_answer_rich_main_menu(callback, user, db)
-    else:
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
+    if not user:
+        user = await create_user_no_commit(
+            db,
+            telegram_id=telegram_id,
+            username=callback.from_user.username,
+            first_name=callback.from_user.first_name,
+            last_name=callback.from_user.last_name,
+            language=callback.from_user.language_code or 'ru',
+        )
+        await db.commit()
+        await db.refresh(user)
+
+    await state.clear()
+    from app.handlers.menu import handle_back_to_menu
+    await handle_back_to_menu(callback, state, user, db)
 
 
 def register_handlers(dp) -> None:

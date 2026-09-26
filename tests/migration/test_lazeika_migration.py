@@ -193,6 +193,7 @@ async def test_execute_user_migration_full_flow():
         mock_annul.assert_called_once_with(
             client_id='laz_c1',
             subscription_id='laz_s1',
+            telegram_id=123456789,
             reason='Мигрирован в Invoxy VPN (@invoxy_bot / invoxy.my)',
         )
 

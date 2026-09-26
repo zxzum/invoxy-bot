@@ -257,6 +257,7 @@ async def execute_user_migration(
         await lazeika_client.annul_subscription(
             client_id=candidate.client_id,
             subscription_id=candidate.subscription_id,
+            telegram_id=telegram_id or user.telegram_id,
             reason='Мигрирован в Invoxy VPN (@invoxy_bot / invoxy.my)',
         )
         logger.info('Annulled Lazeika subscription', client_id=candidate.client_id, sub_id=candidate.subscription_id)

@@ -62,6 +62,7 @@ class LazeikaClient:
         *,
         client_id: str | None = None,
         subscription_id: str | None = None,
+        telegram_id: int | str | None = None,
         reason: str = 'Мигрирован в Invoxy VPN (@invoxy_bot / invoxy.my)',
     ) -> bool:
         """Annuls subscription and blocks old client in Lazeika database."""
@@ -71,6 +72,7 @@ class LazeikaClient:
         payload = {
             'clientId': client_id,
             'subscriptionId': subscription_id,
+            'telegramId': str(telegram_id) if telegram_id else None,
             'reason': reason,
         }
 
