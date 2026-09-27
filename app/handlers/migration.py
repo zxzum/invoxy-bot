@@ -80,8 +80,11 @@ async def check_and_prompt_lazeika_migration(
         )
         return True
     except Exception as e:
-        logger.error('Failed to check and prompt Lazeika migration', telegram_id=telegram_id, error=str(e))
+        logger.warning('Failed to check and prompt Lazeika migration', telegram_id=telegram_id, error=str(e))
         return False
+
+
+_migration_in_progress: set[int] = set()
 
 
 @migration_router.callback_query(F.data == 'lazeika_migrate:execute')
@@ -91,28 +94,68 @@ async def handle_migration_execute(
     db: AsyncSession,
 ):
     """Executes the migration when the user confirms transfer."""
-    await callback.answer('⏳ Выполняем перенос подписки...')
     telegram_id = callback.from_user.id
+    if telegram_id in _migration_in_progress:
+        await callback.answer('⏳ Перенос уже выполняется, пожалуйста, подождите...', show_alert=True)
+        return
 
-    # Ensure user exists in Invoxy DB
-    user = await get_user_by_telegram_id(db, telegram_id)
-    if not user:
-        user = await create_user_no_commit(
-            db,
-            telegram_id=telegram_id,
-            username=callback.from_user.username,
-            first_name=callback.from_user.first_name,
-            last_name=callback.from_user.last_name,
-            language=callback.from_user.language_code or 'ru',
-        )
-        await db.commit()
-        await db.refresh(user)
-
+    _migration_in_progress.add(telegram_id)
     try:
+        await callback.answer('⏳ Выполняем перенос подписки...')
+
+        # Ensure user exists in Invoxy DB
+        user = await get_user_by_telegram_id(db, telegram_id)
+        if not user:
+            user = await create_user_no_commit(
+                db,
+                telegram_id=telegram_id,
+                username=callback.from_user.username,
+                first_name=callback.from_user.first_name,
+                last_name=callback.from_user.last_name,
+                language=callback.from_user.language_code or 'ru',
+            )
+            await db.commit()
+            await db.refresh(user)
+
+        # Check if user already has an active paid subscription
+        user_subs = getattr(user, 'subscriptions', None) or []
+        has_active_paid = any(s.is_active and not s.is_trial for s in user_subs)
+        if has_active_paid:
+            await state.clear()
+            already_text = (
+                '🎉 <b>Ваша подписка уже успешно перенесена!</b>\n\n'
+                'Все ваши подключённые устройства и ключи работают в обычном режиме.\n'
+                'Управление подпиской доступно в главном меню.'
+            )
+            try:
+                await callback.message.edit_text(
+                    already_text,
+                    reply_markup=get_migration_success_keyboard(),
+                    parse_mode='HTML',
+                )
+            except Exception:
+                await callback.message.answer(
+                    already_text,
+                    reply_markup=get_migration_success_keyboard(),
+                    parse_mode='HTML',
+                )
+            return
+
+        # Immediately edit message to loading state so buttons cannot be clicked repeatedly
+        try:
+            await callback.message.edit_text(
+                '⏳ <b>Выполняем перенос вашей подписки...</b>\n\n'
+                'Пожалуйста, подождите несколько секунд. Мы переносим ваши параметры подключения и начисляем бонус 🎁',
+                parse_mode='HTML',
+            )
+        except Exception:
+            pass
+
         result = await execute_user_migration(
             db,
             user,
             telegram_id=telegram_id,
+            source='telegram',
         )
 
         success_text = (
@@ -140,13 +183,37 @@ async def handle_migration_execute(
                 reply_markup=get_migration_success_keyboard(),
                 parse_mode='HTML',
             )
+    except ValueError as val_err:
+        logger.warning(
+            'Migration candidate not found or already migrated',
+            telegram_id=telegram_id,
+            reason=str(val_err),
+        )
+        info_text = (
+            'ℹ️ <b>Подписка не найдена или уже перенесена</b>\n\n'
+            'Активная подписка в Лазейка ВПН не обнаружена, либо перенос уже был завершён ранее.\n\n'
+            'Если вы считаете, что произошла ошибка, обратитесь в нашу поддержку.'
+        )
+        await state.clear()
+        try:
+            await callback.message.edit_text(
+                info_text,
+                reply_markup=get_migration_success_keyboard(),
+                parse_mode='HTML',
+            )
+        except Exception:
+            await callback.message.answer(
+                info_text,
+                reply_markup=get_migration_success_keyboard(),
+                parse_mode='HTML',
+            )
     except Exception as e:
         logger.error(
             'Migration execution failed via Telegram bot', telegram_id=telegram_id, error=str(e), exc_info=True
         )
         error_text = (
             '❌ <b>Не удалось выполнить перенос</b>\n\n'
-            'Произошла ошибка при обработке переноса. Пожалуйста, попробуйте еще раз или обратитесь в поддержку.'
+            'Произошла временная ошибка при обработке переноса. Пожалуйста, попробуйте еще раз через минуту или обратитесь в поддержку.'
         )
         try:
             await callback.message.edit_text(
@@ -160,6 +227,8 @@ async def handle_migration_execute(
                 reply_markup=get_migration_offer_keyboard(),
                 parse_mode='HTML',
             )
+    finally:
+        _migration_in_progress.discard(telegram_id)
 
 
 @migration_router.callback_query(F.data == 'lazeika_migrate:skip')

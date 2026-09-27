@@ -12,6 +12,7 @@ from app.database.crud.subscription import (
     get_active_subscriptions_by_user_id,
     get_subscription_by_user_id,
 )
+from app.database.crud.tariff import get_tariff_by_id
 from app.database.models import Subscription, SubscriptionStatus, User
 from app.external.remnawave_api import UserStatus
 from app.services.migration.lazeika_client import LazeikaClient
@@ -150,10 +151,31 @@ async def execute_user_migration(
     *,
     telegram_id: int | None = None,
     email: str | None = None,
+    source: str = 'telegram',
 ) -> MigrationResult:
     """Executes the complete migration sequence for a user."""
     candidate = await check_migration_eligibility(db, telegram_id=telegram_id, email=email, user=user)
     if not candidate:
+        if user:
+            subs = await get_active_subscriptions_by_user_id(db, user.id)
+            active_paid = [s for s in subs if not s.is_trial and s.status == SubscriptionStatus.ACTIVE.value]
+            if active_paid:
+                sub = active_paid[0]
+                tariff = await get_tariff_by_id(db, sub.tariff_id)
+                tariff_name = tariff.name if tariff else 'Стандарт'
+                end_date_str = sub.end_date.strftime('%d.%m.%Y') if sub.end_date else '—'
+                days_left = max(0, (sub.end_date - datetime.now(UTC)).days) if sub.end_date else 0
+                return MigrationResult(
+                    success=True,
+                    tariff_name=tariff_name,
+                    total_days=days_left,
+                    device_limit=sub.device_limit or 1,
+                    end_date_str=end_date_str,
+                    traffic_limit_gb=sub.traffic_limit_gb or 0,
+                    whitelist_traffic_limit_gb=getattr(sub, 'whitelist_traffic_limit_gb', 0) or 0,
+                    subscription_url=sub.subscription_url or '',
+                    message='Ваша подписка уже успешно перенесена в Invoxy VPN!',
+                )
         raise ValueError('Подписка в Лазейка ВПН не найдена или уже перенесена.')
 
     panel_user_id = int(candidate.remnawave_uuid)
@@ -273,7 +295,7 @@ async def execute_user_migration(
         logger.error('Failed to annul Lazeika subscription (Invoxy migration completed)', error=str(e))
 
     end_date_str = candidate.new_end_date.strftime('%d.%m.%Y')
-    return MigrationResult(
+    result = MigrationResult(
         success=True,
         tariff_name=candidate.target_tariff_name,
         total_days=candidate.total_days,
@@ -284,3 +306,18 @@ async def execute_user_migration(
         subscription_url=sub_url,
         message='Подписка успешно перенесена! Начислен бонус +5 дней и сброшены лимиты трафика.',
     )
+
+    # 4. Notify admin chat with detailed mini-log
+    try:
+        from app.services.admin_notification_service import notify_user_migrated
+        await notify_user_migrated(
+            db,
+            user=user,
+            candidate=candidate,
+            result=result,
+            source=source,
+        )
+    except Exception as e:
+        logger.warning('Failed to send admin migration notification (non-fatal)', error=str(e))
+
+    return result

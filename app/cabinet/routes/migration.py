@@ -73,6 +73,7 @@ async def execute_migration_endpoint(
             current_user,
             email=email,
             telegram_id=current_user.telegram_id,
+            source='cabinet',
         )
         return {
             'success': True,
@@ -88,6 +89,11 @@ async def execute_migration_endpoint(
             },
         }
     except ValueError as val_err:
+        logger.warning(
+            'Cabinet migration skipped or candidate not found',
+            user_id=current_user.id,
+            reason=str(val_err),
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(val_err),

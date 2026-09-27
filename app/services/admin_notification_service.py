@@ -2468,6 +2468,101 @@ class AdminNotificationService:
             category=NotificationCategory.NEW_USERS,
         )
 
+    async def send_migration_notification(
+        self,
+        db: AsyncSession,
+        user: User,
+        candidate: Any,
+        result: Any,
+        *,
+        source: str = 'telegram',
+    ) -> bool:
+        """Уведомление об успешном переносе подписки из Лазейка ВПН в топик PURCHASES."""
+        if not self._is_enabled():
+            return False
+
+        try:
+            user_display = self._get_user_display(user)
+            user_id_display = self._get_user_identifier_display(user)
+
+            lines: list[str] = [
+                '🚀 <b>ПЕРЕНОС ИЗ ЛАЗЕЙКА ВПН</b>',
+                '',
+                f'👤 {user_display} ({user_id_display})',
+            ]
+
+            username = getattr(user, 'username', None)
+            if username:
+                lines.append(f'📱 {format_username_link(username)}')
+
+            email = getattr(user, 'email', None)
+            if email:
+                lines.append(f'📧 {html.escape(email)}')
+
+            source_display = 'Telegram-бот (@invoxy_bot)' if source == 'telegram' else 'Личный кабинет (invoxy.my)'
+            lines.append(f'🌐 Источник: {source_display}')
+            lines.append('')
+            lines.append('📋 <b>Параметры переноса:</b>')
+            lazeika_tariff = getattr(candidate, 'lazeika_tariff_name', '—')
+            new_tariff = getattr(result, 'tariff_name', '—')
+            lines.append(f'• Исходный тариф: <b>{html.escape(str(lazeika_tariff))}</b> (Лазейка)')
+            lines.append(f'• Новый тариф: <b>{html.escape(str(new_tariff))}</b> (Invoxy)')
+
+            total_days = getattr(result, 'total_days', 0)
+            rem_days = getattr(candidate, 'remaining_days', 0)
+            bonus_days = getattr(candidate, 'bonus_days', 5)
+            lines.append(f'• Срок доступа: <b>{total_days} дн.</b> ({rem_days} дн. остаток + {bonus_days} дн. бонус 🎁)')
+
+            end_date = getattr(result, 'end_date_str', '—')
+            lines.append(f'• Действует до: <b>{end_date}</b>')
+
+            device_limit = getattr(result, 'device_limit', 1)
+            lines.append(f'• Лимит устройств: <b>{device_limit} устр.</b>')
+
+            traffic_gb = getattr(result, 'traffic_limit_gb', 0)
+            lines.append(f'• Трафик: <b>{traffic_gb} ГБ</b> (трафик обнулён)')
+
+            panel_uuid = getattr(candidate, 'remnawave_uuid', None)
+            if panel_uuid:
+                lines.append(f'• Remnawave UUID: <code>{panel_uuid}</code>')
+
+            client_id = getattr(candidate, 'client_id', None)
+            if client_id:
+                lines.append(f'• Клиент в Лазейке: <code>{client_id}</code>')
+
+            sub_id = getattr(candidate, 'subscription_id', None)
+            if sub_id:
+                lines.append(f'• Аннулировано в Лазейке: <code>{sub_id}</code>')
+
+            lines.append('')
+            lines.append(f'<i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M")}</i>')
+
+            admin_base = (settings.CABINET_URL or '').rstrip('/')
+            keyboard = None
+            if admin_base and getattr(user, 'id', None):
+                keyboard = types.InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            types.InlineKeyboardButton(
+                                text='🔗 Открыть в админке', url=f'{admin_base}/admin/users/{user.id}'
+                            )
+                        ]
+                    ]
+                )
+
+            return await self._send_message(
+                '\n'.join(lines),
+                keyboard,
+                category=NotificationCategory.PURCHASES,
+            )
+        except Exception as e:
+            logger.warning(
+                'Ошибка отправки уведомления о миграции',
+                error=str(e),
+                user_id=getattr(user, 'id', None),
+            )
+            return False
+
 
 async def notify_new_client_created(db: AsyncSession, user: User, source: str) -> None:
     """Уведомление о новом клиенте в топик NEW_USERS. Никогда не поднимает исключение.
@@ -2487,6 +2582,32 @@ async def notify_new_client_created(db: AsyncSession, user: User, source: str) -
     except Exception as error:
         logger.warning(
             'Не удалось отправить уведомление о новом клиенте',
+            user_id=getattr(user, 'id', None),
+            error=str(error),
+        )
+
+
+async def notify_user_migrated(
+    db: AsyncSession,
+    user: User,
+    candidate: Any,
+    result: Any,
+    *,
+    source: str = 'telegram',
+) -> None:
+    """Уведомление о переносе пользователя в топик PURCHASES. Никогда не поднимает исключение."""
+    if not getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+        return
+
+    try:
+        from app.bot_factory import create_bot
+
+        async with create_bot() as bot:
+            service = AdminNotificationService(bot)
+            await service.send_migration_notification(db, user, candidate, result, source=source)
+    except Exception as error:
+        logger.warning(
+            'Не удалось отправить уведомление о миграции пользователя',
             user_id=getattr(user, 'id', None),
             error=str(error),
         )

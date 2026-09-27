@@ -199,3 +199,41 @@ async def test_execute_user_migration_full_flow():
 
         # Verify DB commit
         mock_db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_user_migration_already_migrated_graceful():
+    """Verify that if user already has an active paid subscription, migration returns gracefully."""
+    mock_db = AsyncMock()
+    user = SimpleNamespace(
+        id=42,
+        telegram_id=123456789,
+        username='cooluser',
+        email='cool@example.com',
+        remnawave_id=183,
+        remnawave_uuid='183',
+    )
+    existing_paid_sub = SimpleNamespace(
+        id=10,
+        tariff_id=3,
+        is_trial=False,
+        status='active',
+        end_date=datetime.now(UTC) + timedelta(days=15),
+        device_limit=5,
+        traffic_limit_gb=600,
+        whitelist_traffic_limit_gb=50,
+        subscription_url='https://sub.invoxy.my/test',
+    )
+    mock_tariff = SimpleNamespace(id=3, name='Стандарт LTE')
+
+    with (
+        patch('app.services.migration.migration_service.check_migration_eligibility', new_callable=AsyncMock, return_value=None),
+        patch('app.services.migration.migration_service.get_active_subscriptions_by_user_id', new_callable=AsyncMock, return_value=[existing_paid_sub]),
+        patch('app.services.migration.migration_service.get_tariff_by_id', new_callable=AsyncMock, return_value=mock_tariff),
+    ):
+        result = await execute_user_migration(mock_db, user, telegram_id=123456789)
+        assert result.success is True
+        assert result.tariff_name == 'Стандарт LTE'
+        assert result.total_days >= 14
+        assert result.device_limit == 5
+        assert 'уже успешно перенесена' in result.message
