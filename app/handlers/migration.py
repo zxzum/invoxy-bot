@@ -63,11 +63,16 @@ async def check_and_prompt_lazeika_migration(
         if not candidate:
             return False
 
+        balance_line = ''
+        if candidate.balance_rub > 0:
+            balance_line = f'💰 Баланс: <b>+{candidate.balance_rub:.2f} ₽</b> (будет зачислен на счёт)\n'
+
         text = (
             '👋 <b>Найдена активная подписка в Лазейка ВПН!</b>\n\n'
             f'📦 Тариф: <b>{candidate.lazeika_tariff_name}</b>\n'
             f'⏳ Осталось: <b>{candidate.remaining_days}</b> дн. (+ <b>5 дней</b> в подарок 🎁)\n'
             f'📱 Лимит устройств: <b>{candidate.device_limit}</b>\n'
+            f'{balance_line}'
             '⚡️ Трафик будет обнулён в качестве бонуса!\n\n'
             'Желаете осуществить перенос в <b>Invoxy VPN</b>?\n'
             '<i>Все ваши настройки подключения и ключи сохранятся — перенастраивать ничего не нужно.</i>'
@@ -105,6 +110,9 @@ async def handle_migration_execute(
 
         # Ensure user exists in Invoxy DB
         user = await get_user_by_telegram_id(db, telegram_id)
+        fsm_data = await state.get_data() or {}
+        ref_code = fsm_data.get('referral_code')
+
         if not user:
             user = await create_user_no_commit(
                 db,
@@ -116,6 +124,20 @@ async def handle_migration_execute(
             )
             await db.commit()
             await db.refresh(user)
+
+        # Attach referrer if user was invited via referral link
+        if user.referred_by_id is None:
+            try:
+                from app.services.referral_service import attach_referrer_if_missing
+                await attach_referrer_if_missing(
+                    db,
+                    user,
+                    referral_code=ref_code,
+                    bot=callback.bot,
+                    source='bot_migration',
+                )
+            except Exception as e:
+                logger.warning('Failed to attach referrer during bot migration', error=str(e))
 
         # Check if user already has an active paid subscription
         user_subs = getattr(user, 'subscriptions', None) or []
@@ -158,10 +180,17 @@ async def handle_migration_execute(
             source='telegram',
         )
 
+        balance_success = ''
+        if result.balance_transferred_rub > 0:
+            balance_success = (
+                f'💰 Перенесён баланс: <b>+{result.balance_transferred_rub:.2f} ₽</b> (зачислен на ваш счёт)\n'
+            )
+
         success_text = (
             '🎉 <b>Подписка успешно перенесена!</b>\n\n'
             'Теперь всё управление осуществляется через этого бота: <b>@invoxy_bot</b>\n'
             '🎁 Начислен бонус: <b>+5 дней</b>!\n'
+            f'{balance_success}'
             '⚡️ Лимиты трафика сброшены!\n\n'
             '📋 <b>Параметры вашей подписки:</b>\n'
             f'• Тариф: <b>{result.tariff_name}</b>\n'

@@ -47,6 +47,7 @@ async def check_migration(
                 'traffic_limit_gb': candidate.traffic_limit_gb,
                 'whitelist_traffic_limit_gb': candidate.whitelist_traffic_limit_gb,
                 'expires_at': candidate.expires_at_str,
+                'balance_rub': candidate.balance_rub,
             },
         }
     except Exception as e:
@@ -85,6 +86,8 @@ async def execute_migration_endpoint(
                 'traffic_limit_gb': result.traffic_limit_gb,
                 'whitelist_traffic_limit_gb': result.whitelist_traffic_limit_gb,
                 'subscription_url': result.subscription_url,
+                'balance_transferred_rub': result.balance_transferred_rub,
+                'balance_kopeks': result.balance_kopeks,
                 'message': result.message,
             },
         }

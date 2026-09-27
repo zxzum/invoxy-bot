@@ -130,6 +130,8 @@ async def test_execute_user_migration_full_flow():
         email='cool@example.com',
         remnawave_id=None,
         remnawave_uuid=None,
+        referred_by_id=None,
+        balance_kopeks=0,
     )
 
     candidate = SimpleNamespace(
@@ -147,6 +149,7 @@ async def test_execute_user_migration_full_flow():
         remnawave_uuid='183',
         expires_at_str='25.10.2026',
         new_end_date=datetime.now(UTC) + timedelta(days=25),
+        balance_rub=150.0,
     )
 
     mock_panel_user = SimpleNamespace(
@@ -179,6 +182,9 @@ async def test_execute_user_migration_full_flow():
         assert result.tariff_name == 'Премиум LTE'
         assert result.total_days == 25
         assert result.device_limit == 10
+        assert result.balance_transferred_rub == 150.0
+        assert result.balance_kopeks == 15000
+        assert user.balance_kopeks == 15000
         assert user.remnawave_id == 183
 
         # Verify Remnawave API was called to rename user and reset traffic

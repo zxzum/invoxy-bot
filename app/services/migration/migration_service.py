@@ -13,7 +13,7 @@ from app.database.crud.subscription import (
     get_subscription_by_user_id,
 )
 from app.database.crud.tariff import get_tariff_by_id
-from app.database.models import Subscription, SubscriptionStatus, User
+from app.database.models import Subscription, SubscriptionStatus, Transaction, TransactionType, User
 from app.external.remnawave_api import UserStatus
 from app.services.migration.lazeika_client import LazeikaClient
 from app.services.migration.tariff_mapping import resolve_target_tariff
@@ -39,6 +39,7 @@ class MigrationCandidate:
     remnawave_uuid: str
     expires_at_str: str
     new_end_date: datetime
+    balance_rub: float = 0.0
 
 
 @dataclass
@@ -51,6 +52,8 @@ class MigrationResult:
     traffic_limit_gb: int
     whitelist_traffic_limit_gb: int
     subscription_url: str = ''
+    balance_transferred_rub: float = 0.0
+    balance_kopeks: int = 0
     message: str = ''
 
 
@@ -127,6 +130,12 @@ async def check_migration_eligibility(
     lazeika_devices = active_sub.get('deviceLimit') or 1
     device_limit = max(int(lazeika_devices), target_tariff.device_limit)
 
+    raw_balance = client_info.get('balance')
+    try:
+        balance_rub = float(raw_balance) if raw_balance is not None else 0.0
+    except (ValueError, TypeError):
+        balance_rub = 0.0
+
     return MigrationCandidate(
         client_id=str(client_info.get('id')),
         subscription_id=str(active_sub.get('id')),
@@ -142,6 +151,7 @@ async def check_migration_eligibility(
         remnawave_uuid=remnawave_uuid,
         expires_at_str=exp_dt.strftime('%d.%m.%Y'),
         new_end_date=new_end_date,
+        balance_rub=balance_rub,
     )
 
 
@@ -185,7 +195,16 @@ async def execute_user_migration(
         panel_user_id=panel_user_id,
         target_tariff=candidate.target_tariff_name,
         total_days=candidate.total_days,
+        balance_rub=candidate.balance_rub,
     )
+
+    # 0. Attach referrer if missing (e.g. from Redis pending referral)
+    if user and user.referred_by_id is None:
+        try:
+            from app.services.referral_service import attach_referrer_if_missing
+            await attach_referrer_if_missing(db, user, source=f'migration_{source}')
+        except Exception as e:
+            logger.warning('Failed to attach referrer during migration (non-fatal)', user_id=user.id, error=str(e))
 
     # 1. Update Remnawave user
     new_username = f'invoxy_{user.telegram_id}' if user.telegram_id else f'invoxy_u{user.id}'
@@ -277,6 +296,28 @@ async def execute_user_migration(
         )
         db.add(subscription)
 
+    # 2.5 Credit migrated balance if present
+    balance_kopeks = int(round(candidate.balance_rub * 100)) if candidate.balance_rub > 0 else 0
+    if balance_kopeks > 0:
+        user.balance_kopeks = (user.balance_kopeks or 0) + balance_kopeks
+        tx = Transaction(
+            user_id=user.id,
+            amount_kopeks=balance_kopeks,
+            type=TransactionType.DEPOSIT.value,
+            payment_method='migration',
+            description=f'Перенос баланса из Лазейка ВПН ({candidate.balance_rub:.2f} ₽)',
+            is_completed=True,
+            created_at=now,
+            completed_at=now,
+        )
+        db.add(tx)
+        logger.info(
+            'Migrated balance credited',
+            user_id=user.id,
+            balance_rub=candidate.balance_rub,
+            balance_kopeks=balance_kopeks,
+        )
+
     db.add(user)
     await db.commit()
     await db.refresh(user)
@@ -295,6 +336,10 @@ async def execute_user_migration(
         logger.error('Failed to annul Lazeika subscription (Invoxy migration completed)', error=str(e))
 
     end_date_str = candidate.new_end_date.strftime('%d.%m.%Y')
+    msg_parts = ['Подписка успешно перенесена! Начислен бонус +5 дней и сброшены лимиты трафика.']
+    if candidate.balance_rub > 0:
+        msg_parts.append(f'Перенесён баланс: {candidate.balance_rub:.2f} ₽.')
+
     result = MigrationResult(
         success=True,
         tariff_name=candidate.target_tariff_name,
@@ -304,7 +349,9 @@ async def execute_user_migration(
         traffic_limit_gb=candidate.traffic_limit_gb,
         whitelist_traffic_limit_gb=candidate.whitelist_traffic_limit_gb,
         subscription_url=sub_url,
-        message='Подписка успешно перенесена! Начислен бонус +5 дней и сброшены лимиты трафика.',
+        balance_transferred_rub=candidate.balance_rub,
+        balance_kopeks=balance_kopeks,
+        message=' '.join(msg_parts),
     )
 
     # 4. Notify admin chat with detailed mini-log

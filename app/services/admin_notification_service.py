@@ -2522,6 +2522,14 @@ class AdminNotificationService:
             traffic_gb = getattr(result, 'traffic_limit_gb', 0)
             lines.append(f'• Трафик: <b>{traffic_gb} ГБ</b> (трафик обнулён)')
 
+            transferred_rub = getattr(candidate, 'balance_rub', 0.0) or getattr(result, 'balance_transferred_rub', 0.0)
+            if transferred_rub > 0:
+                lines.append(f'• Перенесённый баланс: <b>+{transferred_rub:.2f} ₽</b> 💰')
+
+            referrer_id = getattr(user, 'referred_by_id', None)
+            if referrer_id:
+                lines.append(f'• Пригласитель (реферер ID): <code>{referrer_id}</code> 👥')
+
             panel_uuid = getattr(candidate, 'remnawave_uuid', None)
             if panel_uuid:
                 lines.append(f'• Remnawave UUID: <code>{panel_uuid}</code>')
