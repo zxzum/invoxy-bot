@@ -1634,7 +1634,10 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         )
         has_active_subscription, subscription_is_active = _calculate_subscription_flags(first_sub_for_flags)
 
-        if not has_active_subscription:
+        has_active_paid = any(
+            s.is_active and not s.is_trial for s in user_subs_for_flags
+        )
+        if not has_active_paid:
             from app.handlers.migration import check_and_prompt_lazeika_migration
             if await check_and_prompt_lazeika_migration(message, state, db, user):
                 return
@@ -2599,6 +2602,14 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
         except Exception as e:
             logger.error('Ошибка отправки сообщения о бонусе кампании', error=e)
 
+    has_active_paid = any(
+        s.is_active and not s.is_trial for s in (getattr(user, 'subscriptions', None) or [])
+    )
+    if not has_active_paid:
+        from app.handlers.migration import check_and_prompt_lazeika_migration
+        if await check_and_prompt_lazeika_migration(callback.message, state, db, user):
+            return
+
     from app.database.crud.welcome_text import get_welcome_text_for_user
 
     offer_text = await get_welcome_text_for_user(db, callback.from_user)
@@ -2987,6 +2998,14 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
             await message.answer(campaign_message)
         except Exception as e:
             logger.error('Ошибка отправки сообщения о бонусе кампании', error=e)
+
+    has_active_paid = any(
+        s.is_active and not s.is_trial for s in (getattr(user, 'subscriptions', None) or [])
+    )
+    if not has_active_paid:
+        from app.handlers.migration import check_and_prompt_lazeika_migration
+        if await check_and_prompt_lazeika_migration(message, state, db, user):
+            return
 
     from app.database.crud.welcome_text import get_welcome_text_for_user
 
