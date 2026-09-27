@@ -52,14 +52,23 @@ async def check_and_prompt_lazeika_migration(
     state: FSMContext,
     db: AsyncSession,
     user: User | None = None,
+    telegram_id: int | None = None,
 ) -> bool:
     """Checks if the user has an active subscription in Lazeika VPN and offers transfer.
 
     Returns True if an offer was displayed, False otherwise.
     """
-    telegram_id = message.from_user.id
+    target_tg_id = (
+        telegram_id
+        or (user.telegram_id if user and user.telegram_id else None)
+        or (message.chat.id if message and message.chat and getattr(message.chat, 'type', None) == 'private' else None)
+        or (message.from_user.id if message and message.from_user else None)
+    )
+    if not target_tg_id:
+        return False
+
     try:
-        candidate = await check_migration_eligibility(db, telegram_id=telegram_id, user=user)
+        candidate = await check_migration_eligibility(db, telegram_id=target_tg_id, user=user)
         if not candidate:
             return False
 
@@ -85,7 +94,7 @@ async def check_and_prompt_lazeika_migration(
         )
         return True
     except Exception as e:
-        logger.warning('Failed to check and prompt Lazeika migration', telegram_id=telegram_id, error=str(e))
+        logger.warning('Failed to check and prompt Lazeika migration', telegram_id=target_tg_id, error=str(e))
         return False
 
 

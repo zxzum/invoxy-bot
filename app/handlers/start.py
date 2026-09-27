@@ -1639,7 +1639,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         )
         if not has_active_paid:
             from app.handlers.migration import check_and_prompt_lazeika_migration
-            if await check_and_prompt_lazeika_migration(message, state, db, user):
+            if await check_and_prompt_lazeika_migration(message, state, db, user, telegram_id=user.telegram_id):
                 return
 
         pinned_message = await get_active_pinned_message(db)
@@ -1786,7 +1786,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         logger.info('🆕 Новый пользователь, начинаем регистрацию')
 
     from app.handlers.migration import check_and_prompt_lazeika_migration
-    if await check_and_prompt_lazeika_migration(message, state, db, None):
+    if await check_and_prompt_lazeika_migration(message, state, db, None, telegram_id=message.from_user.id):
         return
 
     data = await state.get_data() or {}
@@ -2607,7 +2607,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
     )
     if not has_active_paid:
         from app.handlers.migration import check_and_prompt_lazeika_migration
-        if await check_and_prompt_lazeika_migration(callback.message, state, db, user):
+        if await check_and_prompt_lazeika_migration(callback.message, state, db, user, telegram_id=callback.from_user.id):
             return
 
     from app.database.crud.welcome_text import get_welcome_text_for_user
@@ -3004,7 +3004,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
     )
     if not has_active_paid:
         from app.handlers.migration import check_and_prompt_lazeika_migration
-        if await check_and_prompt_lazeika_migration(message, state, db, user):
+        if await check_and_prompt_lazeika_migration(message, state, db, user, telegram_id=user.telegram_id):
             return
 
     from app.database.crud.welcome_text import get_welcome_text_for_user
