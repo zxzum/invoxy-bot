@@ -815,6 +815,7 @@ async def _create_payment_link(
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_method_type=payment_method_type,
                 return_url=success_url,
+                extra_metadata=extra_metadata,
             )
 
             if result and result.get('payment_url'):
@@ -1404,6 +1405,34 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
             'error': ('❌', 'Ошибка'),
             'amount_mismatch': ('⚠️', 'Несовпадение суммы'),
         }
+    if record.method == PaymentMethod.ROLLYPAY:
+        mapping = {
+            'pending': ('⏳', 'Ожидает оплаты'),
+            'created': ('⏳', 'Ожидает оплаты'),
+            'processing': ('⌛', 'Обрабатывается'),
+            'paid': ('✅', 'Оплачено'),
+            'success': ('✅', 'Оплачено'),
+            'expired': ('⌛', 'Истёк'),
+            'canceled': ('❌', 'Отменено'),
+            'cancelled': ('❌', 'Отменено'),
+            'chargeback': ('⚠️', 'Чарджбэк'),
+            'amount_mismatch': ('⚠️', 'Несовпадение суммы'),
+        }
+        return mapping.get(status, ('❓', 'Неизвестно'))
+
+    if record.method in (PaymentMethod.SEVERPAY, PaymentMethod.OVERPAY, PaymentMethod.PAYPEAR, PaymentMethod.AURAPAY):
+        mapping = {
+            'pending': ('⏳', 'Ожидает оплаты'),
+            'created': ('⏳', 'Ожидает оплаты'),
+            'processing': ('⌛', 'Обрабатывается'),
+            'paid': ('✅', 'Оплачено'),
+            'success': ('✅', 'Оплачено'),
+            'expired': ('⌛', 'Истёк'),
+            'canceled': ('❌', 'Отменено'),
+            'cancelled': ('❌', 'Отменено'),
+            'failed': ('❌', 'Ошибка'),
+            'amount_mismatch': ('⚠️', 'Несовпадение суммы'),
+        }
         return mapping.get(status, ('❓', 'Неизвестно'))
 
     return '❓', 'Неизвестно'
@@ -1434,17 +1463,15 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status in {'pending', 'authorized'}
     if record.method == PaymentMethod.FREEKASSA:
         return status in {'pending', 'created', 'processing'}
-    if record.method == PaymentMethod.KASSA_AI:
+    if record.method == PaymentMethod.ROLLYPAY:
         return status in {'pending', 'created', 'processing'}
-    if record.method == PaymentMethod.RIOPAY:
-        return status in {'pending'}
-    if record.method == PaymentMethod.CISPAY:
-        return status in {'pending'}
+    if record.method in (PaymentMethod.KASSA_AI, PaymentMethod.SEVERPAY, PaymentMethod.OVERPAY, PaymentMethod.PAYPEAR, PaymentMethod.AURAPAY):
+        return status in {'pending', 'created', 'processing'}
+    if record.method in (PaymentMethod.RIOPAY, PaymentMethod.CISPAY, PaymentMethod.PARITYPAY):
+        return status == 'pending'
     if record.method == PaymentMethod.TABPAY:
         # PENDING держится 20 минут после начала оплаты, поэтому проверяем и его.
         return status in {'pending', 'processing'}
-    if record.method == PaymentMethod.PARITYPAY:
-        return status in {'pending'}
     return False
 
 

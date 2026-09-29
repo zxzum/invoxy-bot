@@ -376,6 +376,7 @@ async def send_cart_notification_after_topup(
     bot: Any | None,
     *,
     notify_email: bool = True,
+    cart_data_fallback: dict | None = None,
 ) -> bool:
     """Run post-topup side-effects: resume daily / auto-purchase saved cart / auto-extend.
 
@@ -414,7 +415,7 @@ async def send_cart_notification_after_topup(
             exc_info=True,
         )
 
-    cart_data = await user_cart_service.get_user_cart(user.id)
+    cart_data = await user_cart_service.get_user_cart(user.id) or cart_data_fallback
     # В приоритете всегда сохраненная корзина: она отражает явный выбор пользователя
     # (период/тариф/сумма). Автопродление expired — только когда корзины нет.
     if cart_data:
@@ -433,7 +434,7 @@ async def send_cart_notification_after_topup(
         # оно дублировало «Пополнение успешно!», а его клавиатура не учитывала
         # MAIN_MENU_MODE=cabinet и уводила из миниаппа в полное меню бота.
         try:
-            await auto_purchase_saved_cart_after_topup(db, user, bot=bot)
+            await auto_purchase_saved_cart_after_topup(db, user, bot=bot, cart_data_fallback=cart_data_fallback)
         except Exception as auto_error:
             logger.error(
                 'Ошибка автоматической покупки подписки для пользователя',

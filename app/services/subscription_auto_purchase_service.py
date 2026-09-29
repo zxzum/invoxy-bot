@@ -3732,6 +3732,7 @@ async def auto_purchase_saved_cart_after_topup(
     user: User,
     *,
     bot: Bot | None = None,
+    cart_data_fallback: dict | None = None,
 ) -> bool:
     """Attempts to automatically purchase subscriptions from saved carts.
 
@@ -3739,6 +3740,7 @@ async def auto_purchase_saved_cart_after_topup(
     and the legacy global cart (``user_cart:{user_id}``).  When multiple
     per-subscription carts exist (multi-tariff mode), each is processed
     independently so that one subscription's cart cannot shadow another's.
+    Also accepts ``cart_data_fallback`` directly associated with a verified payment.
     """
 
     if not settings.is_auto_purchase_after_topup_enabled():
@@ -3786,7 +3788,10 @@ async def auto_purchase_saved_cart_after_topup(
             carts_to_process.append(global_cart)
 
     if not carts_to_process:
-        return False
+        if cart_data_fallback:
+            carts_to_process.append(cart_data_fallback)
+        else:
+            return False
 
     # «Свежее намерение»: тихо списать баланс на подписку из корзины можно ТОЛЬКО
     # если пользователь недавно (в пределах окна) явно вошёл в поток «недостаточно
@@ -3797,12 +3802,19 @@ async def auto_purchase_saved_cart_after_topup(
     # другого (подарок, просто деньги, забытая корзина): корзину НЕ трогаем.
     has_fresh_intent = await user_cart_service.has_topup_intent(user.id)
     if not has_fresh_intent:
-        logger.info(
-            'Автопокупка: пропуск — нет свежего намерения пополнить ради корзины',
-            format_user_id=_format_user_id(user),
-            cart_count=len(carts_to_process),
-        )
-        return False
+        if cart_data_fallback:
+            logger.info(
+                'Автопокупка: намерение в Redis истекло, но есть подтверждённый cart_data_fallback от платежа',
+                format_user_id=_format_user_id(user),
+            )
+            has_fresh_intent = True
+        else:
+            logger.info(
+                'Автопокупка: пропуск — нет свежего намерения пополнить ради корзины',
+                format_user_id=_format_user_id(user),
+                cart_count=len(carts_to_process),
+            )
+            return False
 
     logger.info(
         'Автопокупка: обнаружено корзин у пользователя',

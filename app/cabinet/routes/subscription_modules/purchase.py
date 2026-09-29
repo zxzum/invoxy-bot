@@ -1616,6 +1616,7 @@ async def create_tariff_invoice(
             'purpose': 'tariff_purchase',
             'tariff_id': str(ctx.tariff.id),
             'source': 'cabinet',
+            'cart_data': cart_data,
         },
     )
     if not payment_url:

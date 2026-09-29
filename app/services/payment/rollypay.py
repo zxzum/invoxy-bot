@@ -41,6 +41,7 @@ class RollyPayPaymentMixin:
         language: str = 'ru',
         payment_method_type: str | None = None,
         return_url: str | None = None,
+        extra_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж RollyPay.
@@ -69,29 +70,44 @@ class RollyPayPaymentMixin:
             )
             return None
 
-        # Получаем telegram_id пользователя для order_id
+        # Получаем telegram_id или id пользователя для order_id
         payment_module = import_module('app.services.payment_service')
         if user_id is not None:
             user = await payment_module.get_user_by_id(db, user_id)
-            tg_id = user.telegram_id if user else user_id
+            tg_id = (user.telegram_id or user.id) if user else user_id
         else:
             user = None
             tg_id = 'guest'
 
-        # Генерируем уникальный order_id с telegram_id для удобного поиска
+        # Генерируем уникальный order_id с telegram_id/user_id для удобного поиска
         order_id = f'rp{tg_id}_{uuid.uuid4().hex[:6]}'
         amount_rubles = amount_kopeks / 100
         amount_value = f'{amount_rubles:.2f}'
         currency = settings.ROLLYPAY_CURRENCY
 
-        # Метаданные
-        metadata = {
+        # Метаданные для локального сохранения
+        metadata: dict[str, Any] = {
             'user_id': user_id,
             'amount_kopeks': amount_kopeks,
             'description': description,
             'language': language,
             'type': 'balance_topup',
         }
+        if extra_metadata:
+            metadata.update(extra_metadata)
+
+        # Компактные метаданные для внешнего API RollyPay
+        api_metadata: dict[str, Any] = {
+            'user_id': user_id,
+            'amount_kopeks': amount_kopeks,
+            'description': description,
+            'language': language,
+            'type': str(metadata.get('type', 'balance_topup')),
+        }
+        if metadata.get('purpose'):
+            api_metadata['purpose'] = str(metadata['purpose'])
+        if metadata.get('tariff_id'):
+            api_metadata['tariff_id'] = str(metadata['tariff_id'])
 
         try:
             # Используем API для создания платежа
@@ -103,7 +119,7 @@ class RollyPayPaymentMixin:
                 description=description,
                 redirect_url=return_url or settings.ROLLYPAY_RETURN_URL,
                 customer_id=str(tg_id),
-                metadata=metadata,
+                metadata=api_metadata,
             )
 
             payment_url = result.get('pay_url')
@@ -497,10 +513,72 @@ class RollyPayPaymentMixin:
             except Exception as error:
                 logger.error('Ошибка отправки уведомления пользователю RollyPay', error=error)
 
+        # Resolve cart_data_fallback from metadata or reconstruct from description/purpose
+        cart_data_fallback = metadata.get('cart_data')
+        if not cart_data_fallback:
+            try:
+                desc = getattr(payment, 'description', '') or metadata.get('description', '')
+                import re
+
+                match_period = re.search(r'Оплата тарифа «(?P<name>.+?)» \((?P<days>\d+) дн\.\)', desc)
+                match_daily = re.search(r'Активация суточного тарифа «(?P<name>.+?)»', desc)
+
+                target_tariff = None
+                period_days = 0
+                is_daily = False
+
+                if match_period:
+                    tariff_name = match_period.group('name')
+                    period_days = int(match_period.group('days'))
+                elif match_daily:
+                    tariff_name = match_daily.group('name')
+                    period_days = 1
+                    is_daily = True
+                elif metadata.get('purpose') == 'tariff_purchase' and metadata.get('tariff_id'):
+                    t_id = int(metadata['tariff_id'])
+                    from app.database.crud.tariff import get_tariff_by_id
+
+                    target_tariff = await get_tariff_by_id(db, t_id)
+                    if target_tariff:
+                        period_days = int(metadata.get('period_days', 30))
+                        is_daily = getattr(target_tariff, 'is_daily', False)
+
+                if (match_period or match_daily) and not target_tariff:
+                    from app.database.crud.tariff import get_all_active_tariffs
+
+                    tariffs = await get_all_active_tariffs(db)
+                    target_tariff = next((t for t in tariffs if t.name == tariff_name), None)
+
+                if target_tariff and period_days > 0:
+                    cart_data_fallback = {
+                        'cart_mode': 'daily_tariff_purchase' if is_daily else 'tariff_purchase',
+                        'tariff_id': target_tariff.id,
+                        'period_days': period_days,
+                        'total_price': payment.amount_kopeks,
+                        'user_id': user.id,
+                        'saved_cart': True,
+                        'missing_amount': 0,
+                        'return_to_cart': True,
+                        'description': desc,
+                        'source': 'cabinet',
+                    }
+                    if is_daily:
+                        cart_data_fallback['is_daily'] = True
+                        cart_data_fallback['daily_price_kopeks'] = payment.amount_kopeks
+                    metadata['cart_data'] = cart_data_fallback
+            except Exception as fallback_err:
+                logger.warning('Не удалось сформировать cart_data_fallback для RollyPay', error=str(fallback_err))
+
         try:
             from app.services.payment.common import send_cart_notification_after_topup
 
-            await send_cart_notification_after_topup(user, payment.amount_kopeks, db, getattr(self, 'bot', None))
+            await send_cart_notification_after_topup(
+                user,
+                payment.amount_kopeks,
+                db,
+                getattr(self, 'bot', None),
+                cart_data_fallback=cart_data_fallback,
+            )
         except Exception as error:
             logger.error(
                 'Ошибка при работе с сохраненной корзиной для пользователя',
