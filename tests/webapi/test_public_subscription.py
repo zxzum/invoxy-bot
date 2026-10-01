@@ -143,3 +143,38 @@ async def test_public_app_config_returns_panel_template(monkeypatch):
     assert response.json()['status'] == 'ready'
     assert response.json()['platforms']['ios']['apps'][0]['name'] == 'Panel App'
     db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_public_quota_falls_back_to_remnawave_lookup(monkeypatch):
+    subscription = SimpleNamespace(whitelist_traffic_limit_gb=50, whitelist_traffic_used_bytes=10 * 1024**3)
+    # First execute returns None (not found by token directly), second returns subscription by panel id
+    results = [_Result(None), _Result(subscription)]
+    db = _Db(None)
+    db.execute = AsyncMock(side_effect=results)
+
+    monkeypatch.setattr(public_subscription, 'get_client_ip', lambda _request: '203.0.113.10')
+    monkeypatch.setattr(public_subscription.RateLimitCache, 'is_ip_rate_limited', AsyncMock(return_value=False))
+    monkeypatch.setattr(public_subscription.RateLimitCache, 'is_subject_rate_limited', AsyncMock(return_value=False))
+
+    mock_api = AsyncMock()
+    mock_api.get_user_by_short_uuid = AsyncMock(return_value=SimpleNamespace(id=999))
+    mock_api_ctx = AsyncMock()
+    mock_api_ctx.__aenter__.return_value = mock_api
+    mock_api_ctx.__aexit__.return_value = None
+
+    mock_rw_service = SimpleNamespace(_config_error=None, get_api_client=lambda: mock_api_ctx)
+
+    monkeypatch.setattr('app.services.remnawave_service.RemnaWaveService', lambda: mock_rw_service)
+
+    async with AsyncClient(transport=ASGITransport(app=_app(db)), base_url='http://test') as client:
+        response = await client.post(
+            '/v1/whitelist/quota',
+            headers={'Authorization': 'Bearer fallback_token'},
+        )
+
+    assert response.status_code == 200
+    assert response.json()['status'] == 'ready'
+    assert response.json()['limitBytes'] == 50 * 1024**3
+    assert db.execute.await_count == 2
+

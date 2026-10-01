@@ -243,3 +243,85 @@ async def test_execute_user_migration_already_migrated_graceful():
         assert result.total_days >= 14
         assert result.device_limit == 5
         assert 'уже успешно перенесена' in result.message
+
+
+@pytest.mark.asyncio
+async def test_resolve_target_tariff_rejects_trials_and_unknown():
+    """Verify resolve_target_tariff returns None for unknown or trial names."""
+    mock_db = AsyncMock()
+    assert await resolve_target_tariff(mock_db, '') is None
+    assert await resolve_target_tariff(mock_db, '   ') is None
+    assert await resolve_target_tariff(mock_db, 'Триал') is None
+    assert await resolve_target_tariff(mock_db, 'Пробный') is None
+    assert await resolve_target_tariff(mock_db, 'Пробный период') is None
+    assert await resolve_target_tariff(mock_db, 'Неизвестный тариф') is None
+
+
+@pytest.mark.asyncio
+async def test_check_migration_rejects_trial_subscriptions():
+    """Verify check_migration_eligibility rejects subscriptions that are trials."""
+    mock_db = AsyncMock()
+
+    # Case 1: Empty tariffName and empty trafficLimitBytes (classic Lazeika trial)
+    trial_context_1 = {
+        'found': True,
+        'client': {'id': 'laz_c1', 'telegramId': '558134111', 'isBlocked': False},
+        'subscriptions': [
+            {
+                'id': 'laz_s1',
+                'tariffName': '',
+                'status': 'ACTIVE',
+                'expiresAt': (datetime.now(UTC) + timedelta(days=2)).isoformat(),
+                'remnawaveUuid': '311',
+                'deviceLimit': 1,
+                'trafficLimitBytes': '',
+                'localTrafficLimitBytes': '',
+            }
+        ],
+    }
+
+    # Case 2: Named 'Пробный'
+    trial_context_2 = {
+        'found': True,
+        'client': {'id': 'laz_c2', 'telegramId': '558134112', 'isBlocked': False},
+        'subscriptions': [
+            {
+                'id': 'laz_s2',
+                'tariffName': 'Пробный',
+                'status': 'ACTIVE',
+                'expiresAt': (datetime.now(UTC) + timedelta(days=2)).isoformat(),
+                'remnawaveUuid': '312',
+                'deviceLimit': 1,
+                'trafficLimitBytes': '10737418240',
+            }
+        ],
+    }
+
+    # Case 3: isTrial = True
+    trial_context_3 = {
+        'found': True,
+        'client': {'id': 'laz_c3', 'telegramId': '558134113', 'isBlocked': False},
+        'subscriptions': [
+            {
+                'id': 'laz_s3',
+                'tariffName': 'Стандарт',
+                'status': 'ACTIVE',
+                'isTrial': True,
+                'expiresAt': (datetime.now(UTC) + timedelta(days=2)).isoformat(),
+                'remnawaveUuid': '313',
+                'deviceLimit': 5,
+                'trafficLimitBytes': '805306368000',
+            }
+        ],
+    }
+
+    with patch.object(LazeikaClient, 'get_client_context', new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = trial_context_1
+        assert await check_migration_eligibility(mock_db, telegram_id=558134111) is None
+
+        mock_get.return_value = trial_context_2
+        assert await check_migration_eligibility(mock_db, telegram_id=558134112) is None
+
+        mock_get.return_value = trial_context_3
+        assert await check_migration_eligibility(mock_db, telegram_id=558134113) is None
+

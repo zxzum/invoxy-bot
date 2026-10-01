@@ -1575,7 +1575,14 @@ async def refresh_traffic(
             traffic_stats = None
 
         if not traffic_stats:
-            # Return current database values if RemnaWave unavailable
+            wl_limit = getattr(subscription, 'whitelist_traffic_limit_gb', 0) or 0
+            wl_used_bytes = getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0
+            wl_used_gb = wl_used_bytes / (1024**3)
+            wl_percent = (
+                min(100.0, (wl_used_gb / wl_limit) * 100)
+                if wl_limit > 0
+                else 0.0
+            )
             traffic_data = {
                 'traffic_used_bytes': int((subscription.traffic_used_gb or 0) * (1024**3)),
                 'traffic_used_gb': round(subscription.traffic_used_gb or 0, 2),
@@ -1588,6 +1595,10 @@ async def refresh_traffic(
                     1,
                 ),
                 'is_unlimited': (subscription.traffic_limit_gb or 0) == 0,
+                'whitelist_traffic_limit_gb': wl_limit,
+                'whitelist_traffic_used_bytes': wl_used_bytes,
+                'whitelist_traffic_used_gb': round(wl_used_gb, 2),
+                'whitelist_traffic_used_percent': round(wl_percent, 1),
             }
             return {
                 'success': True,
@@ -1610,6 +1621,15 @@ async def refresh_traffic(
         else:
             percent = 0
 
+        wl_limit = getattr(subscription, 'whitelist_traffic_limit_gb', 0) or 0
+        wl_used_bytes = getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0
+        wl_used_gb = wl_used_bytes / (1024**3)
+        wl_percent = (
+            min(100.0, (wl_used_gb / wl_limit) * 100)
+            if wl_limit > 0
+            else 0.0
+        )
+
         traffic_data = {
             'traffic_used_bytes': traffic_stats.get('used_traffic_bytes', 0),
             'traffic_used_gb': round(used_gb, 2),
@@ -1619,6 +1639,10 @@ async def refresh_traffic(
             'is_unlimited': limit_gb == 0,
             'lifetime_used_bytes': traffic_stats.get('lifetime_used_traffic_bytes', 0),
             'lifetime_used_gb': round(traffic_stats.get('lifetime_used_traffic_gb', 0), 2),
+            'whitelist_traffic_limit_gb': wl_limit,
+            'whitelist_traffic_used_bytes': wl_used_bytes,
+            'whitelist_traffic_used_gb': round(wl_used_gb, 2),
+            'whitelist_traffic_used_percent': round(wl_percent, 1),
         }
 
         # Cache the result

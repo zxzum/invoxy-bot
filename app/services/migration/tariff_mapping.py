@@ -55,10 +55,16 @@ FALLBACK_TARIFFS: dict[str, TargetTariffInfo] = {
 }
 
 
-async def resolve_target_tariff(db: AsyncSession, lazeika_tariff_name: str) -> TargetTariffInfo:
-    """Finds the corresponding Invoxy tariff based on Lazeika tariff name."""
+async def resolve_target_tariff(db: AsyncSession, lazeika_tariff_name: str) -> TargetTariffInfo | None:
+    """Finds the corresponding Invoxy tariff based on Lazeika tariff name.
+
+    Returns None if the tariff name is empty, unknown, or represents a trial.
+    """
     clean_name = (lazeika_tariff_name or '').strip().lower()
-    target_name = LAZEIKA_TO_INVOXY_NAME_MAP.get(clean_name, 'Стандарт LTE')
+    if not clean_name or clean_name not in LAZEIKA_TO_INVOXY_NAME_MAP:
+        return None
+
+    target_name = LAZEIKA_TO_INVOXY_NAME_MAP[clean_name]
 
     # Look up tariff in DB
     result = await db.execute(select(Tariff).where(Tariff.name == target_name, Tariff.is_active == True))
@@ -80,4 +86,5 @@ async def resolve_target_tariff(db: AsyncSession, lazeika_tariff_name: str) -> T
         )
 
     # Return predefined fallback info
-    return FALLBACK_TARIFFS.get(target_name, FALLBACK_TARIFFS['Стандарт LTE'])
+    return FALLBACK_TARIFFS.get(target_name)
+

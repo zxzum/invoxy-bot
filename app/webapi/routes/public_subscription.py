@@ -11,7 +11,7 @@ import structlog
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.dependencies import get_cabinet_db
@@ -102,12 +102,36 @@ async def get_public_whitelist_quota(
     try:
         result = await db.execute(
             select(Subscription)
-            .where(Subscription.subscription_url.is_not(None))
-            .where(Subscription.subscription_url.endswith(f'/{token}', autoescape=True))
+            .where(
+                or_(
+                    Subscription.remnawave_short_id == token,
+                    Subscription.remnawave_short_uuid == token,
+                    Subscription.subscription_url.endswith(f'/{token}', autoescape=True),
+                )
+            )
             .order_by(Subscription.updated_at.desc())
             .limit(1)
         )
         subscription = result.scalars().first()
+
+        if not subscription:
+            try:
+                from app.services.remnawave_service import RemnaWaveService
+
+                rw_svc = RemnaWaveService()
+                if not rw_svc._config_error:
+                    async with rw_svc.get_api_client() as api:
+                        rw_user = await api.get_user_by_short_uuid(token)
+                        if rw_user and rw_user.id:
+                            result = await db.execute(
+                                select(Subscription)
+                                .where(Subscription.remnawave_id == rw_user.id)
+                                .order_by(Subscription.updated_at.desc())
+                                .limit(1)
+                            )
+                            subscription = result.scalars().first()
+            except Exception as lookup_err:
+                logger.debug('Fallback token lookup via RemnaWave API failed', error=str(lookup_err))
     except Exception as error:  # pragma: no cover - database/runtime failure
         logger.warning('Public whitelist quota lookup failed', error=type(error).__name__)
         return _json({'status': 'unavailable'}, status.HTTP_503_SERVICE_UNAVAILABLE)

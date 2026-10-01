@@ -93,15 +93,35 @@ async def check_migration_eligibility(
         return None
 
     subscriptions = data.get('subscriptions') or []
-    # Find active subscription
+    # Find active paid subscription (trials are strictly excluded from migration)
+    trial_names = {'', 'триал', 'пробный', 'пробный период', 'trial', 'free', 'test'}
     active_sub = None
+    target_tariff = None
     for sub in subscriptions:
-        if sub.get('status') == 'ACTIVE':
-            active_sub = sub
-            break
+        if sub.get('status') != 'ACTIVE':
+            continue
+        if sub.get('isTrial'):
+            continue
+        tariff_name = (sub.get('tariffName') or '').strip()
+        if not tariff_name or tariff_name.lower() in trial_names:
+            continue
+        resolved = await resolve_target_tariff(db, tariff_name)
+        if not resolved:
+            continue
+        # In Lazeika, trial subscriptions have empty or 0 trafficLimitBytes
+        raw_traffic = str(sub.get('trafficLimitBytes') or '').strip()
+        if not raw_traffic or raw_traffic == '0':
+            continue
+        active_sub = sub
+        target_tariff = resolved
+        break
 
-    if not active_sub:
-        logger.info('No active subscription found in Lazeika for user', telegram_id=telegram_id, email=email)
+    if not active_sub or not target_tariff:
+        logger.info(
+            'No active paid subscription found in Lazeika for user (trials are not eligible for migration)',
+            telegram_id=telegram_id,
+            email=email,
+        )
         return None
 
     remnawave_uuid = str(active_sub.get('remnawaveUuid') or '').strip()
@@ -123,8 +143,7 @@ async def check_migration_eligibility(
     total_days = remaining_days + bonus_days
     new_end_date = now + timedelta(days=total_days)
 
-    lazeika_tariff_name = active_sub.get('tariffName') or 'Стандарт'
-    target_tariff = await resolve_target_tariff(db, lazeika_tariff_name)
+    lazeika_tariff_name = (active_sub.get('tariffName') or '').strip()
 
     # Device limit: preserve max between Lazeika devices and target tariff
     lazeika_devices = active_sub.get('deviceLimit') or 1
@@ -135,6 +154,7 @@ async def check_migration_eligibility(
         balance_rub = float(raw_balance) if raw_balance is not None else 0.0
     except (ValueError, TypeError):
         balance_rub = 0.0
+
 
     return MigrationCandidate(
         client_id=str(client_info.get('id')),
@@ -211,6 +231,8 @@ async def execute_user_migration(
     traffic_bytes = candidate.traffic_limit_gb * 1024 * 1024 * 1024 if candidate.traffic_limit_gb > 0 else 0
 
     target_tariff = await resolve_target_tariff(db, candidate.lazeika_tariff_name)
+    if not target_tariff:
+        return MigrationResult(success=False, message='Тариф подписки не поддерживается для переноса')
     squads = target_tariff.allowed_squads
 
     remna_service = RemnaWaveService()
