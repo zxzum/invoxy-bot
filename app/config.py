@@ -1238,6 +1238,13 @@ class Settings(BaseSettings):
     # полного текста документов. Требует корректный CABINET_URL.
     LEGAL_DOCS_COMPACT_MODE: bool = False
 
+    # Invoxy VPN client: public download pages per platform (https only) and promo group.
+    INVOXY_APP_ANDROID_URL: str = ''
+    INVOXY_APP_IOS_URL: str = ''
+    INVOXY_APP_MACOS_URL: str = ''
+    INVOXY_APP_WINDOWS_URL: str = ''
+    INVOXY_APP_PROMO_URL: str = ''
+
     DEFAULT_LANGUAGE: str = 'ru'
     AVAILABLE_LANGUAGES: str = 'ru,en,ua,zh,fa'
     LANGUAGE_SELECTION_ENABLED: bool = True

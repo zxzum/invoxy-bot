@@ -1380,6 +1380,16 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             logger.warning('Web auth attempt from unregistered user', telegram_id=message.from_user.id)
         start_parameter = None  # Invalid token, ignore
 
+    # Invoxy VPN client login confirmation: /start applogin_{request_id}
+    if start_parameter and start_parameter.startswith('applogin_'):
+        user = db_user or await get_user_by_telegram_id(db, message.from_user.id)
+        if user and user.status == UserStatus.ACTIVE.value:
+            from app.handlers.app_login import show_app_login_prompt
+
+            await show_app_login_prompt(message, start_parameter.removeprefix('applogin_'))
+            return
+        start_parameter = None  # Unregistered: continue regular registration first
+
     # Handle app connect deep links: /start app, /start connect, /start app_connect
     if start_parameter in ('app', 'connect', 'app_connect'):
         user = db_user or await get_user_by_telegram_id(db, message.from_user.id)
@@ -3480,30 +3490,8 @@ async def process_webauth_confirm(
     linked = await link_web_auth_token(token, callback.from_user.id, user.id)
     texts = get_texts(user.language)
     if linked:
-        app_keyboard: types.InlineKeyboardMarkup | None = None
-        try:
-            from app.services.web_auth_service import create_app_handoff_token
-
-            app_token = await create_app_handoff_token(user.id)
-            base_url = settings.MINIAPP_CUSTOM_URL.rstrip('/') if settings.MINIAPP_CUSTOM_URL else 'https://invoxy.my'
-            app_connect_url = f'{base_url}/app/connect?token={app_token}'
-            app_keyboard = types.InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        types.InlineKeyboardButton(
-                            text='📲 Открыть Invoxy VPN',
-                            url=app_connect_url,
-                        ),
-                    ],
-                ]
-            )
-        except Exception as err:
-            logger.warning('Failed to generate app handoff token on webauth confirm', error=err)
-
         await edit_auth_message(
-            '✅ <b>Авторизация в кабинете подтверждена!</b> Вернитесь в браузер.\n\n'
-            '• Если вы входили через <b>приложение Invoxy VPN</b> — нажмите кнопку ниже:',
-            reply_markup=app_keyboard,
+            texts.t('WEB_AUTH_SUCCESS', '✅ Авторизация в кабинете подтверждена! Вернитесь в браузер.'),
         )
     else:
         await edit_auth_message(

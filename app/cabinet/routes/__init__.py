@@ -49,7 +49,7 @@ from .admin_updates import router as admin_updates_router
 from .admin_users import router as admin_users_router
 from .admin_wheel import router as admin_wheel_router
 from .admin_withdrawals import router as admin_withdrawals_router
-from .app_banners import admin_router as admin_app_banners_router, router as app_banners_router
+from .app_client import admin_router as admin_app_client_router, router as app_client_router
 from .auth import router as auth_router
 from .balance import router as balance_router
 from .branding import router as branding_router
@@ -104,6 +104,7 @@ router.include_router(multi_tariff_subscription_router)
 router.include_router(balance_router)
 router.include_router(referral_router)
 router.include_router(migration_router)
+router.include_router(app_client_router)
 
 # Apple IAP routes
 router.include_router(apple_iap_router)
@@ -125,7 +126,6 @@ router.include_router(landing_router)
 router.include_router(media_router)
 router.include_router(news_router)
 router.include_router(info_pages_router)
-router.include_router(app_banners_router)
 
 # Wheel routes
 router.include_router(wheel_router)
@@ -137,7 +137,6 @@ router.include_router(gift_router)
 router.include_router(admin_ticket_notifications_router)
 router.include_router(admin_tickets_router)
 router.include_router(admin_settings_router)
-router.include_router(admin_app_banners_router)
 router.include_router(admin_wheel_router)
 router.include_router(admin_tariffs_router)
 router.include_router(admin_servers_router)
@@ -154,6 +153,7 @@ router.include_router(admin_campaigns_router)
 router.include_router(admin_partners_router)
 router.include_router(admin_withdrawals_router)
 router.include_router(admin_users_router)
+router.include_router(admin_app_client_router)
 router.include_router(admin_bulk_actions_router)
 router.include_router(admin_payment_methods_router)
 router.include_router(admin_landings_router)

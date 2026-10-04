@@ -102,7 +102,7 @@ async def handle_connect_subscription(
                 ],
                 [
                     InlineKeyboardButton(
-                        text='📱 Приложение Invoxy VPN (1 клик)',
+                        text='📱 Приложение Invoxy VPN',
                         callback_data='menu_app_connect',
                     )
                 ],
@@ -142,7 +142,7 @@ async def handle_connect_subscription(
                 ],
                 [
                     InlineKeyboardButton(
-                        text='📱 Приложение Invoxy VPN (1 клик)',
+                        text='📱 Приложение Invoxy VPN',
                         callback_data='menu_app_connect',
                     )
                 ],
@@ -164,7 +164,7 @@ async def handle_connect_subscription(
     elif connect_mode == 'link':
         rows = [
             [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), url=subscription_link)],
-            [InlineKeyboardButton(text='📱 Приложение Invoxy VPN (1 клик)', callback_data='menu_app_connect')],
+            [InlineKeyboardButton(text='📱 Приложение Invoxy VPN', callback_data='menu_app_connect')],
         ]
         happ_row = get_happ_download_button_row(texts)
         if happ_row:

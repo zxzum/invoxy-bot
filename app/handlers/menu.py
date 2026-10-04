@@ -18,6 +18,7 @@ from app.database.crud.transaction import get_user_total_spent_kopeks
 from app.database.crud.user import update_user
 from app.database.crud.user_message import get_random_active_message
 from app.database.models import InfoPage, PromoGroup, User, UserStatus
+from app.handlers.app_login import build_app_connect_payload, register_handlers as register_app_login_handlers
 from app.handlers.subscription.traffic import add_traffic, handle_add_traffic
 from app.keyboards.inline import (
     get_info_menu_keyboard,
@@ -1730,56 +1731,6 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
         )
 
 
-async def build_app_connect_payload(user: User):
-    from app.services.web_auth_service import create_app_handoff_token
-
-    token = await create_app_handoff_token(user.id)
-    base_url = settings.MINIAPP_CUSTOM_URL.rstrip('/') if settings.MINIAPP_CUSTOM_URL else 'https://invoxy.my'
-    connect_url = f'{base_url}/app/connect?token={token}'
-
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                types.InlineKeyboardButton(
-                    text='📲 Войти в приложение Invoxy',
-                    url=connect_url,
-                ),
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text='🔄 Обновить ссылку',
-                    callback_data='menu_app_connect',
-                ),
-                types.InlineKeyboardButton(
-                    text='📥 Скачать приложение',
-                    url=connect_url,
-                ),
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text='« В главное меню',
-                    callback_data='back_to_menu',
-                ),
-            ],
-        ]
-    )
-
-    text = (
-        '📱 <b>Дополнительное приложение Invoxy VPN</b>\n\n'
-        'Для обычного подключения рекомендуем HAPP или INCY.\n'
-        'Invoxy VPN — отдельный клиент для Android, Windows и macOS; на iOS он недоступен.\n\n'
-        'Подключите ваше устройство в 1 клик без ввода логина и паролей:\n'
-        '• 🚀 Умный выбор быстрых серверов\n'
-        '• 🛡 Защита от блокировок ТСПУ и шифрование трафика\n'
-        '• 📊 Мониторинг скорости и расхода трафика в реальном времени\n'
-        '• 🌐 Поддержка Android, Windows и macOS\n\n'
-        f'⚡ <b>Ссылка для мгновенного входа</b> <i>(действует 2 минуты)</i>:\n'
-        f'<code>{connect_url}</code>\n\n'
-        '<i>Нажмите кнопку «Войти в приложение Invoxy» выше для автоматического входа на этом устройстве.</i>'
-    )
-    return text, keyboard
-
-
 async def handle_app_connect_callback(
     callback: types.CallbackQuery,
     db_user: User,
@@ -1788,7 +1739,7 @@ async def handle_app_connect_callback(
     if not db_user or db_user.status != UserStatus.ACTIVE.value:
         await callback.answer('❌ Учётная запись неактивна.', show_alert=True)
         return
-    text, keyboard = await build_app_connect_payload(db_user)
+    text, keyboard = build_app_connect_payload(db_user)
     await callback.answer()
     try:
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
@@ -1804,11 +1755,12 @@ async def handle_app_connect_command(
     if not db_user or db_user.status != UserStatus.ACTIVE.value:
         await message.answer('❌ Учётная запись не найдена или неактивна. Запустите бота через /start.')
         return
-    text, keyboard = await build_app_connect_payload(db_user)
+    text, keyboard = build_app_connect_payload(db_user)
     await message.answer(text, reply_markup=keyboard, parse_mode='HTML')
 
 
 def register_handlers(dp: Dispatcher):
+    register_app_login_handlers(dp)
     dp.callback_query.register(handle_app_connect_callback, F.data == 'menu_app_connect')
     dp.message.register(handle_app_connect_command, Command('app'))
     dp.message.register(handle_app_connect_command, Command('connect'))

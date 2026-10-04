@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import UTC, datetime
-from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, Request, status
@@ -26,11 +25,9 @@ security = HTTPBearer(auto_error=False)
 
 TOKEN_RE = re.compile(r'^[A-Za-z0-9_-]{1,128}$')
 RATE_LIMIT_ACTION = 'public_whitelist_quota'
-APP_CONFIG_RATE_LIMIT_ACTION = 'public_subscription_app_config'
 RATE_LIMIT_WINDOW_SECONDS = 60
 IP_RATE_LIMIT = 60
 SUBJECT_RATE_LIMIT = 30
-APP_CONFIG_IP_RATE_LIMIT = 30
 BYTES_PER_GB = 1024**3
 
 
@@ -62,27 +59,18 @@ async def _is_rate_limited(request: Request, token: str, action: str) -> bool:
     if await RateLimitCache.is_ip_rate_limited(
         get_client_ip(request),
         action,
-        IP_RATE_LIMIT if token else APP_CONFIG_IP_RATE_LIMIT,
+        IP_RATE_LIMIT,
         RATE_LIMIT_WINDOW_SECONDS,
         fail_closed=True,
     ):
         return True
-    return bool(
-        token
-        and await RateLimitCache.is_subject_rate_limited(
-            _token_subject(token),
-            action,
-            SUBJECT_RATE_LIMIT,
-            RATE_LIMIT_WINDOW_SECONDS,
-            fail_closed=True,
-        )
+    return await RateLimitCache.is_subject_rate_limited(
+        _token_subject(token),
+        action,
+        SUBJECT_RATE_LIMIT,
+        RATE_LIMIT_WINDOW_SECONDS,
+        fail_closed=True,
     )
-
-
-async def _load_public_app_config() -> dict[str, Any] | None:
-    from app.cabinet.routes.subscription_modules.status import _load_app_config_async
-
-    return await _load_app_config_async()
 
 
 @router.post('/v1/whitelist/quota')
@@ -153,30 +141,5 @@ async def get_public_whitelist_quota(
             'remainingBytes': remaining_bytes,
             'percent': percent,
             'asOf': datetime.now(UTC).isoformat().replace('+00:00', 'Z'),
-        }
-    )
-
-
-@router.get('/v1/whitelist/app-config')
-async def get_public_app_config(request: Request) -> JSONResponse:
-    """Return the read-only app template configured in RemnaWave."""
-    if await _is_rate_limited(request, '', APP_CONFIG_RATE_LIMIT_ACTION):
-        return _json({'status': 'rate_limited'}, status.HTTP_429_TOO_MANY_REQUESTS)
-
-    try:
-        config = await _load_public_app_config()
-    except Exception as error:  # pragma: no cover - panel/runtime failure
-        logger.warning('Public app config lookup failed', error=type(error).__name__)
-        return _json({'status': 'unavailable'}, status.HTTP_503_SERVICE_UNAVAILABLE)
-
-    platforms = config.get('platforms') if isinstance(config, dict) else None
-    if not isinstance(platforms, dict) or not platforms:
-        return _json({'status': 'not_found'})
-
-    return _json(
-        {
-            'status': 'ready',
-            'platforms': platforms,
-            'svgLibrary': config.get('svgLibrary', {}),
         }
     )

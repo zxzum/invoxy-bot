@@ -41,7 +41,6 @@ from app.services import legal_consent_service
 from app.services.admin_notification_service import notify_new_client_created
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
-from app.services.pair_code_service import consume_pair_code, create_pair_code
 from app.services.rbac_bootstrap_service import (
     ensure_superadmin_role_on_login,
     is_user_admin_by_env,
@@ -52,12 +51,9 @@ from app.services.registration_access_service import (
     RegistrationChannel,
 )
 from app.services.web_auth_service import (
-    APP_HANDOFF_TOKEN_TTL,
     CABINET_WS_TICKET_TTL,
     WEB_AUTH_TOKEN_TTL,
-    consume_app_handoff_token,
     consume_web_auth_token,
-    create_app_handoff_token,
     create_cabinet_ws_ticket,
     create_web_auth_token,
     poll_web_auth_token,
@@ -95,8 +91,6 @@ from ..auth.merge_service import (
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 from ..ip_utils import get_client_ip
 from ..schemas.auth import (
-    AppHandoffExchangeRequest,
-    AppHandoffResponse,
     AuthResponse,
     AutoLoginRequest,
     CampaignBonusInfo,
@@ -110,8 +104,6 @@ from ..schemas.auth import (
     EmailRegisterRequest,
     EmailRegisterStandaloneRequest,
     EmailVerifyRequest,
-    PairCodeExchangeRequest,
-    PairCodeResponse,
     PasswordForgotRequest,
     PasswordResetRequest,
     RefreshTokenRequest,
@@ -2654,43 +2646,6 @@ async def poll_deep_link_token(
     return response
 
 
-# --- Native app handoff ---
-
-
-@router.post('/app-link', response_model=AppHandoffResponse)
-async def create_app_link(
-    raw_request: Request,
-    user: User = Depends(get_current_cabinet_user),
-):
-    """Generate a one-time handoff link for the native mobile app.
-
-    Requires an authenticated cabinet user session.
-    """
-    client_ip = get_client_ip(raw_request)
-    if await RateLimitCache.is_ip_rate_limited(client_ip, 'app_link_create', limit=30, window=60, fail_closed=True):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail='Too many requests',
-            headers={'Retry-After': '60'},
-        )
-
-    try:
-        token = await create_app_handoff_token(user.id)
-    except RuntimeError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='Service temporarily unavailable',
-        )
-
-    base_url = settings.MINIAPP_CUSTOM_URL.rstrip('/') if settings.MINIAPP_CUSTOM_URL else 'https://invoxy.my'
-    url = f'{base_url}/app/connect?token={token}'
-
-    return AppHandoffResponse(
-        url=url,
-        token_expires_in=APP_HANDOFF_TOKEN_TTL,
-    )
-
-
 @router.post('/ws-ticket', response_model=WsTicketResponse)
 async def create_ws_ticket(
     raw_request: Request,
@@ -2714,146 +2669,3 @@ async def create_ws_ticket(
         )
 
     return WsTicketResponse(ticket=ticket, expires_in=CABINET_WS_TICKET_TTL)
-
-
-@router.post('/app-link/exchange', response_model=AuthResponse)
-async def exchange_app_link_token(
-    request: AppHandoffExchangeRequest,
-    raw_request: Request,
-    db: AsyncSession = Depends(get_cabinet_db),
-):
-    """Exchange a one-time app handoff token for JWT auth session.
-
-    Single-use atomic consumption: repeats return 410 Gone.
-    """
-    client_ip = get_client_ip(raw_request)
-    if await RateLimitCache.is_ip_rate_limited(client_ip, 'app_link_exchange', limit=60, window=60, fail_closed=True):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail='Too many requests',
-            headers={'Retry-After': '60'},
-        )
-
-    data = await consume_app_handoff_token(request.token)
-    if not data:
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail='Token expired or not found',
-        )
-
-    user_id = data.get('user_id')
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail='Invalid token data',
-        )
-
-    user = await get_user_by_id(db, int(user_id))
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='User not found',
-        )
-
-    if user.status != UserStatus.ACTIVE.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='Account is deactivated',
-        )
-
-    user.cabinet_last_login = datetime.now(UTC)
-    await db.commit()
-
-    response = await _create_auth_response(user, db)
-    await _store_refresh_token(db, user.id, response.refresh_token, device_info='app_link')
-
-    logger.info('App handoff auth successful', user_id=user.id, device_id=request.device_id)
-
-    return response
-
-
-# --- App pair code login ---
-
-
-@router.post('/pair-code', response_model=PairCodeResponse)
-async def generate_pair_code_endpoint(
-    raw_request: Request,
-    user: User = Depends(get_current_cabinet_user),
-):
-    """Generate a short 6-character code for app pairing.
-
-    Requires an authenticated cabinet user session.
-    """
-    client_ip = get_client_ip(raw_request)
-    if await RateLimitCache.is_ip_rate_limited(client_ip, 'pair_code_create', limit=30, window=60, fail_closed=True):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail='Too many requests',
-            headers={'Retry-After': '60'},
-        )
-
-    try:
-        code, expires_in = await create_pair_code(user.id)
-    except RuntimeError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='Service temporarily unavailable',
-        )
-
-    return PairCodeResponse(code=code, expires_in=expires_in)
-
-
-@router.post('/pair-code/exchange', response_model=AuthResponse)
-async def exchange_pair_code_endpoint(
-    request: PairCodeExchangeRequest,
-    raw_request: Request,
-    db: AsyncSession = Depends(get_cabinet_db),
-):
-    """Exchange a 6-character pairing code for JWT auth session.
-
-    Single-use atomic consumption: repeats or invalid codes return 410 Gone.
-    """
-    client_ip = get_client_ip(raw_request)
-    if await RateLimitCache.is_ip_rate_limited(client_ip, 'pair_code_exchange', limit=30, window=60, fail_closed=True):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail='Too many requests',
-            headers={'Retry-After': '60'},
-        )
-
-    data = await consume_pair_code(request.code)
-    if not data:
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail='Code expired or invalid',
-        )
-
-    user_id = data.get('user_id')
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail='Invalid code data',
-        )
-
-    user = await get_user_by_id(db, int(user_id))
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='User not found',
-        )
-
-    if user.status != UserStatus.ACTIVE.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='Account is deactivated',
-        )
-
-    user.cabinet_last_login = datetime.now(UTC)
-    await db.commit()
-
-    response = await _create_auth_response(user, db)
-    await _store_refresh_token(db, user.id, response.refresh_token, device_info='pair_code')
-
-    logger.info('Pair code auth successful', user_id=user.id, device_id=request.device_id)
-
-    return response

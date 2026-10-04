@@ -5294,3 +5294,39 @@ class CabinetNotification(Base):
     read_at = Column(AwareDateTime(), nullable=True)
 
     user = relationship('User', backref=backref('cabinet_notifications', cascade='all, delete-orphan'))
+
+
+class AppDevice(Base):
+    """Invoxy VPN client installation. ``device_hash`` is an HMAC of the client id."""
+
+    __tablename__ = 'app_devices'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_hash = Column(String(64), nullable=False, unique=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    platform = Column(String(16), nullable=False, index=True)
+    os_version = Column(String(64), nullable=True)
+    app_version = Column(String(32), nullable=True)
+    notification_prefs = Column(JSON, nullable=True)
+    last_connect_ok = Column(Boolean, nullable=True)
+    last_error_code = Column(String(40), nullable=True)
+    first_seen_at = Column(AwareDateTime(), default=func.now(), nullable=False)
+    last_seen_at = Column(AwareDateTime(), default=func.now(), nullable=False, index=True)
+
+    user = relationship('User')
+
+
+class AppDeviceEvent(Base):
+    """Connection outcome reported by the client; kept for a limited period."""
+
+    __tablename__ = 'app_device_events'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(Integer, ForeignKey('app_devices.id', ondelete='CASCADE'), nullable=False, index=True)
+    kind = Column(String(16), nullable=False)
+    ok = Column(Boolean, nullable=False)
+    error_code = Column(String(40), nullable=True)
+    protocol = Column(String(40), nullable=True)
+    network = Column(String(16), nullable=True)
+    restricted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(AwareDateTime(), default=func.now(), nullable=False, index=True)

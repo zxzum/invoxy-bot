@@ -710,6 +710,15 @@ async def create_combined_broadcast(
         broadcast.created_at = now
         broadcast.completed_at = now
         db.add(broadcast)
+        # The Invoxy VPN client filters by category and opens only https links.
+        link = next(
+            (
+                button.action_value
+                for button in request.custom_buttons
+                if button.action_type == 'url' and button.action_value.startswith('https://')
+            ),
+            None,
+        )
         db.add_all(
             [
                 CabinetNotification(
@@ -717,6 +726,7 @@ async def create_combined_broadcast(
                     type='broadcast',
                     title='Сообщение от Invoxy VPN',
                     body=request.message_text.strip(),
+                    payload_json={'category': request.category, 'url': link},
                     created_at=now,
                 )
                 for recipient in recipients

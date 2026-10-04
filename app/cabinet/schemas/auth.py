@@ -302,42 +302,8 @@ class DeepLinkPollRequest(BaseModel):
     )
 
 
-class AppHandoffResponse(BaseModel):
-    """Response for generating an app handoff link."""
-
-    url: str = Field(..., description='Connect URL for the native mobile app')
-    token_expires_in: int = Field(120, description='Token TTL in seconds')
-
-
-class AppHandoffExchangeRequest(BaseModel):
-    """Request to exchange app handoff token for JWT auth session."""
-
-    token: str = Field(..., min_length=16, max_length=128, description='One-time app handoff token')
-    device_id: str | None = Field(
-        None, max_length=128, description='Client-generated device identifier for audit/session tracking'
-    )
-
-
-AppHandoffRequest = AppHandoffExchangeRequest
-
-
 class WsTicketResponse(BaseModel):
     """Response with a short-lived one-time cabinet WebSocket ticket."""
 
     ticket: str = Field(..., min_length=16, max_length=128, description='One-time WebSocket ticket')
     expires_in: int = Field(45, description='Ticket TTL in seconds')
-
-
-class PairCodeResponse(BaseModel):
-    """Response with a 6-character app pairing code."""
-
-    code: str = Field(..., min_length=6, max_length=6, description='6-character pairing code')
-    expires_in: int = Field(300, description='Code TTL in seconds')
-
-
-class PairCodeExchangeRequest(BaseModel):
-    """Request to exchange 6-character pairing code for JWT auth session."""
-
-    code: str = Field(..., min_length=6, max_length=6, description='6-character pairing code')
-    device_id: str | None = Field(None, max_length=128, description='Client-generated device identifier')
-    device_name: str | None = Field(None, max_length=128, description='Client device name / OS description')

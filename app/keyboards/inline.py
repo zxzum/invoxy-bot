@@ -575,7 +575,7 @@ def _build_cabinet_main_menu_keyboard(
 
     # -- Ensure prominent App Connect button is present in cabinet menu --
     has_app_btn = any(
-        btn.callback_data == 'menu_app_connect' or (btn.url and '/app/connect' in btn.url)
+        btn.callback_data == 'menu_app_connect'
         for row in keyboard_rows
         for btn in row
     )

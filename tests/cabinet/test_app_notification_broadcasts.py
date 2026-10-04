@@ -42,7 +42,7 @@ async def test_app_broadcast_writes_filtered_safe_notifications(monkeypatch: pyt
     assert notifications[0].type == 'broadcast'
     assert notifications[0].title == 'Сообщение от Invoxy VPN'
     assert notifications[0].body == 'Новые тарифы уже доступны'
-    assert notifications[0].payload_json is None
+    assert notifications[0].payload_json == {'category': 'news', 'url': None}
     assert response.channel == 'app'
     assert response.status == 'completed'
     assert response.total_count == response.sent_count == 1
