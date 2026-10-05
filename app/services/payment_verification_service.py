@@ -315,7 +315,7 @@ class AutoPaymentVerificationService:
         async with AsyncSessionLocal() as session:
             try:
                 pending = await list_recent_pending_payments(session)
-                candidates = [record for record in pending if record.method in methods and not record.is_paid]
+                candidates = [record for record in pending if record.method in methods and needs_auto_check(record)]
 
                 if not candidates:
                     logger.debug('Автопроверка пополнений: подходящих ожидающих платежей нет')
@@ -437,6 +437,25 @@ def _is_yookassa_pending(payment: YooKassaPayment) -> bool:
         return False
     status = (payment.status or '').lower()
     return status in {'pending', 'waiting_for_capture'}
+
+
+def _is_yookassa_recheck_candidate(payment: YooKassaPayment) -> bool:
+    """Pending payments plus succeeded ones that were never credited.
+
+    The webhook commits ``is_paid`` before crediting the balance; if crediting fails
+    the payment keeps no ``transaction_id`` and must stay visible to the auto-check,
+    whose status refresh credits succeeded-but-unlinked payments.
+    """
+    if getattr(payment, 'transaction_id', None):
+        return False
+    if _is_yookassa_pending(payment):
+        return True
+    return bool(getattr(payment, 'is_paid', False)) and (payment.status or '').lower() == 'succeeded'
+
+
+def needs_auto_check(record: PendingPayment) -> bool:
+    """Unpaid records always; paid YooKassa records only reach here when not yet credited."""
+    return not record.is_paid or record.method == PaymentMethod.YOOKASSA
 
 
 def _is_cryptobot_pending(payment: CryptoBotPayment) -> bool:
@@ -731,11 +750,9 @@ async def _fetch_yookassa_payments(db: AsyncSession, cutoff: datetime, user_id: 
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if payment.transaction_id:
-            continue
         if not _metadata_is_balance(payment):
             continue
-        if not _is_yookassa_pending(payment):
+        if not _is_yookassa_recheck_candidate(payment):
             continue
         record = _build_record(
             PaymentMethod.YOOKASSA,
