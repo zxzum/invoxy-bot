@@ -37,6 +37,7 @@ from app.services.payment_verification_service import (
     list_recent_pending_payments,
     run_manual_check,
 )
+from app.services.user_cart_service import user_cart_service
 from app.utils.currency_converter import currency_converter
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
@@ -1581,6 +1582,9 @@ async def cancel_user_pending_payment(
             return build_pending_payment_response(checked)
 
     record = await cancel_pending_payment(db, user, method, payment_id)
+    # INVOXY: the saved cart belongs to the abandoned invoice. Left in Redis it would
+    # silently buy the tariff on any unrelated top-up within its TTL.
+    await user_cart_service.delete_user_cart(user.id)
     return build_pending_payment_response(record)
 
 

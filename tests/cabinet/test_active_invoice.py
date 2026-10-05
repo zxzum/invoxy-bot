@@ -519,3 +519,43 @@ async def test_get_notification_history(monkeypatch):
     assert len(resp.notifications) == 1
     assert resp.notifications[0].title == 'Счёт на оплату'
     assert resp.notifications[0].type == 'payment_invoice_created'
+
+
+@pytest.mark.asyncio
+async def test_cancel_route_clears_saved_cart(monkeypatch):
+    """A cancelled invoice must not leave a saved cart that a later top-up would auto-buy."""
+    user = _make_dummy_user()
+    db = AsyncMock()
+    pending = _make_pending_payment(user=user, local_id=101, status='pending')
+    cancelled = _make_pending_payment(user=user, local_id=101, status='canceled')
+
+    monkeypatch.setattr(balance_route, 'get_payment_record', AsyncMock(return_value=pending))
+    monkeypatch.setattr(balance_route, '_is_checkable', lambda record: False)
+    monkeypatch.setattr(balance_route, 'cancel_pending_payment', AsyncMock(return_value=cancelled))
+    cart = SimpleNamespace(delete_user_cart=AsyncMock(return_value=True))
+    monkeypatch.setattr(balance_route, 'user_cart_service', cart)
+
+    response = await balance_route.cancel_user_pending_payment(method='yookassa', payment_id=101, user=user, db=db)
+
+    assert response.status == 'canceled'
+    cart.delete_user_cart.assert_awaited_once_with(user.id)
+
+
+@pytest.mark.asyncio
+async def test_cancel_route_keeps_cart_when_payment_turns_out_paid(monkeypatch):
+    user = _make_dummy_user()
+    db = AsyncMock()
+    pending = _make_pending_payment(user=user, local_id=101, status='pending')
+    paid = _make_pending_payment(user=user, local_id=101, status='succeeded', is_paid=True)
+
+    monkeypatch.setattr(balance_route, 'get_payment_record', AsyncMock(return_value=pending))
+    monkeypatch.setattr(balance_route, '_is_checkable', lambda record: True)
+    monkeypatch.setattr(balance_route, 'create_bot', lambda: SimpleNamespace(session=SimpleNamespace(close=AsyncMock())))
+    monkeypatch.setattr(balance_route, 'PaymentService', lambda bot: object())
+    monkeypatch.setattr(balance_route, 'run_manual_check', AsyncMock(return_value=paid))
+    cart = SimpleNamespace(delete_user_cart=AsyncMock(return_value=True))
+    monkeypatch.setattr(balance_route, 'user_cart_service', cart, raising=False)
+
+    await balance_route.cancel_user_pending_payment(method='yookassa', payment_id=101, user=user, db=db)
+
+    cart.delete_user_cart.assert_not_awaited()
