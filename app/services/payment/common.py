@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import html
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -369,6 +370,38 @@ async def notify_email_user_topup(user: Any, amount_kopeks: int) -> None:
         )
 
 
+async def _alert_admins_cart_purchase_failed(
+    bot: Any | None,
+    user: Any,
+    amount_kopeks: int,
+    error: BaseException,
+) -> None:
+    """Tell admins that a top-up was credited but the saved cart was not bought.
+
+    The money stays on the balance, so nothing is lost, but the user paid for a tariff
+    and did not get it; without an alert this only surfaced in logs.
+    """
+    if bot is None:
+        return
+    try:
+        from app.services.admin_notification_service import AdminNotificationService
+
+        text = (
+            '⚠️ <b>Автопокупка тарифа после пополнения не выполнена</b>\n'
+            f'Пользователь: id {getattr(user, "id", "?")}'
+            f' (tg {getattr(user, "telegram_id", None) or "—"})\n'
+            f'Пополнение: {amount_kopeks / 100:.2f} ₽ — деньги на балансе, тариф не активирован.\n'
+            f'Ошибка: {html.escape(f"{type(error).__name__}: {str(error)[:300]}")}'
+        )
+        await AdminNotificationService(bot).send_admin_notification(text)
+    except Exception as alert_error:
+        logger.error(
+            'Не удалось отправить оповещение о сбое автопокупки',
+            user_id=getattr(user, 'id', None),
+            error=alert_error,
+        )
+
+
 async def send_cart_notification_after_topup(
     user: Any,
     amount_kopeks: int,
@@ -442,6 +475,7 @@ async def send_cart_notification_after_topup(
                 auto_error=auto_error,
                 exc_info=True,
             )
+            await _alert_admins_cart_purchase_failed(bot, user, amount_kopeks, auto_error)
         return False
 
     # Try to auto-extend expired subscription only when there is no saved cart.
