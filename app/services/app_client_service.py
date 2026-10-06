@@ -29,13 +29,22 @@ from app.utils.cache import cache, cache_key
 
 logger = structlog.get_logger(__name__)
 
-LOGIN_TTL_SECONDS = 300
+# Website sign-in may require an extra cabinet authentication step before approval.
+LOGIN_TTL_SECONDS = 900
+# After the session is issued, parallel polls of the same device get "pending" instead of
+# "expired": the app polls on resume, on the return link and on a timer at the same moment.
+LOGIN_DONE_GRACE_SECONDS = 60
 LOGIN_PREFIX = 'app_login'
 LOGIN_DECISION_PREFIX = 'app_login_decision'
 EVENT_RETENTION_DAYS = 30
 MAX_EVENTS_PER_REPORT = 20
 APP_SCHEME = 'invoxyvpn'
 ROUTING_SETTING_KEY = 'INVOXY_APP_ROUTING_JSON'
+SUBSCRIPTION_DOMAINS_KEY = 'INVOXY_APP_SUBSCRIPTION_DOMAINS'
+
+# Subscription links on other domains are refused by the app: it sends the device headers to the link's
+# host, so the list of hosts it may talk to is the operator's decision, not the key's.
+DEFAULT_SUBSCRIPTION_DOMAINS = ['invoxy.my', 'lazeika.xyz', 'invoxy.xyz']
 
 PLATFORMS = frozenset({'android', 'ios', 'macos', 'windows'})
 REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9_-]{32,64}$')
@@ -110,6 +119,76 @@ def hash_device_id(device_id: str) -> str:
     return hmac.new(secret, f'invoxy-app-device:{device_id}'.encode(), hashlib.sha256).hexdigest()
 
 
+class DeviceRemovalError(Exception):
+    """A device removal request breaks a safety rule; ``code`` is safe to return."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def normalize_hwid(value: Any) -> str:
+    """Device ids are compared without case and surrounding spaces, so a variant cannot slip past."""
+    return str(value or '').strip().casefold()
+
+
+def short_hash(value: Any) -> str:
+    """Pseudonymous tag for logs: the raw device id is never written down."""
+    return hashlib.sha256(normalize_hwid(value).encode()).hexdigest()[:12]
+
+
+DEVICE_LOCK_PREFIX = 'app_device_lock'
+
+
+async def acquire_device_lock(user_id: int) -> bool:
+    """One removal at a time per account: two devices cannot remove each other in the same moment."""
+    return bool(await cache.setnx(cache_key(DEVICE_LOCK_PREFIX, str(user_id)), '1', expire=10))
+
+
+async def release_device_lock(user_id: int) -> None:
+    await cache.delete(cache_key(DEVICE_LOCK_PREFIX, str(user_id)))
+
+
+def device_may_free_a_slot(listed: dict[str, Any], current_device_id: str | None) -> bool:
+    """A device on the account may remove others. A device the panel refused (limit reached) may too,
+    but only while the account really is at its limit: that is the "free a slot and connect" flow."""
+    on_account = {normalize_hwid(d.get('hwid')) for d in listed.get('devices', [])}
+    if normalize_hwid(current_device_id) in on_account:
+        return True
+    limit = int(listed.get('device_limit') or 0)
+    return limit > 0 and len(on_account) >= limit
+
+
+def check_device_removal(*, hwid: str, current_device_id: str | None) -> None:
+    """The app's own device cannot be removed from the app: the user would lock themselves out."""
+    target = normalize_hwid(hwid)
+    if not target:
+        raise DeviceRemovalError('hwid_required')
+    current = normalize_hwid(current_device_id)
+    if not current:
+        raise DeviceRemovalError('device_header_required')
+    if target == current:
+        raise DeviceRemovalError('current_device')
+
+
+def format_app_devices(raw: dict[str, Any], *, current_device_id: str | None) -> dict[str, Any]:
+    """Panel device list in the shape the app shows, with the device that asks marked."""
+    current = normalize_hwid(current_device_id)
+    devices = []
+    for device in raw.get('devices', []):
+        hwid = device.get('hwid')
+        devices.append(
+            {
+                'hwid': hwid,
+                'name': device.get('local_name') or device.get('device_model') or device.get('platform') or 'Unknown',
+                'platform': device.get('platform') or 'Unknown',
+                'last_seen': device.get('created_at'),
+                'is_current': bool(current) and normalize_hwid(hwid) == current,
+            }
+        )
+    return {'devices': devices, 'total': raw.get('total', len(devices)), 'device_limit': raw.get('device_limit', 0)}
+
+
 def _challenge_for(verifier: str) -> str:
     digest = hashlib.sha256(verifier.encode()).digest()
     return base64.urlsafe_b64encode(digest).decode().rstrip('=')
@@ -141,7 +220,7 @@ async def get_pending_login(request_id: str) -> dict[str, Any] | None:
     if not REQUEST_ID_RE.fullmatch(request_id):
         return None
     data = await cache.get(_login_key(request_id))
-    if not isinstance(data, dict) or await cache.exists(_decision_key(request_id)):
+    if not isinstance(data, dict) or data.get('done') or await cache.exists(_decision_key(request_id)):
         return None
     return {
         'platform': data.get('platform'),
@@ -169,6 +248,8 @@ async def exchange_login(*, request_id: str, code_verifier: str, device_id: str)
         str(data.get('device')), hash_device_id(device_id)
     ):
         raise AppLoginError('device_mismatch')
+    if data.get('done'):
+        return None
 
     decision = await cache.get(_decision_key(request_id))
     if not isinstance(decision, dict):
@@ -179,7 +260,7 @@ async def exchange_login(*, request_id: str, code_verifier: str, device_id: str)
         raise AppLoginError('denied')
 
     consumed = await cache.getdel(_decision_key(request_id))
-    await cache.delete(_login_key(request_id))
+    await cache.set(_login_key(request_id), {**data, 'done': True}, expire=LOGIN_DONE_GRACE_SECONDS)
     if not isinstance(consumed, dict) or not consumed.get('user_id'):
         raise AppLoginError('expired')
     return int(consumed['user_id'])
@@ -225,6 +306,62 @@ def normalize_routing(raw: Any) -> dict[str, dict[str, list[str]]]:
             'android_packages': _clean_list(restricted.get('android_packages'), PACKAGE_RE, lower=False),
         },
     }
+
+
+def normalize_domains(raw: Any) -> list[str]:
+    """Host names the app may fetch subscriptions from (a subdomain of a listed domain is allowed too).
+
+    Scheme, path and port are cut off (an admin pastes whole links); anything that is not a plain host name
+    is dropped; an empty result falls back to the defaults, so the app can never end up with nothing allowed.
+    """
+    if isinstance(raw, str):
+        raw = re.split(r'[\s,;]+', raw)
+    if not isinstance(raw, list):
+        return list(DEFAULT_SUBSCRIPTION_DOMAINS)
+    hosts: list[str] = []
+    for value in raw:
+        if not isinstance(value, str):
+            continue
+        host = re.sub(r'^[a-z][a-z0-9+.-]*://', '', value.strip().lower())
+        host = host.split('/')[0].split('?')[0].split(':')[0].strip('.')
+        host = host.removeprefix('*.')
+        if DOMAIN_RE.fullmatch(host) and host not in hosts:
+            hosts.append(host)
+    return hosts[:20] or list(DEFAULT_SUBSCRIPTION_DOMAINS)
+
+
+def _own_subscription_host() -> str | None:
+    """The host the service itself hands keys out on (the bot and the cabinet give such links)."""
+    hosts = normalize_domains([getattr(settings, 'REMNAWAVE_SUBSCRIPTION_PUBLIC_URL', None) or ''])
+    own = hosts[0] if hosts and hosts != DEFAULT_SUBSCRIPTION_DOMAINS else None
+    return own
+
+
+async def get_subscription_domains(db: AsyncSession) -> list[str]:
+    """The operator's list, plus the host the service's own keys live on (without it a login would fail)."""
+    raw = await get_setting_value(db, SUBSCRIPTION_DOMAINS_KEY)
+    domains = list(DEFAULT_SUBSCRIPTION_DOMAINS)
+    if raw:
+        try:
+            domains = normalize_domains(json.loads(raw))
+        except (TypeError, ValueError):
+            logger.warning('Invalid app subscription domains setting; using defaults')
+    own = _own_subscription_host()
+    if own and not any(own == d or own.endswith('.' + d) for d in domains):
+        domains.append(own)
+    return domains
+
+
+async def save_subscription_domains(db: AsyncSession, raw: Any) -> list[str]:
+    domains = normalize_domains(raw)
+    await upsert_system_setting(
+        db,
+        SUBSCRIPTION_DOMAINS_KEY,
+        json.dumps(domains, ensure_ascii=False),
+        description='Invoxy VPN app: domains the app may fetch subscriptions from',
+    )
+    await db.commit()
+    return domains
 
 
 def routing_version(data: dict[str, Any]) -> str:
@@ -373,7 +510,9 @@ def _code(value: Any) -> str | None:
     return value if CODE_RE.fullmatch(value) else None
 
 
-async def report_device(db: AsyncSession, payload: dict[str, Any], user: User | None) -> AppDevice:
+async def report_device(
+    db: AsyncSession, payload: dict[str, Any], user: User | None, *, ip: str | None = None
+) -> AppDevice:
     device_id = str(payload.get('device_id') or '')
     platform = str(payload.get('platform') or '')
     if not DEVICE_ID_RE.fullmatch(device_id) or platform not in PLATFORMS:
@@ -387,7 +526,10 @@ async def report_device(db: AsyncSession, payload: dict[str, Any], user: User | 
         db.add(device)
     device.platform = platform
     device.os_version = _short(payload.get('os_version'), 64)
+    device.device_model = _short(payload.get('device_model'), 96)
     device.app_version = _short(payload.get('app_version'), 32)
+    if ip:
+        device.last_ip = _short(ip, 64)
     device.last_seen_at = now
     if user is not None:
         device.user_id = user.id
@@ -462,3 +604,55 @@ async def device_stats(db: AsyncSession, *, days: int = 7) -> dict[str, Any]:
         'connect_failed': counts.get(False, 0),
         'errors': [{'code': code or 'unknown', 'count': count} for code, count in errors],
     }
+
+
+APP_SESSION_PREFIX = 'invoxy_app'
+
+
+def app_session_tag(device_id: str) -> str:
+    """What marks a refresh token as the one of this installation, so an administrator can sign exactly it out."""
+    return f'{APP_SESSION_PREFIX}:{hash_device_id(device_id)}'
+
+
+async def clear_revocation(db: AsyncSession, device_id: str) -> None:
+    """The person signed in again on this installation: the administrator's sign-out no longer applies."""
+    device = (
+        await db.execute(select(AppDevice).where(AppDevice.device_hash == hash_device_id(device_id)))
+    ).scalar_one_or_none()
+    if device is not None and device.revoked_at is not None:
+        device.revoked_at = None
+        await db.commit()
+
+
+async def revoke_device(db: AsyncSession, device: AppDevice) -> int:
+    """Sign the installation out of its account: its refresh tokens stop working (the app falls back to the
+    sign-in screen at the next refresh or report). Returns how many tokens were revoked.
+
+    Tokens issued before the installation was tagged carry only ``invoxy_app``; they are revoked too when no
+    tagged one exists, because otherwise the sign-out would silently do nothing for old sessions."""
+    from app.database.models import CabinetRefreshToken
+
+    now = datetime.now(UTC)
+    device.revoked_at = now
+    revoked = 0
+    if device.user_id is not None:
+        tokens = (
+            (
+                await db.execute(
+                    select(CabinetRefreshToken).where(
+                        CabinetRefreshToken.user_id == device.user_id,
+                        CabinetRefreshToken.revoked_at.is_(None),
+                        CabinetRefreshToken.device_info.like(f'{APP_SESSION_PREFIX}%'),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        tag = f'{APP_SESSION_PREFIX}:{device.device_hash}'
+        exact = [t for t in tokens if t.device_info == tag]
+        for token in exact or [t for t in tokens if t.device_info == APP_SESSION_PREFIX]:
+            token.revoked_at = now
+            revoked += 1
+    await db.commit()
+    return revoked

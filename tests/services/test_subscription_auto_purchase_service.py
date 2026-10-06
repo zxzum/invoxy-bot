@@ -1210,3 +1210,238 @@ async def test_auto_purchase_skipped_without_topup_intent(monkeypatch):
     result = await auto_purchase_saved_cart_after_topup(db_session, user, bot=AsyncMock())
 
     assert result is False
+
+
+async def test_auto_purchase_tariff_with_extra_devices(monkeypatch):
+    """Auto-purchase of a tariff with extra devices charges the full price and provisions the requested device_limit."""
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', True)
+    monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
+
+    user = MagicMock(spec=User)
+    user.id = 41
+    user.telegram_id = 1624238847
+    user.balance_kopeks = 23_000
+    user.language = 'ru'
+    user.promo_group = None
+    user.promo_group_id = None
+    user.promo_offer_discount_percent = 0
+    user.promo_offer_discount_expires_at = None
+    user.promo_offer_discount_source = None
+    user.get_primary_promo_group = MagicMock(return_value=None)
+
+    tariff = MagicMock()
+    tariff.id = 10
+    tariff.name = 'Стандарт LTE'
+    tariff.is_active = True
+    tariff.is_daily = False
+    tariff.device_limit = 5
+    tariff.max_device_limit = 10
+    tariff.device_price_kopeks = 3000
+    tariff.traffic_limit_gb = 50
+    tariff.allowed_squads = ['squad-1']
+    tariff.period_prices = {'30': 20000}
+    tariff.can_purchase_custom_days = MagicMock(return_value=False)
+    tariff.can_purchase_custom_traffic = MagicMock(return_value=False)
+    tariff.is_available_for_promo_group = MagicMock(return_value=True)
+
+    cart_data = {
+        'cart_mode': 'tariff_purchase',
+        'tariff_id': 10,
+        'period_days': 30,
+        'device_limit': 6,
+        'total_price': 23000,
+    }
+
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.get_user_cart',
+        AsyncMock(return_value=cart_data),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.get_all_subscription_carts',
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        'app.database.crud.tariff.get_tariff_by_id',
+        AsyncMock(return_value=tariff),
+    )
+    monkeypatch.setattr(
+        'app.database.crud.user.lock_user_for_pricing',
+        AsyncMock(return_value=user),
+    )
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_active_subscriptions_by_user_id',
+        AsyncMock(return_value=[]),
+    )
+
+    created_sub_args = {}
+
+    async def fake_create_paid_subscription(**kwargs):
+        created_sub_args.update(kwargs)
+        sub = MagicMock()
+        sub.id = 101
+        sub.user_id = user.id
+        sub.device_limit = kwargs.get('device_limit')
+        sub.traffic_limit_gb = kwargs.get('traffic_limit_gb')
+        sub.is_trial = False
+        sub.end_date = datetime.now(UTC) + timedelta(days=30)
+        return sub
+
+    monkeypatch.setattr(
+        'app.database.crud.subscription.create_paid_subscription',
+        fake_create_paid_subscription,
+    )
+
+    subtracted_amounts = []
+
+    async def fake_subtract_user_balance(db, u, amount, description, **kwargs):
+        subtracted_amounts.append(amount)
+        u.balance_kopeks -= amount
+        return True
+
+    monkeypatch.setattr(
+        'app.database.crud.user.subtract_user_balance',
+        fake_subtract_user_balance,
+    )
+    monkeypatch.setattr(
+        'app.database.crud.transaction.create_transaction',
+        AsyncMock(return_value=MagicMock(id=999)),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService.create_remnawave_user',
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service._delete_cart_for_subscription',
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.clear_subscription_checkout_draft',
+        AsyncMock(),
+    )
+
+    db_session = AsyncMock(spec=AsyncSession)
+    result = await auto_purchase_saved_cart_after_topup(db_session, user, bot=AsyncMock())
+
+    assert result is True
+    # Verify price debited includes the extra device (20000 base + 3000 extra device = 23000)
+    assert subtracted_amounts == [23000]
+    # Verify created subscription has device_limit = 6 (NOT default tariff limit 5)
+    assert created_sub_args.get('device_limit') == 6
+    assert created_sub_args.get('traffic_limit_gb') == 50
+
+
+async def test_auto_purchase_daily_tariff_with_extra_devices(monkeypatch):
+    """Auto-purchase of a daily tariff with extra devices charges the full price and provisions requested device_limit."""
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', True)
+    monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
+
+    user = MagicMock(spec=User)
+    user.id = 42
+    user.telegram_id = 987654
+    user.balance_kopeks = 1500
+    user.language = 'ru'
+    user.promo_group = None
+    user.promo_group_id = None
+    user.promo_offer_discount_percent = 0
+    user.promo_offer_discount_expires_at = None
+    user.promo_offer_discount_source = None
+    user.get_primary_promo_group = MagicMock(return_value=None)
+
+    tariff = MagicMock()
+    tariff.id = 20
+    tariff.name = 'Суточный VIP'
+    tariff.is_active = True
+    tariff.is_daily = True
+    tariff.daily_price_kopeks = 1000
+    tariff.device_limit = 2
+    tariff.max_device_limit = 5
+    tariff.device_price_kopeks = 500
+    tariff.traffic_limit_gb = 10
+    tariff.allowed_squads = ['squad-daily']
+    tariff.can_purchase_custom_traffic = MagicMock(return_value=False)
+    tariff.is_available_for_promo_group = MagicMock(return_value=True)
+
+    cart_data = {
+        'cart_mode': 'daily_tariff_purchase',
+        'tariff_id': 20,
+        'device_limit': 3,
+        'total_price': 1500,
+    }
+
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.get_user_cart',
+        AsyncMock(return_value=cart_data),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.get_all_subscription_carts',
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        'app.database.crud.tariff.get_tariff_by_id',
+        AsyncMock(return_value=tariff),
+    )
+    monkeypatch.setattr(
+        'app.database.crud.user.lock_user_for_pricing',
+        AsyncMock(return_value=user),
+    )
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_active_subscriptions_by_user_id',
+        AsyncMock(return_value=[]),
+    )
+
+    created_sub_args = {}
+
+    async def fake_create_paid_subscription(**kwargs):
+        created_sub_args.update(kwargs)
+        sub = MagicMock()
+        sub.id = 202
+        sub.user_id = user.id
+        sub.device_limit = kwargs.get('device_limit')
+        sub.traffic_limit_gb = kwargs.get('traffic_limit_gb')
+        sub.is_trial = False
+        sub.end_date = datetime.now(UTC) + timedelta(days=1)
+        return sub
+
+    monkeypatch.setattr(
+        'app.database.crud.subscription.create_paid_subscription',
+        fake_create_paid_subscription,
+    )
+
+    subtracted_amounts = []
+
+    async def fake_subtract_user_balance(db, u, amount, description, **kwargs):
+        subtracted_amounts.append(amount)
+        u.balance_kopeks -= amount
+        return True
+
+    monkeypatch.setattr(
+        'app.database.crud.user.subtract_user_balance',
+        fake_subtract_user_balance,
+    )
+    monkeypatch.setattr(
+        'app.database.crud.transaction.create_transaction',
+        AsyncMock(return_value=MagicMock(id=999)),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService.create_remnawave_user',
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service._delete_cart_for_subscription',
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.clear_subscription_checkout_draft',
+        AsyncMock(),
+    )
+
+    db_session = AsyncMock(spec=AsyncSession)
+    result = await auto_purchase_saved_cart_after_topup(db_session, user, bot=AsyncMock())
+
+    assert result is True
+    # Base daily 1000 + 1 extra device 500 = 1500
+    assert subtracted_amounts == [1500]
+    assert created_sub_args.get('device_limit') == 3
+

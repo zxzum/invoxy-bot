@@ -2530,9 +2530,9 @@ class AdminNotificationService:
             if referrer_id:
                 lines.append(f'• Пригласитель (реферер ID): <code>{referrer_id}</code> 👥')
 
-            panel_uuid = getattr(candidate, 'remnawave_uuid', None)
-            if panel_uuid:
-                lines.append(f'• Remnawave UUID: <code>{panel_uuid}</code>')
+            panel_user_id = getattr(candidate, 'panel_user_id', None)
+            if panel_user_id:
+                lines.append(f'• Remnawave User ID: <code>{panel_user_id}</code>')
 
             client_id = getattr(candidate, 'client_id', None)
             if client_id:

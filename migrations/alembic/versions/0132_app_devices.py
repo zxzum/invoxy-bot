@@ -47,15 +47,6 @@ def upgrade() -> None:
         )
         op.create_index('ix_app_device_events_device_id', 'app_device_events', ['device_id'])
         op.create_index('ix_app_device_events_created_at', 'app_device_events', ['created_at'])
-    # Settings that only served the previous clients (native app banners, Happ/INCY guides).
-    op.execute(
-        sa.text(
-            'DELETE FROM system_settings WHERE key IN ('
-            "'APP_BANNERS_JSON', 'CABINET_REMNA_SUB_CONFIG', 'CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED', "
-            "'HAPP_CRYPTOLINK_REDIRECT_TEMPLATE', 'HAPP_DOWNLOAD_LINK_IOS', 'HAPP_DOWNLOAD_LINK_ANDROID', "
-            "'HAPP_DOWNLOAD_LINK_MACOS', 'HAPP_DOWNLOAD_LINK_WINDOWS', 'HAPP_DOWNLOAD_LINK_PC')"
-        )
-    )
 
 
 def downgrade() -> None:

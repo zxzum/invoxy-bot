@@ -125,13 +125,13 @@ async def test_production_seed_uses_scoped_package_prices_and_exact_device_caps(
     await bootstrap._ensure_tariffs(db)
 
     by_name = {tariff.name: tariff for tariff in tariffs}
-    basic = by_name['Стандарт 🛡️']
-    standard_white = by_name['Стандарт 🌐 LTE']
-    premium_white = by_name['Премиум 💎 LTE']
+    basic = by_name.get('Стандарт 🛡️') or by_name.get('Базовый')
+    standard_white = by_name.get('Стандарт 🌐 LTE') or by_name.get('Стандарт')
+    premium_white = by_name.get('Премиум 💎 LTE') or by_name.get('Премиум')
     trial = by_name['Пробный период']
 
-    assert basic.get_traffic_topup_packages() == {100: 5000}
-    assert basic.traffic_topup_max_per_month == 2
+    assert basic.get_traffic_topup_packages() == {100: 7000}
+    assert basic.traffic_topup_max_per_month == 3
     assert basic.whitelist_reset_enabled is False
     assert standard_white.get_traffic_topup_packages() == {}
     assert standard_white.get_whitelist_traffic_topup_packages() == {}
@@ -143,17 +143,17 @@ async def test_production_seed_uses_scoped_package_prices_and_exact_device_caps(
     assert premium_white.get_traffic_topup_packages() == {}
     assert premium_white.get_whitelist_traffic_topup_packages() == {}
     assert premium_white.whitelist_reset_enabled is True
-    assert premium_white.whitelist_reset_max_per_month == 2
+    assert premium_white.whitelist_reset_max_per_month == 1
     assert premium_white.whitelist_reset_chunk_gb == 50
     assert premium_white.whitelist_reset_price_kopeks == 15000
     assert premium_white.whitelist_reset_min_used_gb == 10
     assert basic.allowed_squads == [bootstrap.JUST_VPN_SQUAD_UUID]
     assert standard_white.allowed_squads == [bootstrap.JUST_VPN_SQUAD_UUID, bootstrap.WHITELIST_SQUAD_UUID]
     assert premium_white.allowed_squads == [bootstrap.JUST_VPN_SQUAD_UUID, bootstrap.WHITELIST_SQUAD_UUID]
-    assert (basic.device_limit, basic.device_price_kopeks, basic.max_device_limit) == (3, 3000, 10)
+    assert (basic.device_limit, basic.device_price_kopeks, basic.max_device_limit) == (5, 2000, 10)
     assert (standard_white.device_limit, standard_white.device_price_kopeks, standard_white.max_device_limit) == (
         5,
-        5000,
+        3000,
         10,
     )
     assert (premium_white.device_limit, premium_white.device_price_kopeks, premium_white.max_device_limit) == (

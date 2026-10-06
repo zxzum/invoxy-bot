@@ -1,37 +1,25 @@
 """Telegram bot handlers for migrating users from Lazeika VPN (temporary)."""
 
 import structlog
-from aiogram import F, Router, types
+from aiogram import Bot, F, Router, types
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.crud.user import create_user_no_commit, get_user_by_telegram_id
 from app.database.models import User
-from app.services.migration import check_migration_eligibility, execute_user_migration
+from app.services.migration import (
+    build_migration_offer_text,
+    check_migration_eligibility,
+    execute_user_migration,
+    get_migration_offer_keyboard,
+    send_migration_notification,
+)
 
 
 logger = structlog.get_logger(__name__)
 
 migration_router = Router(name='migration')
-
-
-def get_migration_offer_keyboard() -> types.InlineKeyboardMarkup:
-    return types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                types.InlineKeyboardButton(
-                    text='🚀 Перенести в Invoxy (+5 дней)',
-                    callback_data='lazeika_migrate:execute',
-                )
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text='Пропустить',
-                    callback_data='lazeika_migrate:skip',
-                )
-            ],
-        ]
-    )
 
 
 def get_migration_success_keyboard() -> types.InlineKeyboardMarkup:
@@ -72,20 +60,7 @@ async def check_and_prompt_lazeika_migration(
         if not candidate:
             return False
 
-        balance_line = ''
-        if candidate.balance_rub > 0:
-            balance_line = f'💰 Баланс: <b>+{candidate.balance_rub:.2f} ₽</b> (будет зачислен на счёт)\n'
-
-        text = (
-            '👋 <b>Найдена активная подписка в Лазейка ВПН!</b>\n\n'
-            f'📦 Тариф: <b>{candidate.lazeika_tariff_name}</b>\n'
-            f'⏳ Осталось: <b>{candidate.remaining_days}</b> дн. (+ <b>5 дней</b> в подарок 🎁)\n'
-            f'📱 Лимит устройств: <b>{candidate.device_limit}</b>\n'
-            f'{balance_line}'
-            '⚡️ Трафик будет обнулён в качестве бонуса!\n\n'
-            'Желаете осуществить перенос в <b>Invoxy VPN</b>?\n'
-            '<i>Все ваши настройки подключения и ключи сохранятся — перенастраивать ничего не нужно.</i>'
-        )
+        text = build_migration_offer_text(candidate)
 
         await message.answer(
             text,
@@ -296,5 +271,59 @@ async def handle_migration_skip(
     await handle_back_to_menu(callback, state, user, db)
 
 
+@migration_router.callback_query(F.data == 'lazeika_migrate:check')
+async def handle_migration_check_callback(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    db: AsyncSession,
+):
+    """User manually requested migration check via button."""
+    telegram_id = callback.from_user.id
+    user = await get_user_by_telegram_id(db, telegram_id)
+    candidate = await check_migration_eligibility(db, telegram_id=telegram_id, user=user)
+    if not candidate:
+        await callback.answer(
+            'ℹ️ Активная подписка в Лазейка ВПН для вашего аккаунта не найдена или уже перенесена.',
+            show_alert=True,
+        )
+        return
+
+    text = build_migration_offer_text(candidate)
+    await callback.message.answer(
+        text,
+        reply_markup=get_migration_offer_keyboard(),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+@migration_router.message(Command('migrate', 'lazeika'))
+async def handle_migration_command(
+    message: types.Message,
+    state: FSMContext,
+    db: AsyncSession,
+):
+    """Command /migrate or /lazeika to check and initiate migration."""
+    telegram_id = message.from_user.id
+    user = await get_user_by_telegram_id(db, telegram_id)
+    candidate = await check_migration_eligibility(db, telegram_id=telegram_id, user=user)
+    if not candidate:
+        await message.answer(
+            'ℹ️ <b>Перенос из Лазейка ВПН</b>\n\n'
+            'Активная подписка в Лазейка ВПН для вашего Telegram ID не найдена, либо уже была перенесена ранее.\n\n'
+            'Если вы считаете, что произошла ошибка, пожалуйста, обратитесь в поддержку.',
+            parse_mode='HTML',
+        )
+        return
+
+    text = build_migration_offer_text(candidate)
+    await message.answer(
+        text,
+        reply_markup=get_migration_offer_keyboard(),
+        parse_mode='HTML',
+    )
+
+
 def register_handlers(dp) -> None:
     dp.include_router(migration_router)
+

@@ -608,6 +608,8 @@ class PricingEngine:
         subscription: Subscription,
         period_days: int,
         *,
+        device_limit: int | None = None,
+        custom_traffic_gb: int | None = None,
         user: User | None = None,
     ) -> RenewalPricing:
         """Calculate renewal price for a subscription.
@@ -627,8 +629,21 @@ class PricingEngine:
                     tariff_id=subscription.tariff_id,
                 )
             else:
-                return await self._calculate_tariff_mode(db, subscription, period_days, user=user)
-        return await self._calculate_classic_mode(db, subscription, period_days, user=user)
+                return await self._calculate_tariff_mode(
+                    db,
+                    subscription,
+                    period_days,
+                    device_limit=device_limit,
+                    custom_traffic_gb=custom_traffic_gb,
+                    user=user,
+                )
+        return await self._calculate_classic_mode(
+            db,
+            subscription,
+            period_days,
+            device_limit=device_limit,
+            user=user,
+        )
 
     # ------------------------------------------------------------------
     # Tariff mode
@@ -640,15 +655,19 @@ class PricingEngine:
         subscription: Subscription,
         period_days: int,
         *,
+        device_limit: int | None = None,
+        custom_traffic_gb: int | None = None,
         user: User | None = None,
     ) -> RenewalPricing:
         """Price calculation when subscription is linked to a Tariff."""
         tariff = subscription.tariff
-        device_limit = subscription.device_limit or 0
+        base_device_limit = subscription.device_limit or 0
+        effective_device_limit = max(device_limit, base_device_limit) if device_limit is not None else base_device_limit
         return await self._calculate_tariff_core(
             tariff,
             period_days,
-            device_limit,
+            effective_device_limit,
+            custom_traffic_gb=custom_traffic_gb,
             user=user,
         )
 
@@ -940,6 +959,7 @@ class PricingEngine:
         subscription: Subscription,
         period_days: int,
         *,
+        device_limit: int | None = None,
         user: User | None = None,
     ) -> RenewalPricing:
         """Price calculation for legacy (non-tariff) subscriptions.
@@ -954,14 +974,15 @@ class PricingEngine:
             else settings.DEFAULT_TRAFFIC_LIMIT_GB
         )
         purchased_traffic_gb = subscription.purchased_traffic_gb or 0
-        device_limit = subscription.device_limit or 0
+        base_device_limit = subscription.device_limit or 0
+        effective_device_limit = max(device_limit, base_device_limit) if device_limit is not None else base_device_limit
 
         return await self._calculate_classic_core(
             db,
             period_days,
             connected_squads,
             traffic_limit_gb,
-            device_limit,
+            effective_device_limit,
             purchased_traffic_gb=purchased_traffic_gb,
             user=user,
         )

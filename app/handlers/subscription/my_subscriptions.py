@@ -145,6 +145,8 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
         buttons.append([types.InlineKeyboardButton(text='🔗 Ссылка подключения', callback_data=f'sl:{sub_id}')])
 
     buttons.append([types.InlineKeyboardButton(text='🔄 Продлить', callback_data=f'se:{sub_id}')])
+    if sub is not None and getattr(sub, 'is_trial', False) and getattr(settings, 'LAZEIKA_MIGRATION_ENABLED', True):
+        buttons.append([types.InlineKeyboardButton(text='🚀 Перенести из Лазейки (+5 дней)', callback_data='lazeika_migrate:check')])
 
     if not is_inactive:
         buttons.append([types.InlineKeyboardButton(text='💳 Автоплатеж', callback_data='subscription_autopay')])

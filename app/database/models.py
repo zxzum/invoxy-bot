@@ -5306,12 +5306,16 @@ class AppDevice(Base):
     user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
     platform = Column(String(16), nullable=False, index=True)
     os_version = Column(String(64), nullable=True)
+    device_model = Column(String(96), nullable=True)
     app_version = Column(String(32), nullable=True)
+    last_ip = Column(String(64), nullable=True)
     notification_prefs = Column(JSON, nullable=True)
     last_connect_ok = Column(Boolean, nullable=True)
     last_error_code = Column(String(40), nullable=True)
     first_seen_at = Column(AwareDateTime(), default=func.now(), nullable=False)
     last_seen_at = Column(AwareDateTime(), default=func.now(), nullable=False, index=True)
+    # Set by an administrator: the installation was signed out of the account.
+    revoked_at = Column(AwareDateTime(), nullable=True)
 
     user = relationship('User')
 

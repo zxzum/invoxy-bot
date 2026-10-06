@@ -36,7 +36,7 @@ class MigrationCandidate:
     device_limit: int
     traffic_limit_gb: int
     whitelist_traffic_limit_gb: int
-    remnawave_uuid: str
+    panel_user_id: str
     expires_at_str: str
     new_end_date: datetime
     balance_rub: float = 0.0
@@ -108,9 +108,11 @@ async def check_migration_eligibility(
         resolved = await resolve_target_tariff(db, tariff_name)
         if not resolved:
             continue
-        # In Lazeika, trial subscriptions have empty or 0 trafficLimitBytes
-        raw_traffic = str(sub.get('trafficLimitBytes') or '').strip()
-        if not raw_traffic or raw_traffic == '0':
+        # In Lazeika, traffic may be in trafficLimitBytes or localTrafficLimitBytes (squad mode)
+        traffic_bytes = str(sub.get('trafficLimitBytes') or '').strip()
+        local_traffic_bytes = str(sub.get('localTrafficLimitBytes') or '').strip()
+        effective_traffic = traffic_bytes if (traffic_bytes and traffic_bytes != '0') else local_traffic_bytes
+        if effective_traffic == '0':
             continue
         active_sub = sub
         target_tariff = resolved
@@ -124,8 +126,8 @@ async def check_migration_eligibility(
         )
         return None
 
-    remnawave_uuid = str(active_sub.get('remnawaveUuid') or '').strip()
-    if not remnawave_uuid or not remnawave_uuid.isdigit():
+    lazeika_panel_user_id = str(active_sub.get('remnawaveUuid') or '').strip()
+    if not lazeika_panel_user_id or not lazeika_panel_user_id.isdigit():
         logger.warning('Active subscription in Lazeika has missing or invalid remnawaveUuid', sub=active_sub)
         return None
 
@@ -155,7 +157,6 @@ async def check_migration_eligibility(
     except (ValueError, TypeError):
         balance_rub = 0.0
 
-
     return MigrationCandidate(
         client_id=str(client_info.get('id')),
         subscription_id=str(active_sub.get('id')),
@@ -168,7 +169,7 @@ async def check_migration_eligibility(
         device_limit=device_limit,
         traffic_limit_gb=target_tariff.traffic_limit_gb,
         whitelist_traffic_limit_gb=target_tariff.whitelist_traffic_limit_gb,
-        remnawave_uuid=remnawave_uuid,
+        panel_user_id=lazeika_panel_user_id,
         expires_at_str=exp_dt.strftime('%d.%m.%Y'),
         new_end_date=new_end_date,
         balance_rub=balance_rub,
@@ -208,7 +209,7 @@ async def execute_user_migration(
                 )
         raise ValueError('Подписка в Лазейка ВПН не найдена или уже перенесена.')
 
-    panel_user_id = int(candidate.remnawave_uuid)
+    panel_user_id = int(candidate.panel_user_id)
     logger.info(
         'Starting migration for user',
         user_id=user.id,
@@ -260,7 +261,6 @@ async def execute_user_migration(
     # 2. Update Invoxy Database
     now = datetime.now(UTC)
     user.remnawave_id = panel_user_id
-    user.remnawave_uuid = str(panel_user_id)
 
     # Check if user has an existing subscription record
     existing_sub = await get_subscription_by_user_id(db, user.id)
@@ -288,7 +288,6 @@ async def execute_user_migration(
         subscription.whitelist_traffic_used_bytes = 0
         subscription.whitelist_traffic_purchased_gb = 0
         subscription.remnawave_id = panel_user_id
-        subscription.remnawave_uuid = str(panel_user_id)
         subscription.remnawave_short_uuid = updated_panel_user.short_uuid
         subscription.subscription_url = sub_url
         subscription.connected_squads = squads
@@ -309,7 +308,6 @@ async def execute_user_migration(
             whitelist_traffic_used_bytes=0,
             whitelist_traffic_purchased_gb=0,
             remnawave_id=panel_user_id,
-            remnawave_uuid=str(panel_user_id),
             remnawave_short_uuid=updated_panel_user.short_uuid,
             remnawave_short_id=short_id,
             subscription_url=sub_url,

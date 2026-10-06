@@ -4,11 +4,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cabinet.utils.device_ownership import verify_hwid_belongs_to_user
 from app.database.crud.user import get_user_by_id
 from app.database.models import AppDevice, User, UserStatus
 from app.services import app_client_service as svc
@@ -18,6 +19,7 @@ from ..dependencies import get_cabinet_db, get_current_cabinet_user, get_optiona
 from ..ip_utils import get_client_ip
 from ..schemas.auth import AuthResponse
 from .auth import _create_auth_response, _store_refresh_token
+from .subscription_modules.devices import delete_device as _panel_delete_device, get_devices as _panel_get_devices
 
 
 logger = structlog.get_logger(__name__)
@@ -54,6 +56,10 @@ class RestrictedRouting(PackageList):
     domains: list[str] = Field(default_factory=list, max_length=500)
 
 
+class SubscriptionDomains(BaseModel):
+    domains: list[str] = Field(default_factory=list, max_length=50)
+
+
 class RoutingUpdate(BaseModel):
     normal: PackageList = Field(default_factory=PackageList)
     restricted: RestrictedRouting = Field(default_factory=RestrictedRouting)
@@ -67,7 +73,11 @@ async def _limit(request: Request, action: str, limit: int) -> None:
 @router.get('/config')
 async def get_app_config(request: Request, db: AsyncSession = Depends(get_cabinet_db)) -> dict[str, Any]:
     await _limit(request, 'app_config', 30)
-    return {'links': svc.public_links(), 'routing': await svc.get_routing(db)}
+    return {
+        'links': svc.public_links(),
+        'routing': await svc.get_routing(db),
+        'subscription_domains': await svc.get_subscription_domains(db),
+    }
 
 
 @router.post('/login', response_model=LoginStartResponse)
@@ -110,7 +120,8 @@ async def exchange_app_login(
     user.cabinet_last_login = datetime.now(UTC)
     await db.commit()
     auth = await _create_auth_response(user, db)
-    await _store_refresh_token(db, user.id, auth.refresh_token, device_info='invoxy_app')
+    await _store_refresh_token(db, user.id, auth.refresh_token, device_info=svc.app_session_tag(body.device_id))
+    await svc.clear_revocation(db, body.device_id)
     logger.info('Invoxy app login completed', user_id=user.id)
     return auth
 
@@ -150,9 +161,74 @@ async def report_app_device(
 ) -> Response:
     await _limit(request, 'app_device_report', 20)
     try:
-        await svc.report_device(db, payload, user)
+        ip = None
+        try:
+            ip = get_client_ip(request)
+        except HTTPException:
+            ip = None
+        device = await svc.report_device(db, payload, user, ip=ip)
     except ValueError as error:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'invalid_device') from error
+    if user is not None and device.revoked_at is not None:
+        # An administrator signed this installation out: the app learns it from this answer and goes to sign-in.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, 'device_revoked')
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get('/devices/list')
+async def list_my_devices(
+    request: Request,
+    subscription_id: int | None = Query(None),
+    device_id: str | None = Header(None, alias='X-Invoxy-Device', max_length=128),
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> dict[str, Any]:
+    """Devices of the subscription; the one that asks is marked ``is_current``."""
+    await _limit(request, 'app_device_list', 60)
+    raw = await _panel_get_devices(subscription_id=subscription_id, user=user, db=db)
+    return svc.format_app_devices(raw, current_device_id=device_id)
+
+
+@router.delete('/devices/{hwid}', status_code=status.HTTP_204_NO_CONTENT)
+async def remove_my_device(
+    hwid: str,
+    request: Request,
+    subscription_id: int | None = Query(None),
+    device_id: str | None = Header(None, alias='X-Invoxy-Device', max_length=128),
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> Response:
+    """Frees a device slot. The server decides what is allowed, whatever the client sends:
+
+    - the asking device cannot remove itself (the user would lose access);
+    - the asking device must still be on the account, unless the account is at its limit and the
+      device needs a slot (two devices cannot remove each other: removals are serialized);
+    - the target must belong to the user.
+    """
+    await _limit(request, 'app_device_remove', 20)
+    target = (hwid or '').strip()
+    try:
+        svc.check_device_removal(hwid=target, current_device_id=device_id)
+    except svc.DeviceRemovalError as error:
+        if error.code == 'current_device':
+            logger.warning('app_device_removal_blocked', user_id=user.id, reason=error.code)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT if error.code == 'current_device' else status.HTTP_400_BAD_REQUEST, error.code
+        ) from error
+
+    if not await svc.acquire_device_lock(user.id):
+        raise HTTPException(status.HTTP_409_CONFLICT, 'busy')
+    try:
+        listed = await _panel_get_devices(subscription_id=subscription_id, user=user, db=db)
+        if not svc.device_may_free_a_slot(listed, device_id):
+            logger.warning('app_device_removal_blocked', user_id=user.id, reason='current_device_not_registered')
+            raise HTTPException(status.HTTP_409_CONFLICT, 'current_device_not_registered')
+        if not await verify_hwid_belongs_to_user(user, target):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, 'device_not_found')
+        await _panel_delete_device(hwid=target, subscription_id=subscription_id, user=user, db=db)
+    finally:
+        await svc.release_device_lock(user.id)
+    logger.info('app_device_removed', user_id=user.id, device=svc.short_hash(target), by=svc.short_hash(device_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -203,7 +279,11 @@ async def list_app_devices(
                 'id': device.id,
                 'platform': device.platform,
                 'os_version': device.os_version,
+                'device_model': device.device_model,
                 'app_version': device.app_version,
+                'last_ip': device.last_ip,
+                'first_seen_at': device.first_seen_at.isoformat() if device.first_seen_at else None,
+                'revoked_at': device.revoked_at.isoformat() if device.revoked_at else None,
                 'last_seen_at': device.last_seen_at.isoformat() if device.last_seen_at else None,
                 'last_connect_ok': device.last_connect_ok,
                 'last_error_code': device.last_error_code,
@@ -214,6 +294,21 @@ async def list_app_devices(
             for device, owner in rows
         ],
     }
+
+
+@admin_router.post('/devices/{device_id}/revoke')
+async def revoke_app_device(
+    device_id: int,
+    admin: User = Depends(require_permission('users:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> dict[str, Any]:
+    """Sign an installation out of the account it is linked to (its refresh tokens are revoked)."""
+    device = await db.get(AppDevice, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, 'device_not_found')
+    revoked = await svc.revoke_device(db, device)
+    logger.info('app_device_revoked', admin_id=admin.id, device_id=device.id, user_id=device.user_id, tokens=revoked)
+    return {'revoked_tokens': revoked, 'revoked_at': device.revoked_at.isoformat() if device.revoked_at else None}
 
 
 @admin_router.get('/routing')
@@ -230,3 +325,21 @@ async def update_app_routing(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     return await svc.save_routing(db, body.model_dump())
+
+
+@admin_router.get('/subscription-domains')
+async def get_subscription_domains(
+    admin: User = Depends(require_permission('settings:read')), db: AsyncSession = Depends(get_cabinet_db)
+) -> dict[str, Any]:
+    return {'domains': await svc.get_subscription_domains(db), 'defaults': svc.DEFAULT_SUBSCRIPTION_DOMAINS}
+
+
+@admin_router.put('/subscription-domains')
+async def update_subscription_domains(
+    body: SubscriptionDomains,
+    admin: User = Depends(require_permission('settings:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> dict[str, Any]:
+    domains = await svc.save_subscription_domains(db, body.domains)
+    logger.info('app_subscription_domains_changed', admin_id=admin.id, count=len(domains))
+    return {'domains': domains, 'defaults': svc.DEFAULT_SUBSCRIPTION_DOMAINS}

@@ -385,11 +385,27 @@ async def _prepare_auto_extend_context(
 
     user = await lock_user_for_pricing(db, user.id)
 
+    device_limit_val = cart_data.get('device_limit') or cart_data.get('devices')
+    device_limit = (
+        max(_safe_int(device_limit_val), subscription.device_limit or 0)
+        if device_limit_val is not None and _safe_int(device_limit_val) > 0
+        else subscription.device_limit
+    )
+
+    cart_traffic = _safe_int(
+        cart_data.get('custom_traffic_gb')
+        or cart_data.get('traffic_limit_gb')
+        or cart_data.get('traffic_gb')
+    )
+    traffic_limit_gb = cart_traffic if cart_traffic is not None and cart_traffic > 0 else subscription.traffic_limit_gb
+
     try:
         pricing = await _pricing_engine.calculate_renewal_price(
             db,
             subscription,
             period_days,
+            device_limit=device_limit,
+            custom_traffic_gb=traffic_limit_gb,
             user=user,
         )
         price_kopeks = pricing.final_total
@@ -420,14 +436,6 @@ async def _prepare_auto_extend_context(
         )
     else:
         description = cart_data.get('description') or f'Продление подписки на {format_days_declension(period_days)}'
-
-    device_limit = cart_data.get('device_limit')
-    if device_limit is not None:
-        device_limit = _safe_int(device_limit, subscription.device_limit)
-
-    traffic_limit_gb = cart_data.get('traffic_limit_gb')
-    if traffic_limit_gb is not None:
-        traffic_limit_gb = _safe_int(traffic_limit_gb, subscription.traffic_limit_gb or 0)
 
     squad_uuid = cart_data.get('squad_uuid')
     consume_promo_offer = get_user_active_promo_discount_percent(user) > 0
@@ -609,7 +617,7 @@ async def _auto_extend_subscription(
             prepared.period_days,
             tariff_id=prepared.tariff_id if is_tariff_change else None,
             traffic_limit_gb=conversion_traffic_limit_gb if apply_traffic_limit else None,
-            device_limit=prepared.device_limit if is_tariff_change else None,
+            device_limit=prepared.device_limit,
         )
 
         # Конвертируем триал в платную подписку ТОЛЬКО после успешного продления
@@ -924,14 +932,47 @@ async def _auto_purchase_tariff(
     user = await lock_user_for_pricing(db, user.id)
 
     # Calculate price via PricingEngine (single source of truth)
-    device_limit = None
+    cart_device_limit = _safe_int(cart_data.get('device_limit') or cart_data.get('devices'))
+    min_devices = tariff.device_limit or 1
+    max_devices = (
+        tariff.max_device_limit
+        if (tariff.max_device_limit and tariff.max_device_limit > 0)
+        else (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else 100)
+    )
+
+    if cart_device_limit and cart_device_limit > 0:
+        effective_device_limit = max(min_devices, min(cart_device_limit, max_devices))
+    elif existing_subscription and existing_subscription.tariff_id == tariff_id:
+        effective_device_limit = max(min_devices, existing_subscription.device_limit or 0)
+    else:
+        effective_device_limit = tariff.device_limit or min_devices
+
+    # Preserve extra devices when renewing the same tariff
     if existing_subscription and existing_subscription.tariff_id == tariff_id:
-        device_limit = existing_subscription.device_limit
+        effective_device_limit = max(effective_device_limit, existing_subscription.device_limit or 0)
+
+    # Resolve custom traffic from cart if supported
+    cart_traffic = _safe_int(
+        cart_data.get('custom_traffic_gb')
+        or cart_data.get('traffic_limit_gb')
+        or cart_data.get('traffic_gb')
+    )
+    custom_traffic_gb = None
+    if (
+        cart_traffic is not None
+        and hasattr(tariff, 'can_purchase_custom_traffic')
+        and tariff.can_purchase_custom_traffic()
+    ):
+        if tariff.min_traffic_gb <= cart_traffic <= tariff.max_traffic_gb:
+            custom_traffic_gb = cart_traffic
+
+    effective_traffic_limit_gb = custom_traffic_gb if custom_traffic_gb is not None else tariff.traffic_limit_gb
 
     result = await pricing_engine.calculate_tariff_purchase_price(
         tariff,
         period_days,
-        device_limit=device_limit,
+        device_limit=effective_device_limit,
+        custom_traffic_gb=custom_traffic_gb,
         user=user,
     )
     final_price = result.final_total
@@ -953,7 +994,10 @@ async def _auto_purchase_tariff(
 
     # Списываем баланс
     try:
-        description = f'Покупка тарифа {tariff.name} на {format_days_declension(period_days)}'
+        description = (
+            cart_data.get('description')
+            or f'Покупка тарифа {tariff.name} на {format_days_declension(period_days)}'
+        )
         success = await subtract_user_balance(
             db,
             user,
@@ -987,16 +1031,16 @@ async def _auto_purchase_tariff(
             # Продлеваем существующую подписку
             # Сохраняем докупленные устройства при продлении того же тарифа
             if existing_subscription.tariff_id == tariff.id:
-                effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
+                sub_device_limit = max(effective_device_limit, existing_subscription.device_limit or 0)
             else:
-                effective_device_limit = tariff.device_limit
+                sub_device_limit = effective_device_limit
             subscription = await extend_subscription(
                 db,
                 existing_subscription,
                 days=period_days,
                 tariff_id=tariff.id,
-                traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=effective_device_limit,
+                traffic_limit_gb=effective_traffic_limit_gb,
+                device_limit=sub_device_limit,
                 connected_squads=squads,
             )
             was_trial_conversion = existing_subscription.is_trial
@@ -1010,8 +1054,8 @@ async def _auto_purchase_tariff(
                 db=db,
                 user_id=user.id,
                 duration_days=period_days,
-                traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
+                traffic_limit_gb=effective_traffic_limit_gb,
+                device_limit=effective_device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
             )
@@ -1267,18 +1311,76 @@ async def _auto_purchase_daily_tariff(
         )
         return False
 
-    # Блокируем пользователя и применяем скидки (group + promo-offer)
+    # Проверяем есть ли уже подписка
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+        active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+        _cart_sub_id = cart_data.get('subscription_id')
+        if _cart_sub_id:
+            existing_subscription = next(
+                (s for s in active_subs if s.id == int(_cart_sub_id)),
+                None,
+            )
+        else:
+            existing_subscription = next(
+                (s for s in active_subs if s.tariff_id == tariff_id),
+                None,
+            )
+    else:
+        existing_subscription = await get_subscription_by_user_id(db, user.id)
+
+    # Блокируем пользователя и применяем скидки через PricingEngine
     from app.database.crud.user import lock_user_for_pricing
-    from app.utils.promo_offer import get_user_active_promo_discount_percent
 
     user = await lock_user_for_pricing(db, user.id)
 
-    promo_group = user.get_primary_promo_group()
-    group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
-    offer_pct = get_user_active_promo_discount_percent(user)
+    # Resolve device_limit from cart or existing subscription
+    cart_device_limit = _safe_int(cart_data.get('device_limit') or cart_data.get('devices'))
+    min_devices = tariff.device_limit or 1
+    max_devices = (
+        tariff.max_device_limit
+        if (tariff.max_device_limit and tariff.max_device_limit > 0)
+        else (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else 100)
+    )
 
-    final_price, _, _ = PricingEngine.apply_stacked_discounts(daily_price, group_pct, offer_pct)
-    consume_promo = offer_pct > 0
+    if cart_device_limit and cart_device_limit > 0:
+        effective_device_limit = max(min_devices, min(cart_device_limit, max_devices))
+    elif existing_subscription and existing_subscription.tariff_id == tariff_id:
+        effective_device_limit = max(min_devices, existing_subscription.device_limit or 0)
+    else:
+        effective_device_limit = tariff.device_limit or min_devices
+
+    # Preserve extra devices when renewing the same tariff
+    if existing_subscription and existing_subscription.tariff_id == tariff_id:
+        effective_device_limit = max(effective_device_limit, existing_subscription.device_limit or 0)
+
+    # Resolve custom traffic from cart if supported
+    cart_traffic = _safe_int(
+        cart_data.get('custom_traffic_gb')
+        or cart_data.get('traffic_limit_gb')
+        or cart_data.get('traffic_gb')
+    )
+    custom_traffic_gb = None
+    if (
+        cart_traffic is not None
+        and hasattr(tariff, 'can_purchase_custom_traffic')
+        and tariff.can_purchase_custom_traffic()
+    ):
+        if tariff.min_traffic_gb <= cart_traffic <= tariff.max_traffic_gb:
+            custom_traffic_gb = cart_traffic
+
+    effective_traffic_limit_gb = custom_traffic_gb if custom_traffic_gb is not None else tariff.traffic_limit_gb
+
+    pricing_result = await pricing_engine.calculate_tariff_purchase_price(
+        tariff,
+        period_days=1,
+        device_limit=effective_device_limit,
+        custom_traffic_gb=custom_traffic_gb,
+        user=user,
+    )
+    final_price = pricing_result.final_total
+    consume_promo = pricing_result.promo_offer_discount > 0
 
     if final_price > 0 and user.balance_kopeks < final_price:
         logger.info(
@@ -1291,7 +1393,7 @@ async def _auto_purchase_daily_tariff(
 
     # Списываем баланс за первый день
     try:
-        description = f'Активация суточного тарифа {tariff.name}'
+        description = cart_data.get('description') or f'Активация суточного тарифа {tariff.name}'
         success = await subtract_user_balance(
             db,
             user,
@@ -1321,25 +1423,6 @@ async def _auto_purchase_daily_tariff(
         all_servers, _ = await get_all_server_squads(db, available_only=True)
         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
-    # Проверяем есть ли уже подписка
-    if settings.is_multi_tariff_enabled():
-        from app.database.crud.subscription import get_active_subscriptions_by_user_id
-
-        active_subs = await get_active_subscriptions_by_user_id(db, user.id)
-        _cart_sub_id = cart_data.get('subscription_id')
-        if _cart_sub_id:
-            existing_subscription = next(
-                (s for s in active_subs if s.id == int(_cart_sub_id)),
-                None,
-            )
-        else:
-            existing_subscription = next(
-                (s for s in active_subs if s.tariff_id == tariff_id),
-                None,
-            )
-    else:
-        existing_subscription = await get_subscription_by_user_id(db, user.id)
-
     try:
         if existing_subscription:
             # Обновляем существующую подписку на суточный тариф
@@ -1352,13 +1435,17 @@ async def _auto_purchase_daily_tariff(
                 await _get_old_tariff(db, existing_subscription.tariff_id) if existing_subscription.tariff_id else None
             )
             existing_subscription.tariff_id = tariff.id
-            existing_subscription.traffic_limit_gb = tariff.traffic_limit_gb
-            existing_subscription.device_limit = calc_device_limit_on_tariff_switch(
-                current_device_limit=existing_subscription.device_limit,
-                old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
-                new_tariff_device_limit=tariff.device_limit,
-                max_device_limit=getattr(tariff, 'max_device_limit', None),
-            )
+            existing_subscription.traffic_limit_gb = effective_traffic_limit_gb
+            if existing_subscription.tariff_id == tariff.id:
+                sub_device_limit = max(effective_device_limit, existing_subscription.device_limit or 0)
+            else:
+                sub_device_limit = calc_device_limit_on_tariff_switch(
+                    current_device_limit=existing_subscription.device_limit,
+                    old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
+                    new_tariff_device_limit=effective_device_limit,
+                    max_device_limit=getattr(tariff, 'max_device_limit', None),
+                )
+            existing_subscription.device_limit = sub_device_limit
             existing_subscription.connected_squads = squads
             existing_subscription.status = 'active'
             existing_subscription.is_trial = False
@@ -1375,8 +1462,8 @@ async def _auto_purchase_daily_tariff(
                 db=db,
                 user_id=user.id,
                 duration_days=1,
-                traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
+                traffic_limit_gb=effective_traffic_limit_gb,
+                device_limit=effective_device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
             )
