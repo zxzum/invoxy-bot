@@ -316,6 +316,10 @@ async def main():
 
         await configure_chat_menu_button(bot)
 
+        from app.utils.invoxy_bot_profile import configure_bot_profile
+
+        await configure_bot_profile(bot)
+
         monitoring_service.bot = bot
         maintenance_service.set_bot(bot)
         broadcast_service.set_bot(bot)

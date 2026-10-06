@@ -8,6 +8,7 @@ from app.handlers import (
     balance,
     common,
     contests as user_contests,
+    invoxy_reply_menu,
     menu,
     migration,
     polls as user_polls,
@@ -75,6 +76,7 @@ from app.middlewares.chat_type_filter import ChatTypeFilterMiddleware
 from app.middlewares.context_binding import ContextVarsMiddleware
 from app.middlewares.display_name_restriction import DisplayNameRestrictionMiddleware
 from app.middlewares.global_error import GlobalErrorMiddleware
+from app.middlewares.invoxy_reply_keyboard import InvoxyReplyKeyboardMiddleware
 from app.middlewares.logging import LoggingMiddleware
 from app.middlewares.maintenance import MaintenanceMiddleware
 from app.middlewares.subscription_checker import SubscriptionStatusMiddleware
@@ -184,6 +186,11 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     dp.message.middleware(SubscriptionStatusMiddleware())
     dp.callback_query.middleware(SubscriptionStatusMiddleware())
     dp.pre_checkout_query.middleware(SubscriptionStatusMiddleware())
+    # INVOXY: reply-клавиатура ставится один раз на пользователя и язык (самый внутренний слой).
+    dp.message.middleware(InvoxyReplyKeyboardMiddleware())
+    dp.callback_query.middleware(InvoxyReplyKeyboardMiddleware())
+    # INVOXY: кнопки reply-меню должны сработать раньше общих хендлеров start.
+    invoxy_reply_menu.register_handlers(dp)
     start.register_handlers(dp)
     menu.register_handlers(dp)
     subscription.register_handlers(dp)
