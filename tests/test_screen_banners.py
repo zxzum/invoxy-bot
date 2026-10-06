@@ -62,3 +62,34 @@ def test_kind_mapping_points_at_expected_files(banners_dir: Path) -> None:
     paid = get_screen_banner('paid_successful')
     assert Path(str(sub.path)).name == 'sub-banner.png'
     assert Path(str(paid.path)).name == 'paid_successful.png'
+
+
+NEW_BOT_UX_BANNERS = {
+    'renew': 'renew.png',
+    'renew_expired': 'renew_expired.png',
+    'payment_pending': 'payment_pending.png',
+    'payment_failed': 'payment_failed.png',
+    'subscription_inactive': 'subscription_inactive.png',
+}
+
+
+@pytest.mark.parametrize(('kind', 'filename'), sorted(NEW_BOT_UX_BANNERS.items()))
+def test_bot_ux_banner_kinds_are_registered(kind: str, filename: str) -> None:
+    assert screen_banners.SCREEN_BANNERS[kind] == filename
+
+
+@pytest.mark.parametrize('filename', sorted(NEW_BOT_UX_BANNERS.values()))
+def test_bot_ux_banner_assets_ship_at_banner_size(filename: str) -> None:
+    path = Path(screen_banners.__file__).resolve().parents[2] / 'assets' / 'banners' / filename
+    assert path.is_file(), f'{filename} is not shipped in assets/banners'
+    with Image.open(path) as img:
+        assert img.size == (1672, 941)
+
+
+@pytest.mark.parametrize('filename', sorted(NEW_BOT_UX_BANNERS.values()))
+def test_bot_ux_banner_assets_mirrored_in_deploy(filename: str) -> None:
+    bot_dir = Path(screen_banners.__file__).resolve().parents[2]
+    deploy_copy = bot_dir.parent / 'deploy' / 'branding-assets' / 'banners' / filename
+    if not deploy_copy.parent.is_dir():
+        pytest.skip('deploy/ is not part of this checkout')
+    assert deploy_copy.read_bytes() == (bot_dir / 'assets' / 'banners' / filename).read_bytes()

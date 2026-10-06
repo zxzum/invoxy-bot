@@ -1,7 +1,7 @@
 """Per-screen banner resolver (INVOXY).
 
 Centralizes banner filesystem paths so core handlers only name a screen
-("main", "subscription", "referral", "paid_successful"). Text/presentation
+("main", "subscription", "referral", "paid_successful", "renew", ...). Text/presentation
 logic stays in the handlers — this module only resolves media.
 """
 
@@ -19,13 +19,28 @@ from app.utils.message_patch import _prepare_logo_for_send
 
 logger = structlog.get_logger(__name__)
 
-ScreenBannerKind = Literal['main', 'subscription', 'referral', 'paid_successful']
+ScreenBannerKind = Literal[
+    'main',
+    'subscription',
+    'referral',
+    'paid_successful',
+    'renew',
+    'renew_expired',
+    'payment_pending',
+    'payment_failed',
+    'subscription_inactive',
+]
 
 SCREEN_BANNERS: dict[str, str] = {
     'main': 'main.png',
     'subscription': 'sub-banner.png',
     'referral': 'ref.png',
     'paid_successful': 'paid_successful.png',
+    'renew': 'renew.png',
+    'renew_expired': 'renew_expired.png',
+    'payment_pending': 'payment_pending.png',
+    'payment_failed': 'payment_failed.png',
+    'subscription_inactive': 'subscription_inactive.png',
 }
 
 _BANNERS_DIR = Path(__file__).resolve().parents[2] / 'assets' / 'banners'
