@@ -23,6 +23,8 @@ LANGS = ['ru', 'en', 'ua', 'fa', 'zh']
 PLACEHOLDER_RE = re.compile(r'\{[^}]*\}')
 # Keys resolved dynamically in Texts._get_value (not stored in the JSON files).
 DYNAMIC_KEYS = {'RULES_TEXT'}
+# Invoxy bot-UX copy is Russian (default) + English only; see tests/test_invoxy_locale_parity.py.
+RU_EN_ONLY_PREFIX = 'INVOXY_'
 
 
 @pytest.fixture(scope='module')
@@ -35,8 +37,9 @@ def test_all_locales_have_identical_keys(locales):
     for lang in LANGS:
         if lang == 'ru':
             continue
+        expected = ru_keys if lang == 'en' else {k for k in ru_keys if not k.startswith(RU_EN_ONLY_PREFIX)}
         keys = set(locales[lang])
-        missing = sorted(ru_keys - keys)
+        missing = sorted(expected - keys)
         extra = sorted(keys - ru_keys)
         assert not missing, f'{lang}.json is missing {len(missing)} keys present in ru: {missing[:15]}'
         assert not extra, f'{lang}.json has {len(extra)} keys not in ru: {extra[:15]}'
