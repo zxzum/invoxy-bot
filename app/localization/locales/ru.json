@@ -2338,5 +2338,6 @@
   "INVOXY_CMD_SUPPORT": "Поддержка",
   "INVOXY_CMD_LANGUAGE": "Сменить язык",
   "INVOXY_BOT_DESCRIPTION": "Invoxy — быстрый и простой VPN. Тариф, продление и поддержка — прямо в боте.{site_line}",
-  "INVOXY_BOT_SHORT": "Invoxy VPN: тариф, продление, поддержка"
+  "INVOXY_BOT_SHORT": "Invoxy VPN: тариф, продление, поддержка",
+  "INVOXY_BTN_ALL_TARIFFS": "Все тарифы"
 }

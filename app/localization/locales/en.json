@@ -2338,5 +2338,6 @@
   "INVOXY_CMD_SUPPORT": "Support",
   "INVOXY_CMD_LANGUAGE": "Change language",
   "INVOXY_BOT_DESCRIPTION": "Invoxy — fast, simple VPN. Tariff, renewal and support right in the bot.{site_line}",
-  "INVOXY_BOT_SHORT": "Invoxy VPN: tariff, renewal, support"
+  "INVOXY_BOT_SHORT": "Invoxy VPN: tariff, renewal, support",
+  "INVOXY_BTN_ALL_TARIFFS": "All tariffs"
 }
