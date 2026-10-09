@@ -11,6 +11,7 @@ import asyncio
 import html
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import structlog
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -57,8 +58,15 @@ def renewable_subscriptions(subs: Sequence[Subscription]) -> list[Subscription]:
         if settings.is_tariffs_mode() and not sub.tariff_id:
             continue
         result.append(sub)
-    active = sorted((s for s in result if _is_active(s)), key=lambda s: s.end_date)
-    expired = sorted((s for s in result if not _is_active(s)), key=lambda s: s.end_date, reverse=True)
+    active = sorted(
+        (s for s in result if _is_active(s)),
+        key=lambda s: getattr(s, 'end_date', None) or datetime.max.replace(tzinfo=UTC),
+    )
+    expired = sorted(
+        (s for s in result if not _is_active(s)),
+        key=lambda s: getattr(s, 'end_date', None) or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
     return active + expired
 
 
@@ -95,7 +103,8 @@ def _name(sub: Subscription) -> str:
 
 
 def _date(sub: Subscription) -> str:
-    return sub.end_date.strftime('%d.%m.%Y')
+    end = getattr(sub, 'end_date', None)
+    return end.strftime('%d.%m.%Y') if end else '—'
 
 
 def _traffic(texts, sub: Subscription) -> str:
