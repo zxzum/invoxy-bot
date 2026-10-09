@@ -238,3 +238,23 @@ def test_language_picker_lists_only_available_languages(monkeypatch) -> None:
     monkeypatch.setattr(settings, 'AVAILABLE_LANGUAGES', 'ru')
     only_ru = screens.build_language_picker('ru')
     assert [b.callback_data for b in _buttons(only_ru) if b.callback_data.startswith('ilang:')] == ['ilang:ru']
+
+
+def test_site_screen_escapes_html_in_the_url(monkeypatch) -> None:
+    monkeypatch.setattr(settings, 'SERVICE_WEBSITE_URL', 'https://site.example/?a=1&b=<2>')
+    screen = screens.build_site_screen('ru')
+    assert 'a=1&amp;b=&lt;2&gt;' in screen.text
+    assert '<2>' not in screen.text
+
+
+async def test_slow_pricing_never_blocks_the_renew_button(monkeypatch) -> None:
+    import asyncio
+
+    async def _slow(*_args, **_kwargs):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(screens, 'PRICE_HINT_TIMEOUT_SECONDS', 0.05)
+    monkeypatch.setattr(screens, 'pricing_engine', SimpleNamespace(calculate_renewal_price=_slow))
+    screen = await screens.build_renew_screen(None, _user(_sub(5)), 'ru')
+    assert 'От ' not in screen.text
+    assert _web_app_urls(screen) == ['https://invoxy.example/subscriptions/5/renew']

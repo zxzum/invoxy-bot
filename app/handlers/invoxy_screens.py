@@ -7,6 +7,7 @@ web_app (у кнопок reply-клавиатуры нет initData). Банне
 
 from __future__ import annotations
 
+import asyncio
 import html
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ logger = structlog.get_logger(__name__)
 
 RENEW_PAGE_SIZE = 5
 ENDING_SOON_DAYS = 3
+PRICE_HINT_TIMEOUT_SECONDS = 3.0
 _NON_RENEWABLE_STATUSES = frozenset({'disabled', 'pending'})
 _LANGUAGE_NAMES = {'ru': '🇷🇺 Русский', 'en': '🇬🇧 English'}
 
@@ -61,8 +63,13 @@ def renewable_subscriptions(subs: Sequence[Subscription]) -> list[Subscription]:
 
 
 async def renewal_price_hint(db, sub: Subscription, user) -> tuple[int, int] | None:
-    """(период в днях, цена в копейках) самого дешёвого периода продления; None, если цену не получить."""
-    try:
+    """(период в днях, цена в копейках) самого дешёвого периода продления; None, если цену не получить.
+
+    Цена — приятное дополнение к сообщению: при ошибке или задержке дольше PRICE_HINT_TIMEOUT_SECONDS
+    кнопка продления всё равно показывается, просто без цены.
+    """
+
+    async def _cheapest() -> tuple[int, int] | None:
         tariff = sub.tariff
         if tariff is not None and tariff.is_active and tariff.period_prices:
             periods = sorted(int(k) for k in tariff.period_prices)
@@ -74,8 +81,11 @@ async def renewal_price_hint(db, sub: Subscription, user) -> tuple[int, int] | N
             if pricing.final_total > 0 and (best is None or pricing.final_total < best[1]):
                 best = (period, pricing.final_total)
         return best
-    except Exception as error:
-        logger.warning('Не удалось получить цену продления для сообщения бота', error=error)
+
+    try:
+        return await asyncio.wait_for(_cheapest(), timeout=PRICE_HINT_TIMEOUT_SECONDS)
+    except Exception as error:  # включая TimeoutError
+        logger.warning('Не удалось получить цену продления для сообщения бота', error=repr(error))
         return None
 
 
@@ -234,9 +244,9 @@ def build_site_screen(language: str | None) -> Screen:
     texts = get_texts(normalize_language(language))
     url = website_url()
     if not url:
-        return Screen(texts.t('INVOXY_ERROR_GENERIC'), InlineKeyboardMarkup(inline_keyboard=[_main_menu_row(texts)]))
+        return Screen(texts.t('INVOXY_SITE_UNAVAILABLE'), InlineKeyboardMarkup(inline_keyboard=[_main_menu_row(texts)]))
     rows = [[InlineKeyboardButton(text=texts.t('INVOXY_BTN_OPEN_SITE'), url=url)], _main_menu_row(texts)]
-    return Screen(f'{texts.t("INVOXY_SITE_TEXT")} {url}', InlineKeyboardMarkup(inline_keyboard=rows))
+    return Screen(f'{texts.t("INVOXY_SITE_TEXT")} {html.escape(url)}', InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 def available_languages() -> list[str]:

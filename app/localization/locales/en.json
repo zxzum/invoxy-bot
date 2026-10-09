@@ -2339,5 +2339,6 @@
   "INVOXY_CMD_LANGUAGE": "Change language",
   "INVOXY_BOT_DESCRIPTION": "Invoxy — fast, simple VPN. Tariff, renewal and support right in the bot.{site_line}",
   "INVOXY_BOT_SHORT": "Invoxy VPN: tariff, renewal, support",
-  "INVOXY_BTN_ALL_TARIFFS": "All tariffs"
+  "INVOXY_BTN_ALL_TARIFFS": "All tariffs",
+  "INVOXY_SITE_UNAVAILABLE": "The website link isn’t set up yet. Please check back later."
 }

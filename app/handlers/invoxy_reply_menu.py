@@ -32,7 +32,6 @@ from app.states import RegistrationStates
 from app.utils.cache import cache
 from app.utils.invoxy_bot_profile import apply_user_profile
 from app.utils.invoxy_keyboard_marker import set_marker
-from app.utils.invoxy_links import website_url
 from app.utils.screen_banners import get_screen_banner
 
 
@@ -91,8 +90,8 @@ async def dispatch_action(message: types.Message, db: AsyncSession, db_user: Use
         elif action == 'cabinet':
             await _send_screen(message, build_cabinet_screen(language))
         elif action == 'site':
-            if website_url():
-                await _send_screen(message, build_site_screen(language))
+            # build_site_screen сам отвечает «ссылка не настроена», если SERVICE_WEBSITE_URL пуст.
+            await _send_screen(message, build_site_screen(language))
         elif action == 'support':
             await _send_support(message, language)
         elif action == 'language':

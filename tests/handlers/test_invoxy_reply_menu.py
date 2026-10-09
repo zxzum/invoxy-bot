@@ -102,12 +102,15 @@ async def test_text_only_screens_bypass_the_logo_patch() -> None:
         assert sent['parse_mode'] == 'HTML'
 
 
-async def test_site_button_is_ignored_without_website_url(monkeypatch) -> None:
+async def test_site_without_website_url_says_so_instead_of_staying_silent(monkeypatch) -> None:
     monkeypatch.setattr(settings, 'SERVICE_WEBSITE_URL', None)
+    monkeypatch.setattr(settings, 'CABINET_URL', 'https://invoxy.example')
     message = _message('Сайт')
     await menu.handle_reply_button(message, _state(), AsyncMock(), _user(_sub()))
-    message.bot.send_message.assert_not_awaited()
-    message.answer.assert_not_awaited()
+    sent = message.bot.send_message.await_args.kwargs
+    assert sent['text'] == 'Ссылка на сайт пока не настроена. Загляните позже.'
+    assert 'invoxy.example' not in sent['text']
+    assert all(b.url is None for row in sent['reply_markup'].inline_keyboard for b in row)
 
 
 async def test_support_button_reuses_existing_support_screen(monkeypatch) -> None:
