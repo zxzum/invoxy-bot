@@ -104,6 +104,8 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
     if subscription is None:
         return
 
+    is_from_main_menu = bool(callback.data and (callback.data == 'buy_traffic' or callback.data.startswith('buy_traffic:')))
+
     if not subscription or subscription.is_trial:
         await callback.answer(
             texts.t('PAID_FEATURE_ONLY', '⚠ Эта функция доступна только для платных подписок'),
@@ -158,7 +160,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                 period_hint_days,
             )
             price_rubles = discounted_price // 100
-            back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'my_subscriptions'
+            back_cb = 'back_to_menu' if is_from_main_menu else (f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'my_subscriptions')
 
             if max_per_month > 0 and remaining_this_month <= 0:
                 text = (
@@ -210,11 +212,12 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                 f'• Осталось сбросов в этом месяце: <b>{remaining_this_month} из {max_per_month}</b>'
             )
 
+            confirm_cb = f'confirm_lte_reset:{sub_id}:menu' if is_from_main_menu else f'confirm_lte_reset:{sub_id}'
             buttons = [
                 [
                     types.InlineKeyboardButton(
                         text=f'Понятно, сбросить за {price_rubles} ₽',
-                        callback_data=f'confirm_lte_reset:{sub_id}',
+                        callback_data=confirm_cb,
                     )
                 ],
                 [types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
@@ -239,7 +242,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
 
         purchases_this_month = await count_monthly_traffic_purchases(db, subscription.id)
         max_topup_per_month = getattr(tariff, 'traffic_topup_max_per_month', 0) or 0
-        back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'my_subscriptions'
+        back_cb = 'back_to_menu' if is_from_main_menu else (f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'my_subscriptions')
 
         if max_topup_per_month > 0 and purchases_this_month >= max_topup_per_month:
             text = (
@@ -703,7 +706,9 @@ async def handle_confirm_lte_reset(
         await db.refresh(db_user)
         await db.refresh(subscription)
 
-        back_cb = f'sm:{subscription.id}' if settings.is_multi_tariff_enabled() else 'my_subscriptions'
+        parts = callback.data.split(':') if callback.data else []
+        is_from_menu = len(parts) > 2 and parts[2] == 'menu'
+        back_cb = 'back_to_menu' if is_from_menu else (f'sm:{subscription.id}' if settings.is_multi_tariff_enabled() else 'my_subscriptions')
         buttons = [[types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)]]
 
         await callback.message.edit_text(

@@ -19,23 +19,46 @@ logger = structlog.get_logger(__name__)
 # and refreshed whenever the cabinet edits a method, keeping bot button labels in sync
 # with the cabinet. Bot and cabinet run in the same process, so refresh is immediate.
 _display_name_overrides: dict[str, str] = {}
+_method_sort_orders: dict[str, int] = {}
 
 
 async def refresh_display_name_overrides(db: AsyncSession) -> None:
-    """Reload the method_id -> display_name override cache from the DB."""
-    global _display_name_overrides
+    """Reload the method_id -> display_name and sort_order caches from the DB."""
+    global _display_name_overrides, _method_sort_orders
     result = await db.execute(
-        select(PaymentMethodConfig.method_id, PaymentMethodConfig.display_name).where(
-            PaymentMethodConfig.display_name.isnot(None)
+        select(
+            PaymentMethodConfig.method_id,
+            PaymentMethodConfig.display_name,
+            PaymentMethodConfig.sort_order,
         )
     )
-    _display_name_overrides = {method_id: name for method_id, name in result.all() if name and name.strip()}
-    logger.debug('Кэш имён платёжных методов обновлён', count=len(_display_name_overrides))
+    rows = result.all()
+    _display_name_overrides = {
+        method_id: name for method_id, name, _ in rows if name and name.strip()
+    }
+    _method_sort_orders = {
+        method_id: sort_order for method_id, _, sort_order in rows if sort_order is not None
+    }
+    logger.debug(
+        'Кэш имён и сортировки платёжных методов обновлён',
+        names_count=len(_display_name_overrides),
+        sort_count=len(_method_sort_orders),
+    )
 
 
 def get_display_name_override(method_id: str) -> str | None:
     """Sync read of a cabinet-set display name for a method, or None if not set."""
     return _display_name_overrides.get(method_id)
+
+
+def get_method_sort_order(method_id: str) -> int:
+    """Sync read of a cabinet-set sort order for a method, falling back to DEFAULT_METHOD_ORDER index."""
+    if method_id in _method_sort_orders:
+        return _method_sort_orders[method_id]
+    try:
+        return DEFAULT_METHOD_ORDER.index(method_id)
+    except ValueError:
+        return 9999
 
 
 # ============ Default method definitions ============
@@ -350,6 +373,8 @@ def _get_rollypay_sub_options() -> list[dict]:
 
 # Default order of methods
 DEFAULT_METHOD_ORDER = [
+    'rollypay',
+    'platega',
     'telegram_stars',
     'tribute',
     'cryptobot',
@@ -357,7 +382,6 @@ DEFAULT_METHOD_ORDER = [
     'yookassa',
     'mulenpay',
     'pal24',
-    'platega',
     'wata',
     'freekassa',
     'freekassa_sbp',
@@ -367,7 +391,6 @@ DEFAULT_METHOD_ORDER = [
     'riopay',
     'severpay',
     'paypear',
-    'rollypay',
     'overpay',
     'aurapay',
     'etoplatezhi',
@@ -581,6 +604,7 @@ async def update_sort_order(db: AsyncSession, ordered_method_ids: list[str]) -> 
             config.sort_order = index
 
     await db.commit()
+    await refresh_display_name_overrides(db)
 
 
 async def get_all_promo_groups(db: AsyncSession) -> list[PromoGroup]:

@@ -4393,25 +4393,20 @@ def format_instant_switch_list_text(
     remaining_days: int,
     db_user: User | None = None,
 ) -> str:
-    """Форматирует текст со списком тарифов для мгновенного переключения."""
-    upgrade_ok = settings.TARIFF_SWITCH_UPGRADE_ENABLED
-    downgrade_ok = settings.TARIFF_SWITCH_DOWNGRADE_ENABLED
+    """Форматирует текст со списком тарифов для мгновенного переключения с конвертацией дней."""
+    from app.services.pricing_engine import PricingEngine, pricing_engine
 
     texts = get_texts(db_user.language if db_user else 'ru')
     lines = [
-        texts.t('TARIFF_SWITCH_INSTANT_TITLE', '📦 <b>Мгновенная смена тарифа</b>'),
+        texts.t('TARIFF_SWITCH_INSTANT_TITLE', '📦 <b>Смена тарифа</b>'),
         texts.t('TARIFF_SWITCH_CURRENT_LINE', '📌 Текущий: <b>{name}</b>').format(
             name=html.escape(current_tariff.name)
         ),
         texts.t('TARIFF_SWITCH_DAYS_LEFT_LINE', '⏰ Осталось: <b>{days} дн.</b>').format(days=remaining_days),
         '',
-        texts.t('TARIFF_SWITCH_KEEP_DAYS_NOTE', '💡 При переключении остаток дней сохраняется.'),
+        '💡 Смена тарифа бесплатная (0 ₽) с конвертацией дней под новый тариф (комиссия 10%).',
+        '',
     ]
-    if upgrade_ok:
-        lines.append(texts.t('TARIFF_SWITCH_UPGRADE_NOTE', '⬆️ Повышение тарифа = доплата за разницу'))
-    if downgrade_ok:
-        lines.append(texts.t('TARIFF_SWITCH_DOWNGRADE_NOTE', '⬇️ Понижение = бесплатно'))
-    lines.append('')
 
     for tariff in tariffs:
         if tariff.id == current_tariff.id:
@@ -4422,13 +4417,18 @@ def format_instant_switch_list_text(
             '∞' if traffic_gb == 0 else texts.t('TARIFF_PURCHASE_TRAFFIC_GB', '{traffic} ГБ').format(traffic=traffic_gb)
         )
 
-        # Рассчитываем стоимость переключения
-        cost, is_upgrade = _calculate_instant_switch_cost(current_tariff, tariff, remaining_days, db_user)
+        switch_res = pricing_engine.calculate_tariff_switch_cost(current_tariff, tariff, remaining_days, user=db_user)
+        is_upgrade = switch_res.is_upgrade
 
         if is_upgrade:
-            cost_text = f'⬆️ +{format_price_kopeks(cost, compact=True)}'
+            conv_days = PricingEngine.calculate_converted_days(current_tariff, tariff, remaining_days, commission_pct=10)
+            cost_text = f'⬆️ {conv_days} дн. (перерасчёт)'
         else:
-            cost_text = texts.t('TARIFF_SWITCH_FREE_LABEL', '⬇️ Бесплатно')
+            extra = switch_res.extra_days
+            if extra > 0:
+                cost_text = f'⬇️ +{extra} дн. ({switch_res.converted_days} дн.)'
+            else:
+                cost_text = f'⬇️ {remaining_days} дн.'
 
         lines.append(f'<b>{html.escape(tariff.name)}</b> — {traffic} / {tariff.device_limit} 📱 {cost_text}')
 
@@ -4447,7 +4447,9 @@ def get_instant_switch_keyboard(
     language: str,
     db_user: User | None = None,
 ) -> InlineKeyboardMarkup:
-    """Создает клавиатуру для мгновенного переключения тарифа."""
+    """Создает клавиатуру для мгновенного переключения тарифа с конвертацией дней."""
+    from app.services.pricing_engine import PricingEngine, pricing_engine
+
     texts = get_texts(language)
     buttons = []
 
@@ -4455,13 +4457,18 @@ def get_instant_switch_keyboard(
         if tariff.id == current_tariff.id:
             continue
 
-        # Рассчитываем стоимость
-        cost, is_upgrade = _calculate_instant_switch_cost(current_tariff, tariff, remaining_days, db_user)
+        switch_res = pricing_engine.calculate_tariff_switch_cost(current_tariff, tariff, remaining_days, user=db_user)
+        is_upgrade = switch_res.is_upgrade
 
         if is_upgrade:
-            btn_text = f'{tariff.name} (+{format_price_kopeks(cost, compact=True)})'
+            conv_days = PricingEngine.calculate_converted_days(current_tariff, tariff, remaining_days, commission_pct=10)
+            btn_text = f'{tariff.name} ({conv_days} дн.)'
         else:
-            btn_text = texts.t('TARIFF_SWITCH_BUTTON_FREE', '{name} (бесплатно)').format(name=tariff.name)
+            extra = switch_res.extra_days
+            if extra > 0:
+                btn_text = f'{tariff.name} (+{extra} дн.)'
+            else:
+                btn_text = f'{tariff.name} ({remaining_days} дн.)'
 
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f'instant_sw_preview:{tariff.id}')])
 
@@ -4781,72 +4788,69 @@ async def preview_instant_switch(
         await callback.answer()
         return
 
+    from app.services.pricing_engine import PricingEngine, pricing_engine
+
+    switch_result = pricing_engine.calculate_tariff_switch_cost(
+        current_tariff,
+        new_tariff,
+        remaining_days,
+        user=db_user,
+    )
+    is_upgrade = switch_result.is_upgrade
+
     if is_upgrade:
-        # Upgrade - нужна доплата
-        if user_balance >= upgrade_cost:
-            await callback.message.edit_text(
-                texts.t(
-                    'TARIFF_SWITCH_UPGRADE_PREVIEW',
-                    '⬆️ <b>Повышение тарифа</b>\n\n'
-                    '📌 Текущий: <b>{current}</b>\n'
-                    '   • Трафик: {current_traffic}\n'
-                    '   • Устройств: {current_devices}\n\n'
-                    '📦 Новый: <b>{name}</b>\n'
-                    '   • Трафик: {traffic}\n'
-                    '   • Устройств: {devices}\n\n'
-                    '⏰ Осталось дней: <b>{days}</b>\n'
-                    '💰 <b>Доплата: {cost}</b>\n\n'
-                    '💳 Ваш баланс: {balance}\n'
-                    'После оплаты: {after}',
-                ).format(
-                    current=html.escape(current_tariff.name),
-                    current_traffic=current_traffic,
-                    current_devices=current_tariff.device_limit,
-                    name=html.escape(new_tariff.name),
-                    traffic=traffic,
-                    devices=new_tariff.device_limit,
-                    days=remaining_days,
-                    cost=format_price_kopeks(upgrade_cost),
-                    balance=format_price_kopeks(user_balance),
-                    after=format_price_kopeks(user_balance - upgrade_cost),
-                ),
-                reply_markup=get_instant_switch_confirm_keyboard(tariff_id, db_user.language),
-                parse_mode='HTML',
-            )
-        else:
-            missing = upgrade_cost - user_balance
-            await callback.message.edit_text(
-                texts.t(
-                    'TARIFF_SWITCH_UPGRADE_INSUFFICIENT',
-                    '❌ <b>Недостаточно средств</b>\n\n'
-                    '📦 Новый тариф: <b>{name}</b>\n'
-                    '💰 Требуется доплата: {cost}\n\n'
-                    '💳 Ваш баланс: {balance}\n'
-                    '⚠️ Не хватает: <b>{missing}</b>',
-                ).format(
-                    name=html.escape(new_tariff.name),
-                    cost=format_price_kopeks(upgrade_cost),
-                    balance=format_price_kopeks(user_balance),
-                    missing=format_price_kopeks(missing),
-                ),
-                reply_markup=get_instant_switch_insufficient_balance_keyboard(tariff_id, db_user.language),
-                parse_mode='HTML',
-            )
-    else:
-        # Downgrade или тот же уровень - бесплатно
+        converted_days = PricingEngine.calculate_converted_days(
+            current_tariff,
+            new_tariff,
+            remaining_days,
+            commission_pct=10,
+        )
+        escaped_current = html.escape(current_tariff.name)
+        escaped_new = html.escape(new_tariff.name)
         await callback.message.edit_text(
-            texts.t(
-                'TARIFF_SWITCH_DOWNGRADE_PREVIEW',
-                '⬇️ <b>Переключение тарифа</b>\n\n'
-                '📌 Текущий: <b>{current}</b>\n'
-                '   • Трафик: {current_traffic}\n'
-                '   • Устройств: {current_devices}\n\n'
-                '📦 Новый: <b>{name}</b>\n'
-                '   • Трафик: {traffic}\n'
-                '   • Устройств: {devices}\n\n'
-                '⏰ Осталось дней: <b>{days}</b>\n'
-                '💰 <b>Бесплатно</b> (понижение/равный тариф)',
-            ).format(
+            '⬆️ <b>Повышение тарифа</b>\n\n'
+            f'📌 Текущий: <b>{escaped_current}</b>\n'
+            f'   • Трафик: {current_traffic}\n'
+            f'   • Устройств: {current_tariff.device_limit}\n\n'
+            f'📦 Новый: <b>{escaped_new}</b>\n'
+            f'   • Трафик: {traffic}\n'
+            f'   • Устройств: {new_tariff.device_limit}\n\n'
+            f'⏰ Осталось сейчас: <b>{remaining_days} дн.</b>\n'
+            f'🔄 После конвертации: <b>{converted_days} дн.</b>\n'
+            '📊 Комиссия за перерасчёт: <b>10%</b>\n'
+            '💰 <b>Стоимость: Бесплатно (0 ₽)</b>\n\n'
+            '<i>Смена тарифа происходит бесплатно. Количество дней пересчитано пропорционально стоимости тарифов с учётом комиссии 10%. При необходимости вы сможете продлить тариф в любое время.</i>',
+            reply_markup=get_instant_switch_confirm_keyboard(tariff_id, db_user.language),
+            parse_mode='HTML',
+        )
+        await state.update_data(
+            switch_tariff_id=tariff_id,
+            upgrade_cost=0,
+            is_upgrade=True,
+            converted_days=converted_days,
+            extra_days=0,
+            current_tariff_id=current_tariff_id,
+            remaining_days=remaining_days,
+        )
+    else:
+        extra_days = switch_result.extra_days
+        total_days = switch_result.converted_days
+        extra_note = f'➕ Дополнительно: <b>+{extra_days} дн.</b>\n' if extra_days > 0 else ''
+        commission_note = f'📊 Комиссия: <b>{switch_result.commission_pct}%</b>\n' if extra_days > 0 else ''
+        await callback.message.edit_text(
+            '⬇️ <b>Понижение тарифа</b>\n\n'
+            '📌 Текущий: <b>{current}</b>\n'
+            '   • Трафик: {current_traffic}\n'
+            '   • Устройств: {current_devices}\n\n'
+            '📦 Новый: <b>{name}</b>\n'
+            '   • Трафик: {traffic}\n'
+            '   • Устройств: {devices}\n\n'
+            '⏰ Осталось сейчас: <b>{days} дн.</b>\n'
+            f'{extra_note}'
+            '🔄 Итого на новом тарифе: <b>{total_days} дн.</b>\n'
+            f'{commission_note}'
+            '💰 <b>Стоимость: Бесплатно (0 ₽)</b>\n\n'
+            '<i>Смена тарифа происходит бесплатно. При необходимости вы сможете продлить тариф в любое время.</i>'.format(
                 current=html.escape(current_tariff.name),
                 current_traffic=current_traffic,
                 current_devices=current_tariff.device_limit,
@@ -4854,18 +4858,20 @@ async def preview_instant_switch(
                 traffic=traffic,
                 devices=new_tariff.device_limit,
                 days=remaining_days,
+                total_days=total_days,
             ),
             reply_markup=get_instant_switch_confirm_keyboard(tariff_id, db_user.language),
             parse_mode='HTML',
         )
-
-    await state.update_data(
-        switch_tariff_id=tariff_id,
-        upgrade_cost=upgrade_cost,
-        is_upgrade=is_upgrade,
-        current_tariff_id=current_tariff_id,
-        remaining_days=remaining_days,
-    )
+        await state.update_data(
+            switch_tariff_id=tariff_id,
+            upgrade_cost=0,
+            is_upgrade=False,
+            converted_days=total_days,
+            extra_days=extra_days,
+            current_tariff_id=current_tariff_id,
+            remaining_days=remaining_days,
+        )
     await callback.answer()
 
 
@@ -4975,7 +4981,6 @@ async def confirm_instant_switch(
     )
     upgrade_cost = switch_result.upgrade_cost
     is_upgrade = switch_result.is_upgrade
-    consume_promo = switch_result.offer_discount_pct > 0
 
     # Проверяем разрешение на смену в данном направлении
     if is_upgrade and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
@@ -4987,14 +4992,6 @@ async def confirm_instant_switch(
         )
         return
 
-    # Проверяем баланс если это upgrade (use locked user's fresh balance)
-    user_balance = db_user.balance_kopeks or 0
-    if is_upgrade and user_balance < upgrade_cost:
-        await callback.answer(
-            texts.t('MINIAPP_PURCHASE_STATUS_INSUFFICIENT', 'Недостаточно средств на балансе'), show_alert=True
-        )
-        return
-
     # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
     # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
     try:
@@ -5003,25 +5000,6 @@ async def confirm_instant_switch(
         pass
 
     try:
-        # Списываем баланс если это upgrade
-        # upgrade_cost includes both group + offer discounts from PricingEngine
-        if is_upgrade and upgrade_cost > 0:
-            success = await subtract_user_balance(
-                db,
-                db_user,
-                upgrade_cost,
-                f'Переключение на тариф {new_tariff.name}',
-                consume_promo_offer=consume_promo,
-                mark_as_paid_subscription=True,
-            )
-            if not success:
-                try:
-                    await callback.message.edit_text(
-                        texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса')
-                    )
-                except Exception:
-                    pass
-                return
 
         # Получаем список серверов из нового тарифа
         squads = new_tariff.allowed_squads or []
@@ -5038,11 +5016,19 @@ async def confirm_instant_switch(
 
         # Обновляем подписку с новыми параметрами тарифа
         # Сбрасываем лимит устройств на базу нового тарифа (докупленные не переносятся)
-        from app.database.crud.subscription import calc_device_limit_on_tariff_switch
+        from app.database.crud.subscription import (
+            _apply_base_limit_preserving_active_purchases,
+            _apply_whitelist_base_limit_preserving_active_purchases,
+            calc_device_limit_on_tariff_switch,
+        )
+        from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
+        from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
+
+        await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+        await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
         subscription.tariff_id = new_tariff.id
-        subscription.traffic_limit_gb = new_tariff.traffic_limit_gb
         subscription.device_limit = calc_device_limit_on_tariff_switch(
             current_device_limit=subscription.device_limit,
             old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
@@ -5060,11 +5046,26 @@ async def confirm_instant_switch(
         subscription.purchased_traffic_gb = 0
         subscription.traffic_reset_at = None
 
+        switch_time = datetime.now(UTC)
+        await _apply_base_limit_preserving_active_purchases(
+            db,
+            subscription,
+            new_tariff.traffic_limit_gb or 0,
+            now=switch_time,
+        )
+        await _apply_whitelist_base_limit_preserving_active_purchases(
+            db,
+            subscription,
+            new_tariff.whitelist_traffic_limit_gb or 0,
+            now=switch_time,
+        )
+
         # Счётчик трафика обнуляет только ОПЛАЧЕННОЕ переключение (см. tariff_switch_policy).
         reset_used_traffic = should_reset_used_traffic(upgrade_cost)
         if reset_used_traffic:
             subscription.traffic_used_gb = 0.0
 
+        converted_days = 0
         if is_new_daily:
             # Для суточного тарифа - сбрасываем на 1 день и настраиваем суточные параметры
             # Apply group + promo-offer discounts via PricingEngine (single source of truth)
@@ -5124,6 +5125,18 @@ async def confirm_instant_switch(
             subscription.is_trial = False
             subscription.is_daily_paused = False
             subscription.last_daily_charge_at = datetime.now(UTC)
+        elif is_upgrade:
+            from app.services.pricing_engine import PricingEngine
+
+            converted_days = PricingEngine.calculate_converted_days(
+                old_tariff or current_tariff,
+                new_tariff,
+                remaining_days,
+                commission_pct=10,
+            )
+            subscription.end_date = datetime.now(UTC) + timedelta(days=converted_days)
+            subscription.is_trial = False
+            subscription.is_daily_paused = False
         elif not is_upgrade and switch_result.extra_days > 0:
             if subscription.end_date:
                 if subscription.end_date.tzinfo is None:
@@ -5183,31 +5196,16 @@ async def confirm_instant_switch(
             )
         # INVOXY: do not reset devices on tariff switch (keep user devices connected)
 
-        # Создаем транзакцию если была оплата
-        if is_upgrade and upgrade_cost > 0:
+        # Создаем транзакцию для истории
+        if is_upgrade:
+            desc = f"Переход на тариф '{new_tariff.name}' с конвертацией дней ({converted_days} дн., комиссия 10%)"
             await create_transaction(
                 db,
                 user_id=db_user.id,
                 type=TransactionType.SUBSCRIPTION_PAYMENT,
-                amount_kopeks=upgrade_cost,
-                description=f'Переключение на тариф {new_tariff.name}',
+                amount_kopeks=0,
+                description=desc,
             )
-
-            # Отправляем уведомление админу
-            try:
-                admin_notification_service = AdminNotificationService(callback.bot)
-                await admin_notification_service.send_subscription_purchase_notification(
-                    db,
-                    db_user,
-                    subscription,
-                    None,
-                    remaining_days,
-                    was_trial_conversion=False,
-                    amount_kopeks=upgrade_cost,
-                    purchase_type='tariff_switch',
-                )
-            except Exception as e:
-                logger.error('Ошибка отправки уведомления админу', error=e)
         elif not is_upgrade:
             downgrade_desc = (
                 f'Переключение на тариф {new_tariff.name} с перерасчётом (+{switch_result.extra_days} дн., комиссия {switch_result.commission_pct}%)'
@@ -5260,12 +5258,8 @@ async def confirm_instant_switch(
                 parse_mode='HTML',
             )
         else:
-            if is_upgrade:
-                cost_text = texts.t('TARIFF_SWITCH_CHARGED_LINE', '💰 Списано: {price}').format(
-                    price=format_price_kopeks(upgrade_cost)
-                )
-            else:
-                cost_text = texts.t('TARIFF_SWITCH_FREE_COST_LINE', '💰 Бесплатно')
+            cost_text = texts.t('TARIFF_SWITCH_FREE_COST_LINE', '💰 Стоимость: Бесплатно (конвертация дней)')
+            effective_days = max(0, (subscription.end_date - datetime.now(UTC)).days) if subscription.end_date else 0
 
             await callback.message.edit_text(
                 texts.t(
@@ -5280,7 +5274,7 @@ async def confirm_instant_switch(
                     name=html.escape(new_tariff.name),
                     traffic=traffic,
                     devices=new_tariff.device_limit,
-                    days=remaining_days,
+                    days=effective_days,
                     cost_text=cost_text,
                 ),
                 reply_markup=InlineKeyboardMarkup(

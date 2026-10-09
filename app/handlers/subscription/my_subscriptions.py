@@ -80,7 +80,7 @@ def _format_subscription_line(sub, idx: int) -> str:
     parts = [f'{emoji} <b>{idx}. {tariff_name}</b>{label}']
     parts.append(f'   📊 Трафик: {traffic}')
     if whitelist_traffic:
-        parts.append(f'   🔐 <b>LTE сервера: {html.escape(whitelist_traffic)}</b>')
+        parts.append(f'   🔐 <b>Белые списки: {html.escape(whitelist_traffic)}</b>')
     if devices:
         parts.append(f'   📱 Устройства: {devices}')
     parts.append(f'   📅 До: {end_date}')
@@ -150,13 +150,16 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
 
     if not is_inactive:
         buttons.append([types.InlineKeyboardButton(text='💳 Автоплатеж', callback_data='subscription_autopay')])
+        sub_tariff = getattr(sub, 'tariff', None) if sub is not None else None
         has_traffic_feature = sub is not None and not getattr(sub, 'is_trial', False) and (
-            not sub.tariff or sub.tariff.can_topup_traffic() or getattr(sub.tariff, 'whitelist_reset_enabled', False)
+            not sub_tariff
+            or (callable(getattr(sub_tariff, 'can_topup_traffic', None)) and sub_tariff.can_topup_traffic())
+            or getattr(sub_tariff, 'whitelist_reset_enabled', False)
         )
         if has_traffic_feature:
             traffic_btn_text = (
                 '🔄 Сброс LTE'
-                if (sub.tariff and getattr(sub.tariff, 'whitelist_reset_enabled', False))
+                if (sub_tariff and getattr(sub_tariff, 'whitelist_reset_enabled', False))
                 else '📊 Трафик'
             )
             buttons.append([types.InlineKeyboardButton(text=traffic_btn_text, callback_data=f'st:{sub_id}')])
@@ -191,8 +194,10 @@ async def show_my_subscriptions(
         # Fallback to legacy single subscription view
         return
 
+    from app.services.gift_purchase_service import is_gift_enabled
+
     texts = get_texts(db_user.language)
-    gift_enabled = True
+    gift_enabled = await is_gift_enabled(db)
     subscriptions = await get_all_subscriptions_by_user_id(db, db_user.id)
 
     if not subscriptions:
@@ -263,7 +268,7 @@ async def show_subscription_detail(
         getattr(subscription, 'whitelist_traffic_limit_gb', 0),
     )
     whitelist_line = (
-        f'🔐 <b>LTE сервера: {html.escape(whitelist_traffic)}</b>\n' if whitelist_traffic else ''
+        f'🔐 <b>Белые списки: {html.escape(whitelist_traffic)}</b>\n' if whitelist_traffic else ''
     )
 
     end_date = subscription.end_date.strftime('%d.%m.%Y %H:%M') if subscription.end_date else '—'

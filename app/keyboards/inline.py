@@ -1269,6 +1269,15 @@ def get_subscription_keyboard(
                     ]
                 )
 
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('MANAGE_DEVICES_BUTTON', '📱 Управление устройствами'),
+                        callback_data=f'subscription_manage_devices{_sub_suffix}' if _sub_suffix else 'subscription_manage_devices',
+                    )
+                ]
+            )
+
             # Ряд: [Настройки] [Тариф] (если режим тарифов)
             settings_row = [
                 InlineKeyboardButton(
@@ -1647,29 +1656,74 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
 
 
 def _apply_payment_name_overrides(keyboard: list[list[InlineKeyboardButton]]) -> None:
-    """Replace payment-method button labels with cabinet-set display names.
+    """Replace payment-method button labels with cabinet-set display names and sort rows by sort_order.
 
     Bot keyboards build labels from locale strings / ``*_DISPLAY_NAME`` settings,
     which ignore the per-method overrides operators set in the cabinet
     (``PaymentMethodConfig.display_name``). Here we decode the method_id from each
     ``topup_*`` callback and, when an override exists, show it — so bot button
-    labels stay in sync with the cabinet. No override -> the original label is kept.
+    labels stay in sync with the cabinet. Also reorders payment rows to match the
+    cabinet sort order (e.g. rollypay -> platega -> telegram_stars).
     """
-    from app.services.payment_method_config_service import get_display_name_override
+    from app.services.payment_method_config_service import (
+        get_display_name_override,
+        get_method_sort_order,
+    )
 
     for row in keyboard:
         for idx, button in enumerate(row):
             data = button.callback_data or ''
+            raw_method = ''
             if data.startswith('topup_amount|'):
                 parts = data.split('|')
-                method = parts[1] if len(parts) > 1 else ''
-            elif data.startswith('topup_'):
-                method = data[len('topup_') :]
-            else:
+                raw_method = parts[1] if len(parts) > 1 else ''
+            elif data.startswith('topup_') and data != 'topup_support':
+                raw_method = data[len('topup_') :]
+            if not raw_method:
                 continue
-            override = get_display_name_override(method) if method else None
-            if override:
+
+            config_method = 'telegram_stars' if raw_method == 'stars' else raw_method
+            override = get_display_name_override(config_method)
+            if override and not raw_method.startswith('platega_m'):
                 row[idx] = button.model_copy(update={'text': override})
+
+    # Sort payment method rows according to cabinet sort_order
+    payment_rows: list[tuple[int, list[InlineKeyboardButton]]] = []
+    other_rows_before: list[list[InlineKeyboardButton]] = []
+    other_rows_after: list[list[InlineKeyboardButton]] = []
+
+    for row in keyboard:
+        is_payment_row = False
+        method_order = 9999
+        for btn in row:
+            data = btn.callback_data or ''
+            raw_method = ''
+            if data.startswith('topup_amount|'):
+                parts = data.split('|')
+                raw_method = parts[1] if len(parts) > 1 else ''
+            elif data.startswith('topup_') and data != 'topup_support':
+                raw_method = data[len('topup_') :]
+            if raw_method:
+                is_payment_row = True
+                config_method = 'telegram_stars' if raw_method == 'stars' else raw_method
+                if config_method.startswith('platega_m'):
+                    config_method = 'platega'
+                method_order = get_method_sort_order(config_method)
+                break
+
+        if is_payment_row:
+            payment_rows.append((method_order, row))
+        elif payment_rows:
+            other_rows_after.append(row)
+        else:
+            other_rows_before.append(row)
+
+    payment_rows.sort(key=lambda item: item[0])
+
+    keyboard.clear()
+    keyboard.extend(other_rows_before)
+    keyboard.extend([r for _, r in payment_rows])
+    keyboard.extend(other_rows_after)
 
 
 def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
@@ -2467,6 +2521,16 @@ def get_support_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
         tickets_enabled = True
         contact_enabled = True
     rows: list[list[InlineKeyboardButton]] = []
+    # Direct contact
+    if contact_enabled and settings.get_support_contact_url():
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('CONTACT_SUPPORT_BUTTON', '💬 Связаться с поддержкой'),
+                    url=settings.get_support_contact_url() or 'https://t.me/',
+                )
+            ]
+        )
     # Tickets
     if tickets_enabled:
         rows.append(
@@ -2478,16 +2542,6 @@ def get_support_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
         )
         rows.append(
             [InlineKeyboardButton(text=texts.t('MY_TICKETS_BUTTON', '📋 Мои тикеты'), callback_data='my_tickets')]
-        )
-    # Direct contact
-    if contact_enabled and settings.get_support_contact_url():
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('CONTACT_SUPPORT_BUTTON', '💬 Связаться с поддержкой'),
-                    url=settings.get_support_contact_url() or 'https://t.me/',
-                )
-            ]
         )
     rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
     return InlineKeyboardMarkup(inline_keyboard=rows)

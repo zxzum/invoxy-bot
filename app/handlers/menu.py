@@ -1828,7 +1828,7 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(process_language_change, F.data.startswith('language_select:'), StateFilter(None))
 
-    dp.callback_query.register(handle_add_traffic, F.data == 'buy_traffic')
+    dp.callback_query.register(handle_add_traffic, (F.data == 'buy_traffic') | F.data.startswith('buy_traffic:'))
 
     dp.callback_query.register(add_traffic, F.data.startswith('add_traffic_'))
 

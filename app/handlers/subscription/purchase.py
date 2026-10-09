@@ -204,8 +204,10 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
     await db.refresh(db_user)
 
+    from app.services.gift_purchase_service import is_gift_enabled
+
     texts = get_texts(db_user.language)
-    gift_enabled = True
+    gift_enabled = await is_gift_enabled(db)
     # Multi-tariff: this branch is only reached in single-tariff mode (multi-tariff
     # is redirected to show_my_subscriptions above). db_user.subscription returns
     # the first active or most recent subscription, which is correct here.
@@ -510,7 +512,7 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             'SUBSCRIPTION_CONNECTED_DEVICES_TITLE',
             '<blockquote>📱 <b>Подключенные устройства:</b>\n',
         )
-        for device in devices_list[:5]:
+        for device in devices_list:
             platform = device.get('platform', 'Unknown')
             device_model = device.get('deviceModel', 'Unknown')
             device_info = f'{platform} - {device_model}'
@@ -4314,7 +4316,7 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(handle_no_traffic_packages, F.data == 'no_traffic_packages')
 
-    dp.callback_query.register(handle_device_management, F.data == 'subscription_manage_devices')
+    dp.callback_query.register(handle_device_management, F.data.startswith('subscription_manage_devices'))
 
     dp.callback_query.register(handle_devices_page, F.data.startswith('devices_page_'))
 

@@ -27,21 +27,23 @@ def _subscription(**overrides):
 
 
 def test_format_whitelist_traffic_uses_bytes_and_text_bar() -> None:
-    assert format_whitelist_traffic(2 * 1024**3, 5) == '2.0 / 5 ГБ [████░░░░░░] 40%'
-    assert format_whitelist_traffic(10 * 1024**3, 5) == '10.0 / 5 ГБ [██████████] 100%'
+    assert format_whitelist_traffic(2 * 1024**3, 5) == '2.0 / 5 ГБ (40%)'
+    assert format_whitelist_traffic(10 * 1024**3, 5) == '10.0 / 5 ГБ (100%)'
     assert format_whitelist_traffic(2 * 1024**3, 0) == ''
 
 
 def test_multi_subscription_line_displays_whitelist_quota() -> None:
     text = _format_subscription_line(_subscription(), 1)
 
-    assert '🔐 <b>LTE сервера: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in text
+    assert '🔐 <b>Белые списки: 2.0 / 5 ГБ (40%)</b>' in text
 
 
 @pytest.mark.anyio('asyncio')
 async def test_single_subscription_detail_displays_whitelist_quota(monkeypatch: pytest.MonkeyPatch) -> None:
     subscription = _subscription()
     monkeypatch.setattr(my_subscriptions, 'get_subscription_by_id_for_user', AsyncMock(return_value=subscription))
+    mock_render = AsyncMock()
+    monkeypatch.setattr(my_subscriptions, 'edit_or_answer_photo', mock_render)
 
     callback = SimpleNamespace(
         data='sm:7',
@@ -53,5 +55,5 @@ async def test_single_subscription_detail_displays_whitelist_quota(monkeypatch: 
 
     await show_subscription_detail(callback, db_user, SimpleNamespace(), state)
 
-    text = callback.message.edit_text.await_args.args[0]
-    assert '🔐 <b>LTE сервера: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in text
+    text = mock_render.await_args.args[1]
+    assert '🔐 <b>Белые списки: 2.0 / 5 ГБ (40%)</b>' in text

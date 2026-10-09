@@ -38,10 +38,8 @@ async def test_create_invite_message_wraps_links_in_code(monkeypatch):
     await ref.create_invite_message(callback, db_user, None)
 
     html = captured['text']
-    # Both links are wrapped in <code> so tap-to-copy captures them whole.
-    assert '<code>https://t.me/bot?start=ref_X</code>' in html
-    # `&` in the cabinet URL is HTML-escaped, but the <code> tags are NOT escaped.
-    assert '<code>https://cab.example/?ref=X&amp;u=1</code>' in html
-    assert '&lt;code&gt;' not in html
-    # Still rendered inside the copyable quote.
-    assert '<blockquote>' in html and '</blockquote>' in html
+    # The entire invite is wrapped in <code> so tap-to-copy in Telegram copies everything.
+    assert '<code>' in html and '</code>' in html
+    assert '<blockquote>' not in html
+    assert 'https://t.me/bot?start=ref_X' in html
+    assert 'https://cab.example/?ref=X&amp;u=1' in html
