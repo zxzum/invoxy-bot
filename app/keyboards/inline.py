@@ -800,6 +800,17 @@ def get_main_menu_keyboard(
         row = paired_buttons[i : i + 2]
         keyboard.append(row)
 
+    cabinet_url = (settings.MINIAPP_CUSTOM_URL or settings.CABINET_URL or '').strip()
+    if cabinet_url:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('MENU_PROFILE', '👤 Личный кабинет'),
+                    web_app=types.WebAppInfo(url=cabinet_url),
+                )
+            ]
+        )
+
     if settings.DEBUG:
         logger.debug('DEBUG KEYBOARD: админ кнопка', is_admin=is_admin)
 
