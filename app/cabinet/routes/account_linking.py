@@ -798,9 +798,9 @@ async def poll_telegram_link_deeplink(
 
     token_status = data.get('status')
     if token_status == 'pending':
-        raise HTTPException(
-            status_code=status.HTTP_202_ACCEPTED,
-            detail='Waiting for confirmation in Telegram',
+        return TelegramLinkPollResponse(
+            status='pending',
+            message='Waiting for confirmation in Telegram',
         )
 
     if token_status == 'merge_required':
