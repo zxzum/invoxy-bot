@@ -509,6 +509,10 @@ async def confirm_reset_traffic(
             await callback.answer('⌛ Ошибка списания средств', show_alert=True)
             return
 
+        from app.database.crud.subscription import capture_subscription_snapshot
+
+        subscription._previous_state = capture_subscription_snapshot(subscription)
+        cleared_gb = getattr(subscription, 'traffic_used_gb', 0.0) or 0.0
         subscription.traffic_used_gb = 0.0
         subscription.updated_at = datetime.now(UTC)
         await db.commit()
@@ -557,6 +561,23 @@ async def confirm_reset_traffic(
 
         await db.refresh(db_user)
         await db.refresh(subscription)
+
+        try:
+            from app.services.admin_notification_service import AdminNotificationService
+
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                notif_service = AdminNotificationService(callback.bot)
+                await notif_service.send_traffic_reset_notification(
+                    db=db,
+                    user=db_user,
+                    subscription=subscription,
+                    reset_scope='regular',
+                    cleared_gb=cleared_gb,
+                    price_kopeks=reset_price,
+                    payment_method='Баланс (Telegram Bot)',
+                )
+        except Exception as admin_err:
+            logger.warning('Failed to send admin notification for bot main traffic reset', error=admin_err)
 
         await callback.message.edit_text(
             f'✅ Трафик успешно сброшен!\n\n'
@@ -705,6 +726,23 @@ async def handle_confirm_lte_reset(
 
         await db.refresh(db_user)
         await db.refresh(subscription)
+
+        try:
+            from app.services.admin_notification_service import AdminNotificationService
+
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                notif_service = AdminNotificationService(callback.bot)
+                await notif_service.send_traffic_reset_notification(
+                    db=db,
+                    user=db_user,
+                    subscription=subscription,
+                    reset_scope='lte',
+                    cleared_gb=res.get('cleared_gb', will_clear_gb),
+                    price_kopeks=price,
+                    payment_method='Баланс (Telegram Bot)',
+                )
+        except Exception as admin_err:
+            logger.warning('Failed to send admin notification for bot lte traffic reset', error=admin_err)
 
         parts = callback.data.split(':') if callback.data else []
         is_from_menu = len(parts) > 2 and parts[2] == 'menu'

@@ -1285,6 +1285,11 @@ class RemnaWaveWebhookService:
             logger.info('Webhook user.traffic_reset: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
             return
 
+        from app.database.crud.subscription import capture_subscription_snapshot
+
+        subscription._previous_state = capture_subscription_snapshot(subscription)
+        cleared_gb = getattr(subscription, 'traffic_used_gb', 0.0) or 0.0
+
         self._stamp_webhook_update(subscription)
         await update_subscription_usage(db, subscription, 0.0)
         # Re-enable if was disabled/limited due to traffic limit
@@ -1298,6 +1303,20 @@ class RemnaWaveWebhookService:
             reply_markup=self._get_subscription_keyboard(user),
             subscription=subscription,
         )
+
+        try:
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                await self._admin_service.send_traffic_reset_notification(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                    reset_scope='regular',
+                    cleared_gb=cleared_gb,
+                    price_kopeks=0,
+                    payment_method='RemnaWave Webhook',
+                )
+        except Exception as admin_err:
+            logger.warning('Failed to send admin notification for webhook traffic reset', error=admin_err)
 
     async def _handle_user_modified(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
