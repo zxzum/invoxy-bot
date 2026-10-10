@@ -2557,6 +2557,8 @@ class MonitoringService:
                             f'использовано {traffic_used:.1f} из {traffic_limit} ГБ.'
                         )
 
+                    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
                     markup = None
                     if scope == 'whitelist':
                         btn_text = '🔄 Сбросить расход LTE' if not language.lower().startswith('en') else '🔄 Reset White Internet'

@@ -408,3 +408,34 @@ def test_subscription_property_ignores_pending_trial_draft():
     assert _user(active, pending_trial).subscription is active
     # истёкшая подписка (для продления) показывается, черновик триала — нет
     assert _user(pending_trial, expired).subscription is expired
+
+
+async def test_lock_subscription_row_flushes_modified_state_before_refresh():
+    """Regression test: in-memory changes to subscription (e.g. traffic_limit_gb)
+    must be flushed before db.refresh() so they are not wiped out by stale DB values.
+    """
+    from app.database.crud.subscription import _lock_subscription_row
+
+    flushed = []
+    refreshed = []
+
+    class DummySession:
+        def is_modified(self, obj):
+            return True
+
+        async def execute(self, stmt):
+            return None
+
+        async def flush(self):
+            flushed.append(True)
+
+        async def refresh(self, obj, attrs):
+            refreshed.append(attrs)
+
+    sub = SimpleNamespace(id=54, traffic_limit_gb=600)
+    db = DummySession()
+    await _lock_subscription_row(db, sub)
+
+    assert len(flushed) == 1
+    assert len(refreshed) == 1
+
