@@ -1208,6 +1208,9 @@
 - `app/handlers/balance/heleket.py` — Python-модуль
   Классы: нет
   Функции: `start_heleket_payment`, `process_heleket_payment_amount`, `check_heleket_payment_status`
+- `app/handlers/balance/invoices.py` — Python-модуль
+  Классы: нет
+  Функции: `active_invoices`, `invoice_screen`, `show_open_invoice`, `create_guarded_payment` — Check under the same lock as cabinet creation, including stale buttons., `handle_invoice`
 - `app/handlers/balance/jupiter.py` — Python-модуль
   Классы: нет
   Функции: `process_jupiter_payment_amount` — Обрабатывает сумму, введённую пользователем для Jupiter., `start_jupiter_topup`, `start_jupiter_sbp_topup`
@@ -1629,6 +1632,9 @@
 - `app/services/guest_purchase_service.py` — Python-модуль
   Классы: `GuestPurchaseError` (1 методов)
   Функции: `get_claimable_gift` — Resolve one still-activatable gift by full token or deep-link prefix., `validate_and_calculate` — Validate tariff/period against landing config and return (tariff, price_kopeks)., `create_purchase` — Create a guest purchase record., `fulfill_purchase` — Fulfill a paid guest purchase by creating/extending the user account and subscription., `find_guest_purchase_user` — Find a guest-purchase user without mutating the account or session state., `evaluate_guest_purchase_registration` — Evaluate invite-only policy before a landing flow may mutate ``User``., `send_guest_notification` — Send notification for guest purchase delivery or activation requirement., `notify_gift_claim_available` — Best-effort: tell people a paid gift is waiting, with the CLAIM link., `activate_purchase` — Activate a PENDING_ACTIVATION purchase by replacing or creating a subscription., `retry_stuck_paid_purchases` — Retry fulfillment for purchases stuck in PAID status., `retry_stuck_pending_activation` — Retry activation for purchases stuck in PENDING_ACTIVATION status., `recover_stuck_pending_purchases` — Recover purchases stuck in PENDING by checking provider payment status.
+- `app/services/invoice_creation.py` — Python-модуль
+  Классы: нет
+  Функции: `invoice_creation_lock`, `serialized_invoice_creation`, `get_stars_invoice` — Stars links have no provider payment row; retain the open link in Redis., `create_managed_stars_invoice` — Caller holds invoice_creation_lock; reuse identical intent across clients., `clear_stars_invoice`
 - `app/services/jupiter_service.py` — Python-модуль
   Классы: `JupiterAPIError` (1 методов), `JupiterService` (19 методов)
   Функции: нет
@@ -3266,7 +3272,7 @@
 - `tests/ci/`
 - `tests/conftest.py` — Python-модуль
   Классы: нет
-  Функции: `fixed_datetime` — Возвращает фиксированную отметку времени для воспроизводимых проверок., `registered_paths` — Карта `путь -> {HTTP-методы}` кабинетного роутера, как их реально, `pytest_pyfunc_call` — Позволяет запускать async def тесты без дополнительных плагинов.
+  Функции: `fixed_datetime` — Возвращает фиксированную отметку времени для воспроизводимых проверок., `registered_paths` — Карта `путь -> {HTTP-методы}` кабинетного роутера, как их реально, `pytest_pyfunc_call` — Позволяет запускать async def тесты без дополнительных плагинов., `invoice_redis` — Redis invoice state and locks for endpoint tests, without network calls.
 - `tests/contracts/`
 - `tests/crud/`
 - `tests/database/`
@@ -4823,6 +4829,9 @@
 - `tests/services/test_invite_only_settings.py` — Python-модуль
   Классы: нет
   Функции: `test_invite_only_defaults_are_backward_compatible`, `test_invite_only_settings_are_exposed_in_registration_access_category`
+- `tests/services/test_invoice_creation.py` — Python-модуль
+  Классы: нет
+  Функции: `user`, `pending`, `test_two_bot_clicks_create_one_invoice`, `test_bot_and_cabinet_share_creation_lock`, `test_redis_failure_never_calls_provider`, `test_stars_reused_between_clients_and_cancelled_link_removed`, `test_late_stars_payment_does_not_remove_new_invoice`, `test_active_only_filters_before_pagination`, `test_provider_expiry_and_terminal_status_do_not_block_creation`, `test_invoice_actions_never_check_another_users_invoice`, `test_cancel_refreshes_under_row_lock_before_writing`, `test_cancel_waits_for_settlement_and_preserves_paid_status`, `test_restricted_account_cannot_create_stars_invoice`, `test_failed_status_check_explains_failure_instead_of_claiming_update`, `test_cancel_paid_invoice_reports_payment_and_offers_next_action`, `test_stars_completion_only_cleans_its_own_message`
 - `tests/services/test_invoxy_panel_integration.py` — Python-модуль
   Классы: нет
   Функции: `test_subscription_url_uses_public_host_without_sub_path`, `test_shared_panel_filter_keeps_linked_ids_and_owned_prefix`

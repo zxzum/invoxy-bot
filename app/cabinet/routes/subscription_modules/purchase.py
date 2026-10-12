@@ -48,6 +48,7 @@ from app.database.models import PaymentMethod, Subscription, Tariff, Transaction
 from app.services.cabinet_purchase_notification_service import (
     notify_telegram_user_about_cabinet_purchase,
 )
+from app.services.invoice_creation import serialized_invoice_creation
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
@@ -1497,6 +1498,7 @@ async def purchase_tariff(
 
 
 @router.post('/purchase-tariff/invoice', response_model=TariffInvoiceResponse)
+@serialized_invoice_creation
 async def create_tariff_invoice(
     request: TariffInvoiceRequest,
     user: User = Depends(get_current_cabinet_user),

@@ -60,7 +60,7 @@ def is_invoice_active(record: PendingPayment, now: datetime | None = None) -> bo
     if is_status_cancelled(record.status):
         return False
     current_time = now or datetime.now(UTC)
-    return (record.created_at + ACTIVE_INVOICE_TTL) > current_time
+    return get_invoice_expires_at(record) > current_time
 
 
 def get_invoice_expires_at(record: PendingPayment) -> datetime:
@@ -159,6 +159,16 @@ async def get_active_invoice_record(
 ) -> PendingPayment | None:
     """Find user's current active pending payment within the 30-minute window."""
     recent = await list_recent_pending_payments(db, max_age=ACTIVE_INVOICE_TTL, user_id=user_id)
+    from app.database.crud.user import get_user_by_id
+    from app.services.invoice_creation import get_stars_invoice
+    from app.utils.cache import cache
+
+    stars_data = await cache.get(f'invoice:stars:{user_id}')
+    user = await get_user_by_id(db, user_id) if stars_data else None
+    stars = await get_stars_invoice(user, stars_data) if user else None
+    if stars:
+        recent.append(stars)
+    recent.sort(key=lambda record: record.created_at, reverse=True)
     for record in recent:
         if is_invoice_active(record):
             return record
@@ -325,6 +335,12 @@ async def cancel_pending_payment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Payment not found',
         )
+
+    # A webhook can settle between provider verification and local cancellation.
+    # Refresh under the same row lock used by settlement before changing status.
+    await db.refresh(record.payment, with_for_update=True)
+    record.is_paid = bool(getattr(record.payment, 'is_paid', record.is_paid))
+    record.status = getattr(record.payment, 'status', record.status)
 
     if record.is_paid:
         raise HTTPException(

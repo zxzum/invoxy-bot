@@ -3,6 +3,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+
+pytestmark = pytest.mark.usefixtures('invoice_redis')
+
 from app.config import settings
 from app.handlers.balance import rollypay
 from app.keyboards.inline import get_payment_methods_keyboard
@@ -82,6 +85,7 @@ def flow(providers, monkeypatch):
     monkeypatch.setattr(
         rollypay, 'get_enabled_methods_for_user', AsyncMock(return_value=[{'id': 'rollypay', 'options': options}])
     )
+    monkeypatch.setattr('app.handlers.balance.invoices.list_recent_pending_payments', AsyncMock(return_value=[]))
     photo = AsyncMock()
     monkeypatch.setattr('app.utils.photo_message.edit_or_answer_photo', photo)
     monkeypatch.setattr(rollypay, 'get_topup_amount_keyboard', AsyncMock(return_value=None))

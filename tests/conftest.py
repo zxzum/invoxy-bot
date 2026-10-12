@@ -290,3 +290,44 @@ def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
         loop.close()
 
     return True
+
+
+@pytest.fixture
+def invoice_redis(monkeypatch):
+    """Redis invoice state and locks for endpoint tests, without network calls."""
+    import asyncio
+    import json
+    import time
+
+    from app.utils.cache import cache
+
+    class InvoiceRedis:
+        def __init__(self):
+            self.values = {}
+            self.expiry = {}
+            self.locks = {}
+
+        def lock(self, key, **kwargs):
+            return self.locks.setdefault(key, asyncio.Lock())
+
+        async def get(self, key):
+            if self.expiry.get(key, float('inf')) <= time.monotonic():
+                self.values.pop(key, None)
+            return self.values.get(key)
+
+        async def set(self, key, value, ex=None, **kwargs):
+            self.values[key] = value
+            self.expiry[key] = time.monotonic() + ex if ex else float('inf')
+            return True
+
+        async def eval(self, script, keys, key, payload):
+            value = await self.get(key)
+            if value and json.loads(value)['payload'] == payload:
+                del self.values[key]
+                return 1
+            return 0
+
+    client = InvoiceRedis()
+    monkeypatch.setattr(cache, 'redis_client', client)
+    monkeypatch.setattr(cache, '_connected', True)
+    return client

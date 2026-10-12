@@ -44,7 +44,7 @@ async def start_stars_payment(callback: types.CallbackQuery, db_user: User, stat
 
     message_text = texts.TOP_UP_AMOUNT
 
-    keyboard = await get_topup_amount_keyboard('stars', db_user.language, back_callback='back_to_menu')
+    keyboard = await get_topup_amount_keyboard('stars', db_user.language, back_callback='balance_topup')
 
     await callback.message.edit_text(message_text, reply_markup=keyboard)
 
@@ -89,53 +89,37 @@ async def process_stars_payment_amount(message: types.Message, db_user: User, am
     try:
         amount_rubles = amount_kopeks / 100
         stars_amount = TelegramStarsService.calculate_stars_from_rubles(amount_rubles)
-        stars_rate = settings.get_stars_rate()
 
         payment_service = PaymentService(message.bot)
-        invoice_link = await payment_service.create_stars_invoice(
-            amount_kopeks=amount_kopeks,
-            description=f'Пополнение баланса на {texts.format_price(amount_kopeks)}',
-            payload=f'balance_{db_user.id}_{amount_kopeks}',
-        )
+        from app.database.database import AsyncSessionLocal
+        from app.services.invoice_creation import create_managed_stars_invoice, get_stars_invoice
 
-        keyboard = types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [types.InlineKeyboardButton(text='⭐ Оплатить', url=invoice_link)],
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
-            ]
-        )
+        from .invoices import create_guarded_payment, show_open_invoice
 
-        state_data = await state.get_data()
+        async with AsyncSessionLocal() as db:
+            async def create():
+                return await create_managed_stars_invoice(db, db_user, payment_service, amount_kopeks, stars_amount)
 
-        prompt_message_id = state_data.get('stars_prompt_message_id')
-        prompt_chat_id = state_data.get('stars_prompt_chat_id', message.chat.id)
-
-        try:
-            await message.delete()
-        except Exception as delete_error:  # pragma: no cover - зависит от прав бота
-            logger.warning('Не удалось удалить сообщение с суммой Stars', delete_error=delete_error)
-
-        if prompt_message_id and prompt_message_id != message.message_id:
+            attempted, _ = await create_guarded_payment(message, db, db_user, create)
+            if not attempted:
+                await state.clear()
+                return
+            state_data = await state.get_data()
+            prompt_id = state_data.get('stars_prompt_message_id')
+            prompt_chat = state_data.get('stars_prompt_chat_id', message.chat.id)
             try:
-                await message.bot.delete_message(prompt_chat_id, prompt_message_id)
-            except Exception as delete_error:  # pragma: no cover - диагностический лог
-                logger.warning('Не удалось удалить сообщение с запросом суммы Stars', delete_error=delete_error)
-
-        invoice_message = await message.answer(
-            f'⭐ <b>Оплата через Telegram Stars</b>\n\n'
-            f'💰 Сумма: {texts.format_price(amount_kopeks)}\n'
-            f'⭐ К оплате: {stars_amount} звезд\n'
-            f'📊 Курс: {stars_rate}₽ за звезду\n\n'
-            f'Нажмите кнопку ниже для оплаты:',
-            reply_markup=keyboard,
-            parse_mode='HTML',
-        )
-
-        await state.update_data(
-            stars_invoice_message_id=invoice_message.message_id,
-            stars_invoice_chat_id=invoice_message.chat.id,
-        )
-
+                await message.delete()
+                if prompt_id and prompt_id != message.message_id:
+                    await message.bot.delete_message(prompt_chat, prompt_id)
+            except Exception as error:
+                logger.warning('Could not remove Stars amount prompt', error=str(error))
+            invoice_message = await show_open_invoice(message, db, db_user)
+            record = await get_stars_invoice(db_user)
+            await state.update_data(
+                stars_invoice_message_id=invoice_message.message_id,
+                stars_invoice_chat_id=invoice_message.chat.id,
+                stars_invoice_payload=record.identifier,
+            )
         await state.set_state(None)
 
     except Exception as e:

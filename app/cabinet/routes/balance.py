@@ -1,7 +1,6 @@
 """Balance and payment routes for cabinet."""
 
 import math
-import time
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
@@ -27,6 +26,7 @@ from app.database.crud.saved_payment_method import (
 )
 from app.database.crud.user import get_user_by_id
 from app.database.models import PaymentMethod, Transaction, User
+from app.services.invoice_creation import serialized_invoice_creation
 from app.services.notification_types import NotificationType
 from app.services.payment_method_config_service import get_enabled_methods_for_user
 from app.services.payment_service import PaymentService
@@ -244,6 +244,7 @@ async def get_payment_methods(
 
 
 @router.post('/stars-invoice', response_model=StarsInvoiceResponse)
+@serialized_invoice_creation
 async def create_stars_invoice(
     request: StarsInvoiceRequest,
     user: User = Depends(get_current_cabinet_user),
@@ -253,6 +254,9 @@ async def create_stars_invoice(
     Создать Telegram Stars invoice для пополнения баланса.
     Используется в Telegram Mini App для прямой оплаты Stars.
     """
+    if getattr(user, 'restriction_topup', False):
+        raise HTTPException(403, 'Пополнение ограничено администратором.')
+
     if not settings.TELEGRAM_STARS_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -289,22 +293,14 @@ async def create_stars_invoice(
             detail='Failed to calculate Stars amount',
         )
 
-    # Create payload for tracking payment
-    payload = f'balance_topup_{user.id}_{normalized_kopeks}_{int(time.time())}'
-
-    # Create invoice through Telegram Bot API
     try:
         from aiogram.exceptions import TelegramAPIError
-        from aiogram.types import LabeledPrice
+
+        from app.services.invoice_creation import create_managed_stars_invoice
 
         async with create_bot() as bot:
-            invoice_url = await bot.create_invoice_link(
-                title='Пополнение баланса VPN',
-                description=f'Пополнение баланса на {normalized_kopeks / 100:.2f} ₽ ({stars_amount} ⭐)',
-                payload=payload,
-                provider_token='',
-                currency='XTR',
-                prices=[LabeledPrice(label='Пополнение баланса', amount=stars_amount)],
+            invoice_url = await create_managed_stars_invoice(
+                db, user, PaymentService(bot=bot), normalized_kopeks, stars_amount,
             )
 
         logger.info(
@@ -1095,6 +1091,7 @@ async def _create_payment_link(
 
 
 @router.post('/topup', response_model=TopUpResponse)
+@serialized_invoice_creation
 async def create_topup(
     request: TopUpRequest,
     user: User = Depends(get_current_cabinet_user),
@@ -1531,11 +1528,23 @@ def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
 async def get_pending_payments(
     page: int = Query(1, ge=1, description='Page number'),
     per_page: int = Query(10, ge=1, le=50, description='Items per page'),
+    active_only: bool = Query(False),
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get user's pending payments for manual verification."""
     user_payments = await list_recent_pending_payments(db, user_id=user.id)
+    from app.services.invoice_creation import get_stars_invoice
+
+    stars = await get_stars_invoice(user)
+    if stars:
+        user_payments.append(stars)
+        user_payments.sort(key=lambda record: record.created_at, reverse=True)
+
+    if active_only is True:
+        from app.cabinet.services.active_invoice import is_invoice_active
+
+        user_payments = [record for record in user_payments if is_invoice_active(record)]
 
     total = len(user_payments)
     pages = math.ceil(total / per_page) if total > 0 else 1
@@ -1556,6 +1565,7 @@ async def get_pending_payments(
 
 
 @router.post('/pending-payments/{method}/{payment_id}/cancel', response_model=PendingPaymentResponse)
+@serialized_invoice_creation
 async def cancel_user_pending_payment(
     method: str,
     payment_id: int,
@@ -1563,6 +1573,17 @@ async def cancel_user_pending_payment(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Check a pending payment once, then cancel it if it is still unpaid."""
+    if method == 'telegram_stars' and payment_id < 0:
+        from app.services.invoice_creation import clear_stars_invoice, get_stars_invoice
+
+        stars = await get_stars_invoice(user)
+        if not stars or stars.local_id != payment_id:
+            raise HTTPException(404, 'Счёт не найден или уже закрыт.')
+        await clear_stars_invoice(user.id, stars.identifier)
+        stars.status = 'canceled'
+        await user_cart_service.delete_user_cart(user.id)
+        return build_pending_payment_response(stars)
+
     try:
         payment_method = PaymentMethod(method)
     except ValueError:
@@ -1742,6 +1763,18 @@ async def check_payment_status(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Manually check and update payment status."""
+    if method == 'telegram_stars' and payment_id < 0:
+        from app.services.invoice_creation import get_stars_invoice
+
+        stars = await get_stars_invoice(user)
+        if not stars or stars.local_id != payment_id:
+            raise HTTPException(404, 'Счёт не найден или уже закрыт.')
+        return ManualCheckResponse(
+            success=True, status_changed=False, new_status='pending',
+            message='Оплатите счёт в Telegram. После оплаты баланс обновится автоматически.',
+            payment=build_pending_payment_response(stars),
+        )
+
     try:
         payment_method = PaymentMethod(method)
     except ValueError:

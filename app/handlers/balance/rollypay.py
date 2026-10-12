@@ -57,15 +57,22 @@ async def _create_rollypay_payment_and_respond(
         description='Пополнение баланса',
     )
 
-    result = await payment_service.create_rollypay_payment(
-        db=db,
-        user_id=db_user.id,
-        amount_kopeks=amount_kopeks,
-        description=description,
-        email=getattr(db_user, 'email', None),
-        language=db_user.language,
-        payment_method_type=payment_method,
-    )
+    from .invoices import create_guarded_payment
+
+    async def create():
+        return await payment_service.create_rollypay_payment(
+            db=db,
+            user_id=db_user.id,
+            amount_kopeks=amount_kopeks,
+            description=description,
+            email=getattr(db_user, 'email', None),
+            language=db_user.language,
+            payment_method_type=payment_method,
+        )
+
+    attempted, result = await create_guarded_payment(message_or_callback, db, db_user, create)
+    if not attempted:
+        return
 
     if not result:
         error_text = texts.t(
@@ -75,60 +82,20 @@ async def _create_rollypay_payment_and_respond(
         if edit_message:
             await message_or_callback.edit_text(
                 error_text,
-                reply_markup=get_back_keyboard(db_user.language),
+                reply_markup=get_back_keyboard(db_user.language, callback_data='topup_rollypay'),
                 parse_mode='HTML',
             )
         else:
             await message_or_callback.answer(
                 error_text,
+                reply_markup=get_back_keyboard(db_user.language, callback_data='topup_rollypay'),
                 parse_mode='HTML',
             )
         return
 
-    payment_url = result.get('payment_url')
-    display_name = settings.get_rollypay_display_name()
+    from .invoices import show_open_invoice
 
-    # Create keyboard with payment button
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=texts.t(
-                        'PAY_BUTTON',
-                        '\U0001f4b3 Оплатить {amount}\u20bd',
-                    ).format(amount=f'{amount_rub:.0f}'),
-                    url=payment_url,
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_BUTTON', '\u25c0\ufe0f Назад'),
-                    callback_data='menu_balance',
-                )
-            ],
-        ]
-    )
-
-    response_text = texts.t(
-        'ROLLYPAY_PAYMENT_CREATED',
-        '\U0001f4b3 <b>Оплата через {name}</b>\n\n'
-        'Сумма: <b>{amount}\u20bd</b>\n\n'
-        'Нажмите кнопку ниже для оплаты.\n'
-        'После успешной оплаты баланс будет пополнен автоматически.',
-    ).format(name=display_name, amount=f'{amount_rub:.2f}')
-
-    if edit_message:
-        await message_or_callback.edit_text(
-            response_text,
-            reply_markup=keyboard,
-            parse_mode='HTML',
-        )
-    else:
-        await message_or_callback.answer(
-            response_text,
-            reply_markup=keyboard,
-            parse_mode='HTML',
-        )
+    await show_open_invoice(message_or_callback, db, db_user, edit=edit_message)
 
     logger.info('RollyPay payment created', telegram_id=db_user.telegram_id, amount_rub=amount_rub)
 
@@ -167,7 +134,7 @@ async def process_rollypay_payment_amount(
                 'PAYMENT_AMOUNT_TOO_LOW',
                 'Минимальная сумма пополнения: {min_amount}\u20bd',
             ).format(min_amount=min_amount // 100),
-            reply_markup=get_back_keyboard(db_user.language),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='topup_rollypay'),
             parse_mode='HTML',
         )
         return
@@ -178,7 +145,7 @@ async def process_rollypay_payment_amount(
                 'PAYMENT_AMOUNT_TOO_HIGH',
                 'Максимальная сумма пополнения: {max_amount}\u20bd',
             ).format(max_amount=max_amount // 100),
-            reply_markup=get_back_keyboard(db_user.language),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='topup_rollypay'),
             parse_mode='HTML',
         )
         return
@@ -189,7 +156,7 @@ async def process_rollypay_payment_amount(
     if payment_method not in {option['id'] for option in options}:
         await message.answer(
             texts.t('ROLLYPAY_SELECT_PAYMENT_METHOD', 'Выберите способ оплаты в платёжной системе №1.'),
-            reply_markup=get_back_keyboard(db_user.language),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='topup_rollypay'),
         )
         return
     await state.clear()
@@ -284,7 +251,7 @@ async def select_rollypay_method(callback: types.CallbackQuery, db_user: User, d
     max_amount = settings.ROLLYPAY_MAX_AMOUNT_KOPEKS // 100
     display_name = settings.get_rollypay_display_name()
 
-    keyboard = await get_topup_amount_keyboard('rollypay', db_user.language)
+    keyboard = await get_topup_amount_keyboard('rollypay', db_user.language, back_callback='topup_rollypay')
 
     from app.utils.photo_message import edit_or_answer_photo
 

@@ -18,6 +18,9 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
+
+pytestmark = pytest.mark.usefixtures('invoice_redis')
+
 from app.cabinet.routes import balance as balance_route, notifications as notifications_route
 from app.cabinet.routes.subscription_modules import purchase as purchase_route
 from app.cabinet.schemas.balance import TopUpRequest

@@ -72,7 +72,7 @@ async def _prompt_amount(
         (f'💳 <b>Оплата через Platega ({{method_name}})</b>\n\n{default_prompt_body}Оплата происходит через Platega.'),
     )
 
-    keyboard = await get_topup_amount_keyboard('platega', db_user.language, back_callback='back_to_menu')
+    keyboard = await get_topup_amount_keyboard('platega', db_user.language, back_callback='topup_platega')
 
     await message.edit_text(
         prompt_template.format(
@@ -296,7 +296,7 @@ async def process_platega_payment_amount(
                 'PLATEGA_AMOUNT_TOO_LOW',
                 'Минимальная сумма для оплаты через Platega: {amount}',
             ).format(amount=settings.format_price(settings.PLATEGA_MIN_AMOUNT_KOPEKS)),
-            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='topup_platega'),
         )
         await state.set_state(BalanceStates.waiting_for_amount)
         return
@@ -307,31 +307,32 @@ async def process_platega_payment_amount(
                 'PLATEGA_AMOUNT_TOO_HIGH',
                 'Максимальная сумма для оплаты через Platega: {amount}',
             ).format(amount=settings.format_price(settings.PLATEGA_MAX_AMOUNT_KOPEKS)),
-            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='topup_platega'),
         )
         await state.set_state(BalanceStates.waiting_for_amount)
         return
 
-    try:
-        payment_service = PaymentService(message.bot)
-        payment_result = await payment_service.create_platega_payment(
-            db=db,
-            user_id=db_user.id,
-            amount_kopeks=amount_kopeks,
+    from .invoices import create_guarded_payment
+
+    async def create():
+        return await PaymentService(message.bot).create_platega_payment(
+            db=db, user_id=db_user.id, amount_kopeks=amount_kopeks,
             description=settings.get_balance_payment_description(amount_kopeks, telegram_user_id=db_user.telegram_id),
-            language=db_user.language,
-            payment_method_code=method_code,
+            language=db_user.language, payment_method_code=method_code,
         )
-    except Exception as error:
-        logger.exception('Ошибка создания платежа Platega', error=error)
-        payment_result = None
+
+    attempted, payment_result = await create_guarded_payment(message, db, db_user, create)
+    if not attempted:
+        await state.clear()
+        return
 
     if not payment_result or not payment_result.get('redirect_url'):
         await message.answer(
             texts.t(
                 'PLATEGA_PAYMENT_ERROR',
                 '❌ Ошибка создания платежа Platega. Попробуйте позже или обратитесь в поддержку.',
-            )
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data=f'platega_method_{method_code}'),
         )
         await state.clear()
         return
@@ -358,7 +359,8 @@ async def process_platega_payment_amount(
                     callback_data=f'check_platega_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+            [types.InlineKeyboardButton(text='Отменить счёт', callback_data=f'invoice:confirm:platega:{local_payment_id}')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data=f'platega_method_{method_code}')],
         ]
     )
 

@@ -182,7 +182,7 @@ class TelegramStarsMixin:
                     telegram_payment_charge_id=telegram_payment_charge_id,
                 )
 
-            return await self._finalize_stars_balance_topup(
+            success = await self._finalize_stars_balance_topup(
                 db=db,
                 user=user,
                 transaction=transaction,
@@ -190,6 +190,15 @@ class TelegramStarsMixin:
                 stars_amount=stars_amount,
                 telegram_payment_charge_id=telegram_payment_charge_id,
             )
+
+            if success and '_invoice' in payload:
+                from app.services.invoice_creation import clear_stars_invoice
+
+                try:
+                    await clear_stars_invoice(user_id, payload)
+                except Exception as error:
+                    logger.warning('Stars paid; pending invoice cache refresh failed', error=error)
+            return success
 
         except Exception as error:
             logger.error('Ошибка обработки Stars платежа', error=error, exc_info=True)

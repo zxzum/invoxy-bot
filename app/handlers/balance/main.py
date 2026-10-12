@@ -311,7 +311,7 @@ async def show_balance_history(callback: types.CallbackQuery, db_user: User, db:
             total_unique += 1
 
     if not unique_transactions:
-        await callback.message.edit_text('📊 История операций пуста', reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text('📊 История операций пуста', reply_markup=get_back_keyboard(db_user.language, callback_data='menu_balance'))
         await callback.answer()
         return
 
@@ -372,6 +372,13 @@ async def show_payment_methods(callback: types.CallbackQuery, db_user: User, db:
             'Если вы считаете это ошибкой, вы можете обжаловать решение.',
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
+        await callback.answer()
+        return
+
+    from .invoices import show_open_invoice
+
+    await state.clear()
+    if await show_open_invoice(callback.message, db, db_user, edit=True):
         await callback.answer()
         return
 
@@ -760,6 +767,9 @@ async def handle_topup_amount_callback(
 
 
 def register_balance_handlers(dp: Dispatcher):
+    from .invoices import handle_invoice
+
+    dp.callback_query.register(handle_invoice, F.data.startswith('invoice:'))
     dp.callback_query.register(show_balance_menu, F.data == 'menu_balance')
 
     dp.callback_query.register(show_balance_history, F.data == 'balance_history')

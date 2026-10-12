@@ -484,6 +484,14 @@ async def handle_pre_checkout_query(query: types.PreCheckoutQuery):
                     )
                     return
                 texts = get_texts(user.language or DEFAULT_LANGUAGE)
+                if '_invoice' in query.invoice_payload and query.invoice_payload.startswith('balance_'):
+                    from app.utils.cache import cache
+
+                    invoice = await cache.get(f'invoice:stars:{user.id}')
+                    if not invoice or invoice['payload'] != query.invoice_payload or invoice['stars_amount'] != query.total_amount:
+                        await query.answer(ok=False, error_message='Счёт отменён или истёк. Создайте новый в разделе «Баланс».')
+                        return
+
         except Exception as db_error:
             logger.error('Ошибка подключения к БД в pre_checkout_query', db_error=db_error)
             await query.answer(
@@ -577,9 +585,10 @@ async def handle_successful_payment(message: types.Message, db: AsyncSession, st
         payment_service = PaymentService(message.bot)
 
         state_data = await state.get_data()
-        prompt_message_id = state_data.get('stars_prompt_message_id')
+        belongs_to_current = state_data.get('stars_invoice_payload') in (None, payment.invoice_payload)
+        prompt_message_id = state_data.get('stars_prompt_message_id') if belongs_to_current else None
         prompt_chat_id = state_data.get('stars_prompt_chat_id', message.chat.id)
-        invoice_message_id = state_data.get('stars_invoice_message_id')
+        invoice_message_id = state_data.get('stars_invoice_message_id') if belongs_to_current else None
         invoice_chat_id = state_data.get('stars_invoice_chat_id', message.chat.id)
 
         for chat_id, message_id, label in [
@@ -602,12 +611,14 @@ async def handle_successful_payment(message: types.Message, db: AsyncSession, st
             telegram_payment_charge_id=payment.telegram_payment_charge_id,
         )
 
-        await state.update_data(
-            stars_prompt_message_id=None,
-            stars_prompt_chat_id=None,
-            stars_invoice_message_id=None,
-            stars_invoice_chat_id=None,
-        )
+        if belongs_to_current:
+            await state.update_data(
+                stars_prompt_message_id=None,
+                stars_prompt_chat_id=None,
+                stars_invoice_message_id=None,
+                stars_invoice_chat_id=None,
+                stars_invoice_payload=None,
+            )
 
         if success:
             rubles_amount = TelegramStarsService.calculate_rubles_from_stars(payment.total_amount)

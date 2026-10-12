@@ -238,3 +238,6 @@ async def test_invoice_rejects_unknown_method(monkeypatch):
         await purchase_module.create_tariff_invoice(request, user=user, db=types.SimpleNamespace())
     assert exc_info.value.status_code == 400
     assert 'called' not in saved
+
+
+pytestmark = pytest.mark.usefixtures('invoice_redis')
