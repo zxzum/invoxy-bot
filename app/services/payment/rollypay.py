@@ -53,6 +53,10 @@ class RollyPayPaymentMixin:
             logger.error('RollyPay не настроен')
             return None
 
+        # Cabinet option IDs stay compatible; RollyPay calls foreign cards intl_card.
+        if payment_method_type == 'foreign_card':
+            payment_method_type = 'intl_card'
+
         # Валидация лимитов
         if amount_kopeks < settings.ROLLYPAY_MIN_AMOUNT_KOPEKS:
             logger.warning(

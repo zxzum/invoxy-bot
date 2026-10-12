@@ -1,3 +1,5 @@
+import html
+
 from app.config import settings
 from app.localization.texts import get_texts
 
@@ -529,6 +531,17 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    from app.services.payment_method_config_service import get_method_sort_order
+
+    methods.sort(
+        key=lambda method: get_method_sort_order(
+            'telegram_stars'
+            if method['id'] == 'stars'
+            else 'platega'
+            if method['id'].startswith('platega_m')
+            else method['id']
+        )
+    )
     return methods
 
 
@@ -586,7 +599,13 @@ def get_payment_methods_text(language: str) -> str:
             f'PAYMENT_METHOD_{method_id}_DESCRIPTION',
             method['description'],
         )
-        if method_id == 'MULENPAY':
+        if method_id in {'ROLLYPAY', 'PLATEGA'}:
+            from app.services.payment_method_config_service import get_display_name_override
+
+            label = get_display_name_override(method['id']) or method['name']
+            name = f'{method["icon"]} <b>{html.escape(label)}</b>'
+            description = texts.t('PAYMENT_GATEWAY_DESCRIPTION', 'выберите способ оплаты на следующем шаге')
+        elif method_id == 'MULENPAY':
             mulenpay_name = settings.get_mulenpay_display_name()
             mulenpay_name_html = settings.get_mulenpay_display_name_html()
             name = name.format(mulenpay_name=mulenpay_name_html)

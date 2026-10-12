@@ -658,6 +658,22 @@ async def handle_topup_amount_callback(
         await callback.answer('❌ Некорректная сумма', show_alert=True)
         return
 
+    if method in {'rollypay_group', 'platega_group'}:
+        if method == 'platega_group':
+            from .platega import start_platega_payment
+
+            await state.update_data(platega_pending_amount=amount_kopeks, platega_method=None)
+            await start_platega_payment(callback, db_user, state)
+        else:
+            from app.database.database import AsyncSessionLocal
+
+            from .rollypay import start_rollypay_topup
+
+            await state.update_data(rollypay_pending_amount=amount_kopeks, rollypay_method=None)
+            async with AsyncSessionLocal() as db:
+                await start_rollypay_topup(callback, db_user, db, state)
+        return
+
     # Сценарии, которым передаётся сам callback, отвечают на нажатие сами (у них свои алерты).
     if method == 'tribute':
         from .tribute import start_tribute_payment
@@ -830,9 +846,10 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.callback_query.register(start_paypear_topup, F.data == 'topup_paypear')
 
-    from .rollypay import start_rollypay_topup
+    from .rollypay import select_rollypay_method, start_rollypay_topup
 
     dp.callback_query.register(start_rollypay_topup, F.data == 'topup_rollypay')
+    dp.callback_query.register(select_rollypay_method, F.data.startswith('rollypay_method_'))
 
     from .overpay import (
         start_overpay_card_topup,

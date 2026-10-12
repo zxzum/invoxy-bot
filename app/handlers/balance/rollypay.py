@@ -13,6 +13,7 @@ from app.database.models import User
 from app.keyboards.inline import get_back_keyboard
 from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
+from app.services.payment_method_config_service import get_enabled_methods_for_user
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
@@ -40,6 +41,7 @@ async def _create_rollypay_payment_and_respond(
     db: AsyncSession,
     amount_kopeks: int,
     edit_message: bool = False,
+    payment_method: str | None = None,
 ):
     """
     Common logic for creating RollyPay payment and sending response.
@@ -62,6 +64,7 @@ async def _create_rollypay_payment_and_respond(
         description=description,
         email=getattr(db_user, 'email', None),
         language=db_user.language,
+        payment_method_type=payment_method,
     )
 
     if not result:
@@ -180,6 +183,15 @@ async def process_rollypay_payment_amount(
         )
         return
 
+    data = await state.get_data()
+    payment_method = data.get('rollypay_method')
+    options = await _rollypay_options(db, db_user)
+    if payment_method not in {option['id'] for option in options}:
+        await message.answer(
+            texts.t('ROLLYPAY_SELECT_PAYMENT_METHOD', 'Выберите способ оплаты в платёжной системе №1.'),
+            reply_markup=get_back_keyboard(db_user.language),
+        )
+        return
     await state.clear()
 
     await _create_rollypay_payment_and_respond(
@@ -188,6 +200,7 @@ async def process_rollypay_payment_amount(
         db=db,
         amount_kopeks=amount_kopeks,
         edit_message=False,
+        payment_method=payment_method,
     )
 
 
@@ -199,7 +212,7 @@ async def start_rollypay_topup(
     state: FSMContext,
 ):
     """
-    Start RollyPay top-up process - ask for amount.
+    Start RollyPay top-up process with an explicit payment-method choice.
     """
     texts = get_texts(db_user.language)
 
@@ -211,6 +224,57 @@ async def start_rollypay_topup(
             parse_mode='HTML',
             reply_markup=restriction_kb,
         )
+        await callback.answer()
+        return
+
+    options = await _rollypay_options(db, db_user)
+    if not options:
+        await callback.answer(
+            texts.t('ROLLYPAY_UNAVAILABLE', 'Платёжная система №1 временно недоступна.'), show_alert=True
+        )
+        return
+    await state.update_data(payment_method='rollypay', rollypay_method=None)
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=option['name'], callback_data=f'rollypay_method_{option["id"]}')]
+            for option in options
+        ]
+        + [[InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')]]
+    )
+    from app.utils.photo_message import edit_or_answer_photo
+
+    await edit_or_answer_photo(
+        callback, texts.t('ROLLYPAY_SELECT_PAYMENT_METHOD', 'Выберите способ оплаты в платёжной системе №1:'), keyboard
+    )
+    await callback.answer()
+
+
+async def _rollypay_options(db: AsyncSession, user: User) -> list[dict]:
+    if not settings.is_rollypay_enabled():
+        return []
+    methods = await get_enabled_methods_for_user(db, user=user)
+    return next((method.get('options') or [] for method in methods if method['id'] == 'rollypay'), [])
+
+
+@error_handler
+async def select_rollypay_method(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    texts = get_texts(db_user.language)
+    if getattr(db_user, 'restriction_topup', False):
+        await callback.answer(texts.t('TOPUP_RESTRICTED', 'Пополнение ограничено администратором.'), show_alert=True)
+        return
+    method = callback.data.removeprefix('rollypay_method_')
+    options = await _rollypay_options(db, db_user)
+    if method not in {option['id'] for option in options}:
+        await callback.answer(texts.t('PAYMENT_METHOD_UNAVAILABLE', 'Этот способ оплаты недоступен.'), show_alert=True)
+        return
+    data = await state.get_data()
+    await state.update_data(payment_method='rollypay', rollypay_method=method)
+    await state.set_state(BalanceStates.waiting_for_amount)
+    pending_amount = int(data.get('rollypay_pending_amount') or 0)
+    await state.update_data(rollypay_pending_amount=None)
+    await callback.answer()
+    if pending_amount > 0:
+        await process_rollypay_payment_amount(callback.message, db_user, db, pending_amount, state)
         return
 
     await state.set_state(BalanceStates.waiting_for_amount)
@@ -222,7 +286,10 @@ async def start_rollypay_topup(
 
     keyboard = await get_topup_amount_keyboard('rollypay', db_user.language)
 
-    await callback.message.edit_text(
+    from app.utils.photo_message import edit_or_answer_photo
+
+    await edit_or_answer_photo(
+        callback,
         texts.t(
             'ROLLYPAY_ENTER_AMOUNT',
             '\U0001f4b3 <b>Пополнение через {name}</b>\n\n'
@@ -230,10 +297,9 @@ async def start_rollypay_topup(
             'Минимум: {min_amount}\u20bd\n'
             'Максимум: {max_amount}\u20bd',
         ).format(
-            name=display_name,
+            name=html.escape(display_name),
             min_amount=min_amount,
             max_amount=f'{max_amount:,}'.replace(',', ' '),
         ),
-        parse_mode='HTML',
-        reply_markup=keyboard,
+        keyboard,
     )

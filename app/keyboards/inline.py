@@ -336,14 +336,10 @@ def get_language_selection_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _with_website_button(
-    keyboard: InlineKeyboardMarkup, language: str, show_all: bool = False
-) -> InlineKeyboardMarkup:
+def _with_website_button(keyboard: InlineKeyboardMarkup, language: str, show_all: bool = False) -> InlineKeyboardMarkup:
     url = website_url()
     if url and not any(button.url == url for row in keyboard.inline_keyboard for button in row):
-        keyboard.inline_keyboard.append(
-            [InlineKeyboardButton(text=get_texts(language).t('INVOXY_BTN_SITE'), url=url)]
-        )
+        keyboard.inline_keyboard.append([InlineKeyboardButton(text=get_texts(language).t('INVOXY_BTN_SITE'), url=url)])
     if settings.get_main_menu_mode() == 'compact' and not show_all:
         from app.utils.invoxy_main_menu import compact_keyboard
 
@@ -1311,7 +1307,9 @@ def get_subscription_keyboard(
                 [
                     InlineKeyboardButton(
                         text=texts.t('MANAGE_DEVICES_BUTTON', '📱 Управление устройствами'),
-                        callback_data=f'subscription_manage_devices{_sub_suffix}' if _sub_suffix else 'subscription_manage_devices',
+                        callback_data=f'subscription_manage_devices{_sub_suffix}'
+                        if _sub_suffix
+                        else 'subscription_manage_devices',
                     )
                 ]
             )
@@ -1720,7 +1718,7 @@ def _apply_payment_name_overrides(keyboard: list[list[InlineKeyboardButton]]) ->
             if not raw_method:
                 continue
 
-            config_method = 'telegram_stars' if raw_method == 'stars' else raw_method
+            config_method = 'telegram_stars' if raw_method == 'stars' else raw_method.removesuffix('_group')
             override = get_display_name_override(config_method)
             if override and not raw_method.startswith('platega_m'):
                 row[idx] = button.model_copy(update={'text': override})
@@ -1743,7 +1741,7 @@ def _apply_payment_name_overrides(keyboard: list[list[InlineKeyboardButton]]) ->
                 raw_method = data[len('topup_') :]
             if raw_method:
                 is_payment_row = True
-                config_method = 'telegram_stars' if raw_method == 'stars' else raw_method
+                config_method = 'telegram_stars' if raw_method == 'stars' else raw_method.removesuffix('_group')
                 if config_method.startswith('platega_m'):
                     config_method = 'platega'
                 method_order = get_method_sort_order(config_method)
@@ -1773,7 +1771,8 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
 
     def _build_callback(method: str) -> str:
         if amount_kopeks > 0:
-            return f'topup_amount|{method}|{amount_kopeks}'
+            group = f'{method}_group' if method in {'rollypay', 'platega'} else method
+            return f'topup_amount|{group}|{amount_kopeks}'
         return f'topup_{method}'
 
     if settings.TELEGRAM_STARS_ENABLED:
