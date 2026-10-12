@@ -1,12 +1,15 @@
 import asyncio
+import json
 import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import aiohttp
 import structlog
 from packaging import version
 
 from app.config import settings
+from app.utils.cache import cache
 
 
 logger = structlog.get_logger(__name__)
@@ -65,6 +68,13 @@ class VersionService:
         self.repo = getattr(settings, 'VERSION_CHECK_REPO', 'fr1ngg/remnawave-bedolaga-telegram-bot')
         self.enabled = getattr(settings, 'VERSION_CHECK_ENABLED', True)
         self.current_version = self._get_current_version()
+        self.upstream_version = self.current_version
+        marker = Path(__file__).resolve().parents[2] / '.invoxy-upstream.json'
+        if marker.exists():
+            try:
+                self.upstream_version = json.loads(marker.read_text())['tag']
+            except (OSError, ValueError, KeyError):
+                logger.warning('Не удалось прочитать версию upstream')
         self.cache_ttl = 3600
         self._cache: dict = {}
         self._last_check: datetime | None = None
@@ -109,7 +119,7 @@ class VersionService:
             if not releases:
                 return False, []
 
-            current_ver = self._parse_version(self.current_version)
+            current_ver = self._parse_version(self.upstream_version)
             newer_releases = []
 
             for release in releases:
@@ -187,16 +197,33 @@ class VersionService:
 
         try:
             latest_version = newer_releases[0]
-            cache_key = f'notified_{latest_version.tag_name}'
-
-            if self._cache.get(cache_key):
+            important = any(
+                re.search(r'breaking|security|vulnerab|CVE-\d|уязвим|безопасност', release.body, re.IGNORECASE)
+                for release in newer_releases
+            )
+            # INVOXY: обычные релизы делят лимит 48 ч; новый важный релиз уведомляет сразу.
+            cache_key = f'version_notification:{self.repo}:{latest_version.tag_name if important else "routine"}'
+            now = datetime.now(UTC)
+            if self._cache.get(cache_key, now) > now:
+                return
+            if await cache.get(cache_key):
+                return
+            if cache._connected and not await cache.setnx(cache_key, True, expire=48 * 3600):
                 return
 
-            await self._notification_service.send_version_update_notification(
-                current_version=self.current_version, latest_version=latest_version, total_updates=len(newer_releases)
-            )
-
-            self._cache[cache_key] = True
+            try:
+                sent = await self._notification_service.send_version_update_notification(
+                    current_version=self.current_version,
+                    latest_version=latest_version,
+                    total_updates=len(newer_releases),
+                )
+            except Exception:
+                await cache.delete(cache_key)
+                raise
+            if sent:
+                self._cache[cache_key] = now + timedelta(hours=48)
+            else:
+                await cache.delete(cache_key)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления об обновлении', error=e)
@@ -247,7 +274,7 @@ class VersionService:
 
         while True:
             try:
-                await asyncio.sleep(3600)
+                await asyncio.sleep(max(1, settings.VERSION_CHECK_INTERVAL_HOURS) * 3600)
                 await self.check_for_updates()
 
             except asyncio.CancelledError:
