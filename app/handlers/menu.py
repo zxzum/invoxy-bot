@@ -353,7 +353,7 @@ async def show_service_rules(callback: types.CallbackQuery, db_user: User, db: A
             )
         keyboard_rows.append(nav_row)
 
-    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')])
 
     await callback.message.edit_text(
         message_text,

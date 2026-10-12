@@ -332,7 +332,7 @@ def get_language_selection_keyboard(
 
     if include_back:
         texts = get_texts(language)
-        buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+        buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -956,7 +956,7 @@ def get_info_menu_keyboard(
             ]
         )
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -1063,7 +1063,8 @@ def get_happ_download_link_keyboard(language: str, link: str) -> InlineKeyboardM
 
 def get_back_keyboard(language: str = DEFAULT_LANGUAGE, callback_data: str = 'back_to_menu') -> InlineKeyboardMarkup:
     texts = get_texts(language)
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data=callback_data)]])
+    label = texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if callback_data == 'back_to_menu' else texts.BACK
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=label, callback_data=callback_data)]])
 
 
 def get_server_status_keyboard(
@@ -1103,7 +1104,7 @@ def get_server_status_keyboard(
         if nav_row:
             keyboard.append(nav_row)
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -1394,7 +1395,7 @@ def get_subscription_keyboard(
             ]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -1475,7 +1476,7 @@ def get_trial_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=texts.t('TRIAL_ACTIVATE_BUTTON', '🎁 Активировать'), callback_data='trial_activate'
                 ),
-                InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu'),
+                InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu'),
             ]
         ]
     )
@@ -1524,7 +1525,7 @@ def get_subscription_period_keyboard(
 
     # Кнопка "Простая покупка" была убрана из выбора периода подписки
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_buy')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -1705,7 +1706,7 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
                 )
             ]
         )
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -2585,7 +2586,7 @@ def get_referral_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMar
             ]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -2623,7 +2624,7 @@ def get_support_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
         rows.append(
             [InlineKeyboardButton(text=texts.t('MY_TICKETS_BUTTON', '📋 Мои тикеты'), callback_data='my_tickets')]
         )
-    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    rows.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -2691,7 +2692,7 @@ def get_autopay_keyboard(language: str = DEFAULT_LANGUAGE, sub_id: int | None = 
                     callback_data='autopay_set_period',
                 )
             ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+            [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)],
         ]
     )
 
@@ -2844,7 +2845,7 @@ def get_add_traffic_keyboard(
                         callback_data='no_traffic_packages',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)],
             ]
         )
 
@@ -2879,7 +2880,7 @@ def get_add_traffic_keyboard(
 
         buttons.append([InlineKeyboardButton(text=text, callback_data=f'add_traffic_{gb}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+    buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2915,7 +2916,7 @@ def get_add_traffic_keyboard_from_tariff(
                         callback_data='no_traffic_packages',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)],
             ]
         )
 
@@ -2947,7 +2948,7 @@ def get_add_traffic_keyboard_from_tariff(
 
         buttons.append([InlineKeyboardButton(text=text, callback_data=f'add_traffic_{gb}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+    buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -3046,7 +3047,7 @@ def get_change_devices_keyboard(
             0, [InlineKeyboardButton(text=current_button, callback_data=f'change_devices_{current_devices}')]
         )
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_callback == 'back_to_menu' else texts.BACK, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -3203,7 +3204,7 @@ def get_manage_countries_keyboard(
 
     buttons.append([InlineKeyboardButton(text=apply_text, callback_data='countries_apply')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+    buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -3252,7 +3253,7 @@ def get_device_selection_keyboard(
             ]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+    keyboard.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -3585,7 +3586,7 @@ def get_devices_management_keyboard(
         ]
     )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    keyboard.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_callback == 'back_to_menu' else texts.BACK, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -3931,7 +3932,7 @@ def get_admin_tickets_keyboard(
 
         keyboard.append(nav_row)
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    keyboard.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_callback == 'back_to_menu' else texts.BACK, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

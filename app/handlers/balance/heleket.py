@@ -72,7 +72,7 @@ async def start_heleket_payment(
     if markup_text:
         message_lines.extend(['', markup_text])
 
-    keyboard = await get_topup_amount_keyboard('heleket', db_user.language, back_callback='back_to_menu')
+    keyboard = await get_topup_amount_keyboard('heleket', db_user.language, back_callback='balance_topup')
 
     await callback.message.edit_text(
         '\n'.join(filter(None, message_lines)),

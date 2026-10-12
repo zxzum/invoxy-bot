@@ -62,7 +62,7 @@ async def start_wata_payment(
         max_amount=settings.format_price(settings.WATA_MAX_AMOUNT_KOPEKS),
     )
 
-    keyboard = await get_topup_amount_keyboard('wata', db_user.language, back_callback='back_to_menu')
+    keyboard = await get_topup_amount_keyboard('wata', db_user.language, back_callback='balance_topup')
 
     await callback.message.edit_text(
         message_text,

@@ -79,7 +79,7 @@ async def get_topup_amount_keyboard(
     method: str,
     language: str = DEFAULT_LANGUAGE,
     db: AsyncSession | None = None,
-    back_callback: str = 'menu_balance',
+    back_callback: str = 'balance_topup',
     *,
     min_amount_kopeks: int | None = None,
 ) -> InlineKeyboardMarkup:

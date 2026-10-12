@@ -253,7 +253,7 @@ def get_tariffs_keyboard(
             title = tariff.name
         buttons.append([InlineKeyboardButton(text=title, callback_data=f'tariff_select:{tariff.id}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -302,7 +302,7 @@ def get_tariff_periods_keyboard(
         button_text = _period_button_text(tariff, period, price_text, texts)
         buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'tariff_period:{tariff.id}:{period}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_callback == 'back_to_menu' else texts.BACK, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -339,7 +339,7 @@ def get_tariff_periods_keyboard_with_traffic(
             [InlineKeyboardButton(text=button_text, callback_data=f'tariff_period_traffic:{tariff.id}:{period}')]
         )
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_callback == 'back_to_menu' else texts.BACK, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -467,7 +467,7 @@ def get_tariff_extend_insufficient_balance_keyboard(
     back_callback = (
         f'se:{subscription_id}' if settings.is_multi_tariff_enabled() and subscription_id else 'subscription_extend'
     )
-    back_button = InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)
+    back_button = InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_callback == 'back_to_menu' else texts.BACK, callback_data=back_callback)
 
     if settings.is_auto_purchase_after_topup_enabled() and missing_kopeks > 0:
         from app.keyboards.inline import get_payment_methods_keyboard
@@ -594,7 +594,7 @@ def get_daily_tariff_confirm_keyboard(
                 )
             ]
         )
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_callback == 'back_to_menu' else texts.BACK, callback_data=back_callback)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -609,7 +609,7 @@ def get_daily_tariff_insufficient_balance_keyboard(
         inline_keyboard=[
             [InlineKeyboardButton(text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'), callback_data='balance_topup')],
             *_sbp_purchase_rows(tariff_id, texts),
-            [InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)],
+            [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_callback == 'back_to_menu' else texts.BACK, callback_data=back_callback)],
         ]
     )
 
@@ -704,7 +704,7 @@ def get_custom_tariff_keyboard(
     )
 
     # Кнопка назад
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_callback == 'back_to_menu' else texts.BACK, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -860,7 +860,7 @@ async def show_tariffs_list(
                 '😔 <b>Нет доступных тарифов</b>\n\nК сожалению, сейчас нет тарифов для покупки.',
             ),
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')]]
+                inline_keyboard=[[InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')]]
             ),
         )
         await callback.answer()
@@ -1573,7 +1573,7 @@ async def handle_custom_confirm(
                             else 'menu_subscription',
                         )
                     ],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')],
                 ]
             ),
             media=get_screen_banner('paid_successful'),
@@ -2259,7 +2259,7 @@ async def confirm_tariff_purchase(
                         else 'menu_subscription',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')],
             ]
         ),
         media=get_screen_banner('paid_successful'),
@@ -2561,7 +2561,7 @@ async def confirm_daily_tariff_purchase(
                         else 'menu_subscription',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')],
             ]
         ),
         parse_mode='HTML',
@@ -2717,7 +2717,7 @@ async def show_tariff_extend(
                         ]
                     )
                 keyboard.append(
-                    [InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='back_to_menu')]
+                    [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')]
                 )
                 await callback.message.edit_text(
                     texts.t(
@@ -2757,7 +2757,7 @@ async def show_tariff_extend(
                 texts.t('TARIFF_RENEW_NO_TARIFFS', 'Нет доступных тарифов для продления'), show_alert=True
             )
             return
-        keyboard.append([InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='back_to_menu')])
+        keyboard.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')])
 
         await callback.message.edit_text(
             texts.t(
@@ -2792,7 +2792,7 @@ async def show_tariff_extend(
         keyboard = []
         for t in active_tariffs:
             keyboard.append([InlineKeyboardButton(text=f'📦 {t.name}', callback_data=f'tariff_select:{t.id}')])
-        keyboard.append([InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='back_to_menu')])
+        keyboard.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')])
 
         await callback.message.edit_text(
             texts.t(
@@ -3217,7 +3217,7 @@ async def confirm_tariff_extend(
                             else 'menu_subscription',
                         )
                     ],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')],
                 ]
             ),
             media=get_screen_banner('paid_successful'),
@@ -4054,7 +4054,7 @@ async def confirm_tariff_switch(
                             else 'menu_subscription',
                         )
                     ],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')],
                 ]
             ),
             parse_mode='HTML',
@@ -4318,7 +4318,7 @@ async def confirm_daily_tariff_switch(
                             else 'menu_subscription',
                         )
                     ],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')],
                 ]
             ),
             parse_mode='HTML',
@@ -5332,7 +5332,7 @@ async def confirm_instant_switch(
                                 else 'menu_subscription',
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                        [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -5367,7 +5367,7 @@ async def confirm_instant_switch(
                                 else 'menu_subscription',
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                        [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')],
                     ]
                 ),
                 parse_mode='HTML',

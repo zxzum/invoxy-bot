@@ -94,7 +94,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                         )
                     ]
                 )
-            keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+            keyboard.append([types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')])
             await callback.message.edit_text(
                 '📊 <b>Докупить трафик</b>\n\nВыберите подписку:',
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
@@ -182,7 +182,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                     f'⚠️ Лимит сбросов на этот месяц исчерпан ({max_per_month} из {max_per_month}).\n'
                     'Следующий сброс будет доступен с 1-го числа следующего месяца.'
                 )
-                buttons = [[types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)]]
+                buttons = [[types.InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)]]
                 await callback.message.edit_text(
                     text,
                     reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
@@ -197,7 +197,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                     f'Потрачено сейчас: <b>{used_gb:.1f} ГБ</b> из {limit_gb} ГБ\n\n'
                     f'⚠️ Сброс расхода доступен после {min_used_gb} ГБ расхода на LTE.'
                 )
-                buttons = [[types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)]]
+                buttons = [[types.InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)]]
                 await callback.message.edit_text(
                     text,
                     reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
@@ -233,7 +233,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                         callback_data=confirm_cb,
                     )
                 ],
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                [types.InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)],
             ]
             await callback.message.edit_text(
                 text,
@@ -263,7 +263,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                 f'⚠️ Лимит докупки трафика на этот месяц исчерпан ({purchases_this_month} из {max_topup_per_month}).\n'
                 'Следующая докупка будет доступна с 1-го числа следующего месяца.'
             )
-            buttons = [[types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)]]
+            buttons = [[types.InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)]]
             await callback.message.edit_text(
                 text,
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
@@ -760,7 +760,7 @@ async def handle_confirm_lte_reset(
         parts = callback.data.split(':') if callback.data else []
         is_from_menu = len(parts) > 2 and parts[2] == 'menu'
         back_cb = 'back_to_menu' if is_from_menu else (f'sm:{subscription.id}' if settings.is_multi_tariff_enabled() else 'my_subscriptions')
-        buttons = [[types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)]]
+        buttons = [[types.InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)]]
 
         await callback.message.edit_text(
             f'✅ <b>Расход LTE успешно сброшен!</b>\n\n'

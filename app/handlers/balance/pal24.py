@@ -303,7 +303,7 @@ async def start_pal24_payment(
         ),
     )
 
-    keyboard = await get_topup_amount_keyboard('pal24', db_user.language, back_callback='back_to_menu')
+    keyboard = await get_topup_amount_keyboard('pal24', db_user.language, back_callback='balance_topup')
 
     await callback.message.edit_text(
         message_text,

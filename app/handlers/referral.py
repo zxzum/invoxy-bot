@@ -1073,7 +1073,7 @@ async def show_partner_info(callback: types.CallbackQuery, db_user: User):
                 web_app=types.WebAppInfo(url=cabinet_url),
             )
         ])
-    buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    buttons.append([types.InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')])
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
     await edit_or_answer_photo(callback, text, keyboard)
 

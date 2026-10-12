@@ -67,7 +67,7 @@ async def start_mulenpay_payment(
         mulenpay_name_html=mulenpay_name_html,
     )
 
-    keyboard = await get_topup_amount_keyboard('mulenpay', db_user.language, back_callback='back_to_menu')
+    keyboard = await get_topup_amount_keyboard('mulenpay', db_user.language, back_callback='balance_topup')
 
     await callback.message.edit_text(
         message_text,

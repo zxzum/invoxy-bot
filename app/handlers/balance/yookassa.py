@@ -54,7 +54,7 @@ async def start_yookassa_payment(callback: types.CallbackQuery, db_user: User, s
         f'Введите сумму для пополнения от {min_amount_rub:.0f} до {max_amount_rub:,.0f} рублей:'
     )
 
-    keyboard = await get_topup_amount_keyboard('yookassa', db_user.language, back_callback='back_to_menu')
+    keyboard = await get_topup_amount_keyboard('yookassa', db_user.language, back_callback='balance_topup')
 
     await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
 
@@ -100,7 +100,7 @@ async def start_yookassa_sbp_payment(callback: types.CallbackQuery, db_user: Use
         f'Введите сумму для пополнения от {min_amount_rub:.0f} до {max_amount_rub:,.0f} рублей:'
     )
 
-    keyboard = await get_topup_amount_keyboard('yookassa_sbp', db_user.language, back_callback='back_to_menu')
+    keyboard = await get_topup_amount_keyboard('yookassa_sbp', db_user.language, back_callback='balance_topup')
 
     await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
 

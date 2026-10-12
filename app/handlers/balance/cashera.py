@@ -62,7 +62,7 @@ async def _prompt_amount(message: types.Message, db_user: User, state: FSMContex
 
     min_amount_label = settings.format_price(settings.CASHERA_MIN_AMOUNT_KOPEKS)
     max_amount_label = settings.format_price(settings.CASHERA_MAX_AMOUNT_KOPEKS)
-    keyboard = await get_topup_amount_keyboard('cashera', db_user.language, back_callback='back_to_menu')
+    keyboard = await get_topup_amount_keyboard('cashera', db_user.language, back_callback='balance_topup')
 
     await message.edit_text(
         texts.t(

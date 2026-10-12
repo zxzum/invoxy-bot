@@ -76,7 +76,7 @@ async def test_keyboard_chunks_amounts_two_per_row(monkeypatch: pytest.MonkeyPat
     keyboard = await get_topup_amount_keyboard('cryptobot', db=object())
 
     assert [len(row) for row in keyboard.inline_keyboard] == [2, 1, 1]
-    assert keyboard.inline_keyboard[-1][0].callback_data == 'menu_balance'
+    assert keyboard.inline_keyboard[-1][0].callback_data == 'balance_topup'
 
 
 async def test_keyboard_min_amount_override_raises_lower_bound(monkeypatch: pytest.MonkeyPatch):

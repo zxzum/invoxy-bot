@@ -237,7 +237,7 @@ async def start_cloudpayments_payment(
         'Введите сумму для пополнения от {min_amount:.0f} до {max_amount:,.0f} рублей:',
     ).format(min_amount=min_amount_rub, max_amount=max_amount_rub)
 
-    keyboard = await get_topup_amount_keyboard('cloudpayments', db_user.language, back_callback='back_to_menu')
+    keyboard = await get_topup_amount_keyboard('cloudpayments', db_user.language, back_callback='balance_topup')
 
     await callback.message.edit_text(
         message_text,

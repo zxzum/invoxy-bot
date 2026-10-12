@@ -63,7 +63,7 @@ async def handle_connect_subscription(
                         )
                     ]
                 )
-            keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+            keyboard.append([types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')])
             await callback.message.edit_text(
                 '🔗 <b>Подключиться</b>\n\nВыберите подписку:',
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
@@ -105,7 +105,7 @@ async def handle_connect_subscription(
                         callback_data='menu_app_connect',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)],
             ]
         )
 
@@ -145,7 +145,7 @@ async def handle_connect_subscription(
                         callback_data='menu_app_connect',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)],
             ]
         )
 
@@ -168,7 +168,7 @@ async def handle_connect_subscription(
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
             rows.append(happ_row)
-        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+        rows.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -196,7 +196,7 @@ async def handle_connect_subscription(
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
             rows.append(happ_row)
-        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+        rows.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -230,7 +230,7 @@ async def handle_connect_subscription(
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                        [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)],
                     ]
                 ),
                 parse_mode='HTML',
@@ -375,7 +375,7 @@ async def handle_open_subscription_link(
                         else 'subscription_connect',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)],
             ]
         ),
         parse_mode='HTML',

@@ -67,7 +67,7 @@ async def start_cryptobot_payment(callback: types.CallbackQuery, db_user: User, 
         f'Сумма будет автоматически конвертирована в USD для оплаты.'
     )
 
-    keyboard = await get_topup_amount_keyboard('cryptobot', db_user.language, back_callback='back_to_menu')
+    keyboard = await get_topup_amount_keyboard('cryptobot', db_user.language, back_callback='balance_topup')
 
     await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
 
