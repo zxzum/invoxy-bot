@@ -69,6 +69,26 @@ async def _get_tariff_whitelist_limit(db: AsyncSession, tariff_id: int | None) -
     return max(0, int(value or 0))
 
 
+def capture_subscription_snapshot(subscription: Subscription | None) -> dict[str, Any] | None:
+    """Capture snapshot of subscription state before mutation for audit/diff notifications."""
+    if subscription is None:
+        return None
+    return {
+        'id': getattr(subscription, 'id', None),
+        'tariff_id': getattr(subscription, 'tariff_id', None),
+        'status': getattr(subscription, 'status', None),
+        'is_trial': bool(getattr(subscription, 'is_trial', False)),
+        'traffic_limit_gb': getattr(subscription, 'traffic_limit_gb', None),
+        'whitelist_traffic_limit_gb': getattr(subscription, 'whitelist_traffic_limit_gb', 0),
+        'traffic_used_gb': getattr(subscription, 'traffic_used_gb', 0.0),
+        'whitelist_traffic_used_bytes': getattr(subscription, 'whitelist_traffic_used_bytes', 0),
+        'end_date': getattr(subscription, 'end_date', None),
+        'device_limit': getattr(subscription, 'device_limit', None),
+        'remnawave_id': getattr(subscription, 'remnawave_id', None),
+        'remnawave_short_uuid': getattr(subscription, 'remnawave_short_uuid', None),
+    }
+
+
 def _is_trial_unique_violation(exc: IntegrityError) -> bool:
     """Проверяет, вызвана ли IntegrityError конфликтом по нашему constraint.
 
@@ -936,6 +956,8 @@ async def _lock_subscription_row(db: AsyncSession, subscription: Subscription | 
     if subscription is None:
         return None
     await db.execute(select(Subscription.id).where(Subscription.id == subscription.id).with_for_update())
+    if hasattr(db, 'is_modified') and db.is_modified(subscription) and hasattr(db, 'flush'):
+        await db.flush()
     # Подтягиваем поля, которые могут быть обновлены конкурентным add_subscription_traffic
     await db.refresh(
         subscription,
@@ -1134,6 +1156,8 @@ async def _apply_base_limit_preserving_active_purchases(
     subscription.traffic_limit_gb = base_limit_gb + purchased_gb
     subscription.purchased_traffic_gb = purchased_gb
     subscription.traffic_reset_at = nearest_expiry
+    if hasattr(db, 'flush'):
+        await db.flush()
 
     return purchased_gb, subscription.traffic_limit_gb
 
@@ -1212,6 +1236,8 @@ async def _apply_whitelist_base_limit_preserving_active_purchases(
         (p.expires_at for p in active_packages),
         default=None,
     )
+    if hasattr(db, 'flush'):
+        await db.flush()
     return purchased_gb, subscription.whitelist_traffic_limit_gb
 
 
@@ -1295,6 +1321,10 @@ async def extend_subscription(
     # Повторный lock в той же транзакции — noop (SubscriptionRenewalService уже мог
     # взять lock через with_for_update).
     await _lock_subscription_row(db, subscription)
+
+    # INVOXY: Capture state snapshot for admin diff notifications before any mutation
+    if not hasattr(subscription, '_previous_state') or subscription._previous_state is None:
+        subscription._previous_state = capture_subscription_snapshot(subscription)
 
     logger.info('🔄 Продление подписки', subscription_id=subscription.id, days=days)
     logger.info(
@@ -1918,6 +1948,9 @@ async def reset_whitelist_subscription_traffic(
             except Exception:
                 pass
 
+    if subscription is not None and (not hasattr(subscription, '_previous_state') or subscription._previous_state is None):
+        subscription._previous_state = capture_subscription_snapshot(subscription)
+
     tariff = getattr(subscription, 'tariff', None)
     if tariff is None and getattr(subscription, 'tariff_id', None) is not None and hasattr(db, 'execute'):
         from app.database.crud.tariff import get_tariff_by_id
@@ -2027,6 +2060,10 @@ async def reset_main_subscription_traffic(
 
     if subscription is None:
         raise ValueError('Subscription not found')
+
+    # INVOXY: Capture state snapshot for admin diff notifications before any mutation
+    if not hasattr(subscription, '_previous_state') or subscription._previous_state is None:
+        subscription._previous_state = capture_subscription_snapshot(subscription)
 
     tariff = getattr(subscription, 'tariff', None)
     if tariff is None and getattr(subscription, 'tariff_id', None) is not None and hasattr(db, 'execute'):

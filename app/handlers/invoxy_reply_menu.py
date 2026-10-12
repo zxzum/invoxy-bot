@@ -158,13 +158,17 @@ async def handle_renew_page(callback: types.CallbackQuery, db: AsyncSession, db_
         await callback.answer()
         return
     screen = await build_renew_screen(db, db_user, normalize_language(db_user.language), page=page)
-    await callback.message.edit_text(
-        screen.text,
-        reply_markup=screen.markup,
-        parse_mode='HTML',
-        media=get_screen_banner(screen.banner) if screen.banner else None,
-        media_kind=screen.banner,
-    )
+    try:
+        await callback.message.edit_text(
+            screen.text,
+            reply_markup=screen.markup,
+            parse_mode='HTML',
+            media=get_screen_banner(screen.banner) if screen.banner else None,
+            media_kind=screen.banner,
+        )
+    except Exception as error:
+        if 'message is not modified' not in str(error).lower():
+            logger.warning('Не удалось обновить страницу продления', error=error)
     await callback.answer()
 
 

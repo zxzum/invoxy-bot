@@ -1104,6 +1104,28 @@ async def perform_traffic_reset(
         except Exception as e:
             logger.warning('Failed to notify telegram user about main traffic reset', error=e)
 
+        try:
+            from app.bot_factory import create_bot
+            from app.services.admin_notification_service import AdminNotificationService
+
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                bot = create_bot()
+                try:
+                    notif_service = AdminNotificationService(bot)
+                    await notif_service.send_traffic_reset_notification(
+                        db=db,
+                        user=user,
+                        subscription=subscription,
+                        reset_scope='regular',
+                        cleared_gb=cleared_gb,
+                        price_kopeks=final_price,
+                        payment_method='Баланс',
+                    )
+                finally:
+                    await bot.session.close()
+        except Exception as admin_err:
+            logger.warning('Failed to send admin notification for main traffic reset', error=admin_err)
+
         remaining_resets = (
             max(0, max_per_month - (subscription.main_reset_count or 0))
             if max_per_month > 0
@@ -1238,6 +1260,28 @@ async def perform_traffic_reset(
         )
     except Exception as e:
         logger.warning('Failed to notify telegram user about traffic reset', error=e)
+
+    try:
+        from app.bot_factory import create_bot
+        from app.services.admin_notification_service import AdminNotificationService
+
+        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+            bot = create_bot()
+            try:
+                notif_service = AdminNotificationService(bot)
+                await notif_service.send_traffic_reset_notification(
+                    db=db,
+                    user=user,
+                    subscription=subscription,
+                    reset_scope='lte',
+                    cleared_gb=cleared_gb,
+                    price_kopeks=final_price,
+                    payment_method='Баланс',
+                )
+            finally:
+                await bot.session.close()
+    except Exception as admin_err:
+        logger.warning('Failed to send admin notification for lte traffic reset', error=admin_err)
 
     return TrafficResetResponse(
         success=True,

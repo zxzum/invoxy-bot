@@ -25,6 +25,7 @@ from app.database.crud.user import (
     create_user_no_commit,
     emit_user_created_event,
     find_phantom_user_by_username,
+    get_user_by_id,
     get_user_by_referral_code,
     get_user_by_telegram_id,
 )
@@ -82,6 +83,11 @@ from app.services.registration_access_service import (
 from app.services.registration_invite_service import RegistrationInviteConflict, RegistrationInviteService
 from app.services.subscription_service import SubscriptionService
 from app.services.support_settings_service import SupportSettingsService
+from app.services.telegram_link_service import (
+    TG_LINK_TOKEN_MIN_LENGTH,
+    get_telegram_link_token,
+    set_telegram_link_token_status,
+)
 from app.services.web_auth_service import WEB_AUTH_TOKEN_MIN_LENGTH, link_web_auth_token
 from app.states import RegistrationStates
 from app.utils.gift_links import InvalidGiftTokenError, parse_gift_claim_input
@@ -1380,6 +1386,47 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 return
             logger.warning('Web auth attempt from unregistered user', telegram_id=message.from_user.id)
         start_parameter = None  # Invalid token, ignore
+
+    # Handle Telegram account linking deep links: /start linktg_{token}
+    if start_parameter and start_parameter.startswith('linktg_'):
+        link_tg_token = start_parameter.removeprefix('linktg_')
+        if len(link_tg_token) >= TG_LINK_TOKEN_MIN_LENGTH:
+            token_data = await get_telegram_link_token(link_tg_token)
+            if not token_data or token_data.get('status') != 'pending':
+                await message.answer(
+                    '⚠️ Ссылка для привязки Telegram устарела или недействительна. Попробуйте запросить привязку в кабинете ещё раз.'
+                )
+                return
+            target_user_id = token_data.get('user_id')
+            target_user = await get_user_by_id(db, target_user_id) if target_user_id else None
+            if not target_user or target_user.status == UserStatus.DELETED.value:
+                await message.answer('⚠️ Целевой аккаунт не найден или удалён.')
+                return
+
+            account_label = target_user.email or f'ID {target_user.id}'
+            keyboard = types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text='✅ Подтвердить привязку',
+                            callback_data=f'linktg_confirm:{link_tg_token}',
+                        ),
+                        types.InlineKeyboardButton(
+                            text='❌ Отмена',
+                            callback_data='linktg_deny',
+                        ),
+                    ],
+                ]
+            )
+            prompt = (
+                f'🔗 <b>Привязка Telegram к аккаунту Invoxy</b>\n\n'
+                f'Подтвердите привязку этого Telegram к профилю:\n'
+                f'👤 <b>{html.escape(account_label)}</b>\n\n'
+                f'Если вы не запрашивали привязку на сайте — нажмите «Отмена».'
+            )
+            await message.answer(prompt, reply_markup=keyboard, parse_mode='HTML')
+            return
+        start_parameter = None
 
     # Invoxy VPN client login confirmation: /start applogin_{request_id}
     if start_parameter and start_parameter.startswith('applogin_'):
@@ -3500,6 +3547,90 @@ async def process_webauth_confirm(
         )
 
 
+async def process_linktg_confirm(
+    callback: types.CallbackQuery,
+    db: AsyncSession,
+):
+    """Handle Telegram account linking confirmation or denial."""
+    await callback.answer()
+
+    if not isinstance(callback.message, types.Message):
+        return
+
+    async def edit_link_message(text: str) -> None:
+        if callback.message.photo:
+            await callback.message.edit_caption(caption=text, parse_mode='HTML')
+        else:
+            await callback.message.edit_text(text, parse_mode='HTML')
+
+    if callback.data == 'linktg_deny':
+        await edit_link_message('❌ Привязка Telegram отменена.')
+        return
+
+    token = callback.data.split(':', 1)[1] if ':' in callback.data else ''
+    if len(token) < TG_LINK_TOKEN_MIN_LENGTH:
+        await edit_link_message('❌ Ошибка: неверный токен.')
+        return
+
+    token_data = await get_telegram_link_token(token)
+    if not token_data or token_data.get('status') != 'pending':
+        await edit_link_message('❌ Ссылка для привязки истекла или уже использована.')
+        return
+
+    target_user_id = token_data.get('user_id')
+    target_user = await get_user_by_id(db, target_user_id) if target_user_id else None
+    if not target_user or target_user.status == UserStatus.DELETED.value:
+        await edit_link_message('❌ Целевой аккаунт не найден или удалён.')
+        return
+
+    telegram_id = callback.from_user.id
+    existing_user = await get_user_by_telegram_id(db, telegram_id)
+    if existing_user and existing_user.id != target_user.id:
+        # Conflict: telegram_id already belongs to another user -> Account Merge!
+        from app.cabinet.auth.merge_service import create_merge_token
+
+        merge_token = await create_merge_token(
+            primary_user_id=target_user.id,
+            secondary_user_id=existing_user.id,
+            provider='telegram',
+            provider_id=str(telegram_id),
+        )
+        await set_telegram_link_token_status(
+            token, 'merge_required', merge_token=merge_token, telegram_id=telegram_id
+        )
+        await edit_link_message(
+            '🔄 <b>Обнаружен существующий аккаунт Telegram!</b>\n\n'
+            'У этого Telegram уже есть профиль в Invoxy.\n'
+            'Вернитесь в браузер — страница автоматически перейдёт к объединению подписок и баланса.'
+        )
+        return
+
+    # Direct link!
+    target_user.telegram_id = telegram_id
+    if callback.from_user.username and not target_user.username:
+        target_user.username = callback.from_user.username
+    if callback.from_user.first_name and not target_user.first_name:
+        target_user.first_name = callback.from_user.first_name
+    if callback.from_user.last_name and not target_user.last_name:
+        target_user.last_name = callback.from_user.last_name
+    target_user.updated_at = datetime.now(UTC)
+    await db.commit()
+
+    # Sync subscriptions with RemnaWave panel
+    try:
+        from app.services.remnawave_resync_service import resync_user_subscriptions_with_panel
+
+        await resync_user_subscriptions_with_panel(db, target_user)
+    except Exception as exc:
+        logger.warning('Failed to resync subscriptions after TG deeplink link', error=exc)
+
+    await set_telegram_link_token_status(token, 'linked', telegram_id=telegram_id)
+    await edit_link_message(
+        '✅ <b>Telegram успешно привязан!</b>\n\n'
+        'Теперь вы можете входить в кабинет через этот Telegram. Вернитесь в браузер.'
+    )
+
+
 def register_handlers(dp: Dispatcher):
     logger.debug('=== НАЧАЛО регистрации обработчиков start.py ===')
 
@@ -3549,5 +3680,11 @@ def register_handlers(dp: Dispatcher):
         F.data.startswith('webauth_confirm:') | F.data.in_(['webauth_deny']),
     )
     logger.debug('Зарегистрирован process_webauth_confirm')
+
+    dp.callback_query.register(
+        process_linktg_confirm,
+        F.data.startswith('linktg_confirm:') | F.data.in_(['linktg_deny']),
+    )
+    logger.debug('Зарегистрирован process_linktg_confirm')
 
     logger.debug('=== КОНЕЦ регистрации обработчиков start.py ===')

@@ -160,6 +160,23 @@ class LinkTelegramRequest(BaseModel):
         return self
 
 
+class TelegramLinkDeepLinkResponse(BaseModel):
+    token: str
+    bot_username: str
+    bot_link: str
+    expires_in: int
+
+
+class TelegramLinkPollRequest(BaseModel):
+    token: str = Field(..., min_length=16, max_length=128)
+
+
+class TelegramLinkPollResponse(BaseModel):
+    status: str
+    merge_token: str | None = None
+    message: str | None = None
+
+
 class MergePreviewSubscription(BaseModel):
     status: str
     is_trial: bool
@@ -708,6 +725,101 @@ async def link_telegram(
             error=resync_error,
         )
     return LinkCallbackResponse(success=True, message='linked')
+
+
+@router.post('/link/telegram/deeplink/request', response_model=TelegramLinkDeepLinkResponse)
+async def request_telegram_link_deeplink(
+    raw_request: Request,
+    user: User = Depends(get_current_cabinet_user),
+) -> TelegramLinkDeepLinkResponse:
+    """Request a deep link token to link Telegram via bot interaction."""
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'link_tg_deeplink_req', limit=10, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    if user.telegram_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Telegram is already linked to your account',
+        )
+
+    bot_username = settings.get_bot_username()
+    if not bot_username:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Telegram bot is not configured',
+        )
+
+    try:
+        from app.services.telegram_link_service import TG_LINK_TOKEN_TTL, create_telegram_link_token
+
+        token = await create_telegram_link_token(user.id)
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Service temporarily unavailable',
+        )
+
+    return TelegramLinkDeepLinkResponse(
+        token=token,
+        bot_username=bot_username,
+        bot_link=f'https://t.me/{bot_username}?start=linktg_{token}',
+        expires_in=TG_LINK_TOKEN_TTL,
+    )
+
+
+@router.post('/link/telegram/deeplink/poll', response_model=TelegramLinkPollResponse)
+async def poll_telegram_link_deeplink(
+    request: TelegramLinkPollRequest,
+    raw_request: Request,
+    user: User = Depends(get_current_cabinet_user),
+) -> TelegramLinkPollResponse:
+    """Poll for completion of deep link Telegram linking."""
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'link_tg_deeplink_poll', limit=60, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    from app.services.telegram_link_service import get_telegram_link_token
+
+    data = await get_telegram_link_token(request.token)
+    if not data or data.get('user_id') != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail='Token expired or not found',
+        )
+
+    token_status = data.get('status')
+    if token_status == 'pending':
+        return TelegramLinkPollResponse(
+            status='pending',
+            message='Waiting for confirmation in Telegram',
+        )
+
+    if token_status == 'merge_required':
+        return TelegramLinkPollResponse(
+            status='merge_required',
+            merge_token=data.get('merge_token'),
+            message='Account merge required',
+        )
+
+    if token_status == 'linked':
+        return TelegramLinkPollResponse(
+            status='linked',
+            message='Telegram linked successfully',
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail='Invalid token state',
+    )
 
 
 # ---------------------------------------------------------------------------

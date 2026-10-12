@@ -263,11 +263,7 @@ def format_whitelist_traffic(used_bytes: int | None, limit_gb: int | None) -> st
 
     used_gb = max(0, used_bytes or 0) / (1024**3)
     percent = min(100.0, used_gb / limit * 100)
-    filled = min(10, int(round(percent / 100 * 10)))
-    if filled == 0 and used_gb > 0:
-        filled = 1
-    bar = '[' + '█' * filled + '░' * (10 - filled) + ']'
-    return f'{used_gb:.1f} / {limit} ГБ {bar} {percent:.0f}%'
+    return f'{used_gb:.1f} / {limit} ГБ ({percent:.0f}%)'
 
 
 def format_boolean(value: bool, language: str = 'ru') -> str:

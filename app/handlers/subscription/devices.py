@@ -95,7 +95,7 @@ async def get_current_devices_detailed(db_user: User, subscription=None) -> dict
                 total_devices = devices_info.get('total', 0)
                 devices_list = devices_info.get('devices', [])
 
-                return {'count': total_devices, 'devices': devices_list[:5]}
+                return {'count': total_devices, 'devices': devices_list}
             return {'count': 0, 'devices': []}
 
     except Exception as e:

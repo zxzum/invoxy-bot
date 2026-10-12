@@ -2368,6 +2368,11 @@ async def update_user_subscription(
         )
 
     if request.action == 'reset_whitelist_used':
+        from app.database.crud.subscription import capture_subscription_snapshot
+
+        subscription._previous_state = capture_subscription_snapshot(subscription)
+        old_used_bytes = getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0
+        cleared_gb = round(old_used_bytes / (1024**3), 2)
         subscription.whitelist_traffic_used_bytes = 0
         subscription.updated_at = datetime.now(UTC)
         await db.commit()
@@ -2375,6 +2380,29 @@ async def update_user_subscription(
 
         # Sync effective squads to panel immediately (quota restored, squad should re-attach)
         await _sync_whitelist_squads_to_panel(subscription, user)
+
+        try:
+            from app.bot_factory import create_bot
+            from app.services.admin_notification_service import AdminNotificationService
+
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                bot = create_bot()
+                try:
+                    notif_service = AdminNotificationService(bot)
+                    await notif_service.send_traffic_reset_notification(
+                        db=db,
+                        user=user,
+                        subscription=subscription,
+                        reset_scope='lte',
+                        cleared_gb=cleared_gb,
+                        price_kopeks=0,
+                        payment_method='Администратор',
+                        admin_user=admin,
+                    )
+                finally:
+                    await bot.session.close()
+        except Exception as admin_err:
+            logger.warning('Failed to send admin notification for admin whitelist reset', error=admin_err)
 
         logger.info(
             'Admin reset whitelist traffic usage for user',
@@ -2454,6 +2482,11 @@ async def update_user_subscription(
         )
 
     if request.action in ('reset_main_traffic', 'reset_traffic'):
+        from app.database.crud.subscription import capture_subscription_snapshot
+
+        subscription._previous_state = capture_subscription_snapshot(subscription)
+        cleared_gb = getattr(subscription, 'traffic_used_gb', 0.0) or 0.0
+
         sub_panel_id = getattr(subscription, 'remnawave_id', None)
         panel_user_id = (
             sub_panel_id
@@ -2484,6 +2517,30 @@ async def update_user_subscription(
         subscription.updated_at = datetime.now(UTC)
         await db.commit()
         await db.refresh(subscription)
+
+        try:
+            from app.bot_factory import create_bot
+            from app.services.admin_notification_service import AdminNotificationService
+
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                bot = create_bot()
+                try:
+                    notif_service = AdminNotificationService(bot)
+                    await notif_service.send_traffic_reset_notification(
+                        db=db,
+                        user=user,
+                        subscription=subscription,
+                        reset_scope='admin',
+                        cleared_gb=cleared_gb,
+                        price_kopeks=0,
+                        payment_method='Администратор',
+                        admin_user=admin,
+                    )
+                finally:
+                    await bot.session.close()
+        except Exception as admin_err:
+            logger.warning('Failed to send admin notification for admin traffic reset', error=admin_err)
+
         logger.info(
             'Admin reset main traffic for user',
             admin_id=admin.id,

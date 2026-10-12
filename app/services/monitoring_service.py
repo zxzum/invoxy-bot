@@ -2557,6 +2557,24 @@ class MonitoringService:
                             f'использовано {traffic_used:.1f} из {traffic_limit} ГБ.'
                         )
 
+                    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+                    markup = None
+                    if scope == 'whitelist':
+                        btn_text = '🔄 Сбросить расход LTE' if not language.lower().startswith('en') else '🔄 Reset White Internet'
+                        markup = InlineKeyboardMarkup(
+                            inline_keyboard=[
+                                [InlineKeyboardButton(text=btn_text, callback_data=f'st:{subscription.id}')]
+                            ]
+                        )
+                    else:
+                        btn_text = '📈 Докупить трафик' if not language.lower().startswith('en') else '📈 Add traffic'
+                        markup = InlineKeyboardMarkup(
+                            inline_keyboard=[
+                                [InlineKeyboardButton(text=btn_text, callback_data=f'st:{subscription.id}')]
+                            ]
+                        )
+
                     success = await notification_delivery_service.send_notification(
                         user=user,
                         notification_type=NotificationType.WEBHOOK_SUB_BANDWIDTH_THRESHOLD,
@@ -2569,6 +2587,7 @@ class MonitoringService:
                         },
                         bot=self.bot,
                         telegram_message=message,
+                        telegram_markup=markup,
                     )
                     if success:
                         for reached_threshold in (50, 75, 90):

@@ -256,16 +256,16 @@ async def show_balance_menu(callback: types.CallbackQuery, db_user: User, db: As
 
     reply_markup = get_balance_keyboard(db_user.language)
 
-    try:
-        if callback.message and callback.message.text:
-            await callback.message.edit_text(balance_text, reply_markup=reply_markup)
-        elif callback.message and callback.message.caption:
-            await callback.message.edit_caption(balance_text, reply_markup=reply_markup)
-        else:
-            await callback.message.answer(balance_text, reply_markup=reply_markup)
-    except TelegramBadRequest as error:
-        logger.warning('Failed to edit balance message, sending a new one instead', error=error)
-        await callback.message.answer(balance_text, reply_markup=reply_markup)
+    from app.utils.photo_message import edit_or_answer_photo
+    from app.utils.screen_banners import get_screen_banner
+
+    await edit_or_answer_photo(
+        callback,
+        balance_text,
+        reply_markup,
+        media=get_screen_banner('main'),
+        media_kind='main',
+    )
     await callback.answer()
 
 

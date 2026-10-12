@@ -418,7 +418,7 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
         '<tr>'
         f'<th>{_rich_text(texts.t("MAIN_MENU_RICH_TABLE_TARIFF", "Тариф"))}</th>'
         f'<th>{_rich_text(texts.t("MAIN_MENU_RICH_TABLE_STATUS", "Статус"))}</th>'
-        f'<th>{_rich_text(texts.t("MAIN_MENU_RICH_TABLE_UNTIL", "Действует до"))}</th>'
+        f'<th>{_rich_text(texts.t("MAIN_MENU_RICH_TABLE_UNTIL", "Истекает"))}</th>'
         '</tr>'
     )
     tariff_fallback = texts.t('MAIN_MENU_RICH_TARIFF_FALLBACK', 'Подписка')
@@ -432,8 +432,8 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
         end_date_text = format_local_datetime(end_date, '%d.%m.%Y') if end_date else ''
         if end_date and end_date > current_time and actual_status in {'active', 'trial', 'limited'}:
             days_left = (end_date - current_time).days
-            days_text = texts.t('MAIN_MENU_RICH_DAYS_LEFT', 'осталось {days} дн.').replace('{days}', str(days_left))
-            until_cell = f'{_tg_time(end_date, "d", end_date_text)} ({_rich_text(days_text)})'
+            days_text = texts.t('MAIN_MENU_RICH_DAYS_LEFT', '{days} дн.').replace('{days}', str(days_left))
+            until_cell = f'{_tg_time(end_date, "d", end_date_text)} ({days_text})'
         elif end_date:
             until_cell = _tg_time(end_date, 'd', end_date_text)
         else:
@@ -453,7 +453,7 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
                 getattr(subscription, 'whitelist_traffic_limit_gb', 0),
             )
             if whitelist_traffic:
-                usage_parts.append(f'<b>🔐 LTE сервера: {html.escape(whitelist_traffic)}</b>')
+                usage_parts.append(f'<b>🔐 Белые списки: {html.escape(whitelist_traffic)}</b>')
             device_limit = getattr(subscription, 'device_limit', None)
             if device_limit is not None:
                 # 0 — безлимит (HWID выключен), а не «нет устройств»: строку не прячем
@@ -521,7 +521,7 @@ async def _build_single_subscription_block(user: User, texts, db: AsyncSession) 
             getattr(subscription, 'whitelist_traffic_limit_gb', 0),
         )
         if whitelist_traffic:
-            lines.append(f'<b>🔐 LTE сервера: {html.escape(whitelist_traffic)}</b>')
+            lines.append(f'<b>🔐 Белые списки: {html.escape(whitelist_traffic)}</b>')
         device_limit = getattr(subscription, 'device_limit', None)
         if device_limit is not None:
             devices_template = texts.t('MAIN_MENU_RICH_DEVICES', '📱 Устройства: {devices}')

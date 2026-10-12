@@ -104,6 +104,8 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
     if subscription is None:
         return
 
+    is_from_main_menu = bool(callback.data and (callback.data == 'buy_traffic' or callback.data.startswith('buy_traffic:')))
+
     if not subscription or subscription.is_trial:
         await callback.answer(
             texts.t('PAID_FEATURE_ONLY', '⚠ Эта функция доступна только для платных подписок'),
@@ -158,7 +160,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                 period_hint_days,
             )
             price_rubles = discounted_price // 100
-            back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'my_subscriptions'
+            back_cb = 'back_to_menu' if is_from_main_menu else (f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'my_subscriptions')
 
             if max_per_month > 0 and remaining_this_month <= 0:
                 text = (
@@ -210,11 +212,12 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                 f'• Осталось сбросов в этом месяце: <b>{remaining_this_month} из {max_per_month}</b>'
             )
 
+            confirm_cb = f'confirm_lte_reset:{sub_id}:menu' if is_from_main_menu else f'confirm_lte_reset:{sub_id}'
             buttons = [
                 [
                     types.InlineKeyboardButton(
                         text=f'Понятно, сбросить за {price_rubles} ₽',
-                        callback_data=f'confirm_lte_reset:{sub_id}',
+                        callback_data=confirm_cb,
                     )
                 ],
                 [types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
@@ -239,7 +242,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
 
         purchases_this_month = await count_monthly_traffic_purchases(db, subscription.id)
         max_topup_per_month = getattr(tariff, 'traffic_topup_max_per_month', 0) or 0
-        back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'my_subscriptions'
+        back_cb = 'back_to_menu' if is_from_main_menu else (f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'my_subscriptions')
 
         if max_topup_per_month > 0 and purchases_this_month >= max_topup_per_month:
             text = (
@@ -506,6 +509,10 @@ async def confirm_reset_traffic(
             await callback.answer('⌛ Ошибка списания средств', show_alert=True)
             return
 
+        from app.database.crud.subscription import capture_subscription_snapshot
+
+        subscription._previous_state = capture_subscription_snapshot(subscription)
+        cleared_gb = getattr(subscription, 'traffic_used_gb', 0.0) or 0.0
         subscription.traffic_used_gb = 0.0
         subscription.updated_at = datetime.now(UTC)
         await db.commit()
@@ -554,6 +561,23 @@ async def confirm_reset_traffic(
 
         await db.refresh(db_user)
         await db.refresh(subscription)
+
+        try:
+            from app.services.admin_notification_service import AdminNotificationService
+
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                notif_service = AdminNotificationService(callback.bot)
+                await notif_service.send_traffic_reset_notification(
+                    db=db,
+                    user=db_user,
+                    subscription=subscription,
+                    reset_scope='regular',
+                    cleared_gb=cleared_gb,
+                    price_kopeks=reset_price,
+                    payment_method='Баланс (Telegram Bot)',
+                )
+        except Exception as admin_err:
+            logger.warning('Failed to send admin notification for bot main traffic reset', error=admin_err)
 
         await callback.message.edit_text(
             f'✅ Трафик успешно сброшен!\n\n'
@@ -703,7 +727,26 @@ async def handle_confirm_lte_reset(
         await db.refresh(db_user)
         await db.refresh(subscription)
 
-        back_cb = f'sm:{subscription.id}' if settings.is_multi_tariff_enabled() else 'my_subscriptions'
+        try:
+            from app.services.admin_notification_service import AdminNotificationService
+
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                notif_service = AdminNotificationService(callback.bot)
+                await notif_service.send_traffic_reset_notification(
+                    db=db,
+                    user=db_user,
+                    subscription=subscription,
+                    reset_scope='lte',
+                    cleared_gb=res.get('cleared_gb', will_clear_gb),
+                    price_kopeks=price,
+                    payment_method='Баланс (Telegram Bot)',
+                )
+        except Exception as admin_err:
+            logger.warning('Failed to send admin notification for bot lte traffic reset', error=admin_err)
+
+        parts = callback.data.split(':') if callback.data else []
+        is_from_menu = len(parts) > 2 and parts[2] == 'menu'
+        back_cb = 'back_to_menu' if is_from_menu else (f'sm:{subscription.id}' if settings.is_multi_tariff_enabled() else 'my_subscriptions')
         buttons = [[types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)]]
 
         await callback.message.edit_text(

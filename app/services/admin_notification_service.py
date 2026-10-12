@@ -188,7 +188,7 @@ class AdminNotificationService:
             return None
 
     def _get_user_display(self, user: User) -> str:
-        first_name = getattr(user, 'first_name', '') or ''
+        first_name = getattr(user, 'first_name', '') or getattr(user, 'full_name', '') or ''
         if first_name:
             return html.escape(first_name)
 
@@ -517,6 +517,360 @@ class AdminNotificationService:
             pass
         return None
 
+    async def _get_tariff_name_by_id(self, db: AsyncSession | None, tariff_id: int | None) -> str | None:
+        """Получает название тарифа по tariff_id."""
+        if not tariff_id or not db:
+            return None
+        try:
+            from app.database.crud.tariff import get_tariff_by_id
+
+            tariff = await get_tariff_by_id(db, tariff_id)
+            if tariff and tariff.name:
+                return html.escape(tariff.name)
+        except Exception:
+            pass
+        return None
+
+    def _build_subscription_diff_block_sync(
+        self,
+        subscription: Any,
+        old_state: dict[str, Any] | None,
+        period_days: int | None = None,
+        old_tariff_name: str | None = None,
+        new_tariff_name: str | None = None,
+    ) -> list[str]:
+        lines: list[str] = []
+        if not old_state:
+            lines.append('🔍 <b>ПАРАМЕТРЫ ПОДПИСКИ:</b>')
+            limit_gb = getattr(subscription, 'traffic_limit_gb', None)
+            lines.append(f'• 📊 Лимит трафика: <b>{self._format_traffic(limit_gb)}</b>')
+            wl_limit = getattr(subscription, 'whitelist_traffic_limit_gb', 0) or 0
+            if wl_limit > 0:
+                lines.append(f'• 🛡️ Лимит LTE: <b>{wl_limit} ГБ</b>')
+            end_date = getattr(subscription, 'end_date', None)
+            if end_date:
+                lines.append(
+                    f'• 📅 Срок: до <b>{format_local_datetime(end_date, "%d.%m.%Y")}</b>'
+                    + (f' ({period_days} дн.)' if period_days else '')
+                )
+            dev_limit = getattr(subscription, 'device_limit', None)
+            if dev_limit:
+                lines.append(f'• 📱 Устройства: <b>{dev_limit}</b>')
+            status = getattr(subscription, 'status', None)
+            if status:
+                lines.append(f'• 🏷️ Статус: <b>{status}</b>')
+            return lines
+
+        lines.append('🔍 <b>ЧТО ИЗМЕНИЛОСЬ:</b>')
+
+        # Тариф
+        old_tid = old_state.get('tariff_id')
+        new_tid = getattr(subscription, 'tariff_id', None)
+        if old_tariff_name or new_tariff_name or (old_tid != new_tid):
+            old_t_display = old_tariff_name or (f'ID {old_tid}' if old_tid else 'Без тарифа')
+            new_t_display = new_tariff_name or (f'ID {new_tid}' if new_tid else 'Без тарифа')
+            if old_t_display != new_t_display:
+                lines.append(f'• 🏷️ Тариф: <b>{old_t_display}</b> → <b>{new_t_display}</b>')
+
+        # Лимит трафика
+        old_limit = old_state.get('traffic_limit_gb')
+        new_limit = getattr(subscription, 'traffic_limit_gb', None)
+        if old_limit != new_limit:
+            lines.append(
+                f'• 📊 Лимит трафика: <b>{self._format_traffic(old_limit)} → {self._format_traffic(new_limit)}</b>'
+            )
+        elif new_limit is not None:
+            lines.append(f'• 📊 Лимит трафика: <b>{self._format_traffic(new_limit)}</b>')
+
+        # Лимит LTE / Whitelist
+        old_wl = old_state.get('whitelist_traffic_limit_gb', 0) or 0
+        new_wl = getattr(subscription, 'whitelist_traffic_limit_gb', 0) or 0
+        if old_wl != new_wl:
+            lines.append(f'• 🛡️ Лимит LTE: <b>{old_wl} ГБ → {new_wl} ГБ</b>')
+        elif new_wl > 0:
+            lines.append(f'• 🛡️ Лимит LTE: <b>{new_wl} ГБ</b>')
+
+        # Расход трафика
+        old_used = round(float(old_state.get('traffic_used_gb', 0.0) or 0.0), 2)
+        new_used = round(float(getattr(subscription, 'traffic_used_gb', 0.0) or 0.0), 2)
+        if old_used > 0 and new_used == 0.0:
+            lines.append(f'• 📉 Расход трафика: <b>{old_used} ГБ → 0.0 ГБ</b> (обнулён)')
+        elif old_used != new_used:
+            lines.append(f'• 📉 Расход трафика: <b>{old_used} ГБ → {new_used} ГБ</b>')
+
+        # Расход LTE
+        old_wl_bytes = old_state.get('whitelist_traffic_used_bytes', 0) or 0
+        new_wl_bytes = getattr(subscription, 'whitelist_traffic_used_bytes', 0) or 0
+        if old_wl_bytes > 0 and new_wl_bytes == 0:
+            lines.append(f'• 📉 Расход LTE: <b>{round(old_wl_bytes / (1024**3), 2)} ГБ → 0.0 ГБ</b> (обнулён)')
+        elif old_wl_bytes != new_wl_bytes and (old_wl_bytes > 0 or new_wl_bytes > 0):
+            lines.append(
+                f'• 📉 Расход LTE: <b>{round(old_wl_bytes / (1024**3), 2)} ГБ → {round(new_wl_bytes / (1024**3), 2)} ГБ</b>'
+            )
+
+        # Срок действия
+        old_end = old_state.get('end_date')
+        new_end = getattr(subscription, 'end_date', None)
+        old_end_str = format_local_datetime(old_end, '%d.%m.%Y') if old_end else '—'
+        new_end_str = format_local_datetime(new_end, '%d.%m.%Y') if new_end else '—'
+        if old_end and new_end and old_end != new_end:
+            days_suffix = f' (+{period_days} дн.)' if period_days else ''
+            lines.append(f'• 📅 Срок: <b>до {old_end_str} → до {new_end_str}</b>{days_suffix}')
+        elif new_end:
+            days_suffix = f' ({period_days} дн.)' if period_days else ''
+            lines.append(f'• 📅 Срок: <b>до {new_end_str}</b>{days_suffix}')
+
+        # Статус
+        old_status = old_state.get('status')
+        new_status = getattr(subscription, 'status', None)
+        if old_status != new_status:
+            lines.append(f'• 🏷️ Статус: <code>{old_status}</code> → <b>{new_status}</b>')
+        elif new_status:
+            lines.append(f'• 🏷️ Статус: <b>{new_status}</b>')
+
+        # Триал
+        old_trial = old_state.get('is_trial', False)
+        new_trial = getattr(subscription, 'is_trial', False)
+        if old_trial and not new_trial:
+            lines.append('• 🎯 Триал: <b>Да → Нет (конвертирован)</b>')
+
+        # Устройства
+        old_dev = old_state.get('device_limit')
+        new_dev = getattr(subscription, 'device_limit', None)
+        if old_dev and new_dev and old_dev != new_dev:
+            lines.append(f'• 📱 Устройства: <b>{old_dev} → {new_dev}</b>')
+
+        return lines
+
+    async def _build_subscription_diff_block(
+        self,
+        db: AsyncSession | None,
+        subscription: Any,
+        old_state: dict[str, Any] | None,
+        period_days: int | None = None,
+        current_tariff_name: str | None = None,
+    ) -> list[str]:
+        old_tariff_name = None
+        new_tariff_name = current_tariff_name
+        if old_state and old_state.get('tariff_id'):
+            old_tariff_name = await self._get_tariff_name_by_id(db, old_state.get('tariff_id'))
+        if not new_tariff_name and getattr(subscription, 'tariff_id', None):
+            new_tariff_name = await self._get_tariff_name_by_id(db, getattr(subscription, 'tariff_id', None))
+
+        return self._build_subscription_diff_block_sync(
+            subscription=subscription,
+            old_state=old_state,
+            period_days=period_days,
+            old_tariff_name=old_tariff_name,
+            new_tariff_name=new_tariff_name,
+        )
+
+    async def _verify_remnawave_state(self, subscription: Any) -> dict[str, Any] | None:
+        """Fetch current user state from RemnaWave panel with a strict timeout."""
+        try:
+            from app.services.remnawave_service import RemnaWaveService
+
+            remnawave = RemnaWaveService()
+            if not getattr(remnawave, 'is_configured', False):
+                return None
+            panel_id = getattr(subscription, 'remnawave_id', None)
+            short_uuid = getattr(subscription, 'remnawave_short_uuid', None)
+            if not panel_id and not short_uuid:
+                return None
+
+            async with asyncio.timeout(3.5):
+                async with remnawave.get_api_client() as api:
+                    panel_user = None
+                    if panel_id:
+                        try:
+                            panel_user = await api.get_user_by_id(panel_id)
+                        except Exception:
+                            pass
+                    if not panel_user and short_uuid:
+                        try:
+                            panel_user = await api.get_user_by_short_uuid(short_uuid)
+                        except Exception:
+                            pass
+                    if panel_user:
+                        return {
+                            'id': getattr(panel_user, 'id', None),
+                            'status': getattr(panel_user, 'status', None),
+                            'traffic_limit_bytes': getattr(panel_user, 'traffic_limit_bytes', None),
+                            'used_traffic_bytes': getattr(panel_user, 'used_traffic_bytes', None),
+                            'email': getattr(panel_user, 'email', None),
+                        }
+        except Exception as e:
+            logger.debug('Auditing RemnaWave user skipped/failed', error=str(e))
+        return None
+
+    def _format_remnawave_verification(
+        self,
+        subscription: Any,
+        rw_info: dict[str, Any] | None,
+    ) -> list[str]:
+        lines: list[str] = []
+        lines.append('📡 <b>СИНХРОНИЗАЦИЯ REMNAWAVE:</b>')
+        panel_id = getattr(subscription, 'remnawave_id', None)
+        short_uuid = getattr(subscription, 'remnawave_short_uuid', None)
+        id_display = f'ID {panel_id}' if panel_id else 'ID —'
+        if short_uuid:
+            id_display += f' ({short_uuid})'
+        lines.append(f'🔑 Панель: <code>{id_display}</code>')
+
+        if not rw_info:
+            lines.append('ℹ️ Статус панели: данные не получены (офлайн/таймаут)')
+            return lines
+
+        panel_status = str(rw_info.get('status') or 'UNKNOWN').upper()
+        panel_bytes = int(rw_info.get('traffic_limit_bytes') or 0)
+        panel_limit_gb = round(panel_bytes / (1024**3), 1)
+
+        expected_gb = getattr(subscription, 'traffic_limit_gb', 0) or 0
+        expected_bytes = expected_gb * 1024**3
+
+        # Сверка лимита: если ожидается лимит > 0 и он не совпадает с панелью
+        if expected_gb > 0 and panel_bytes != expected_bytes:
+            lines.append(
+                f'⚠️ <b>ВНИМАНИЕ: РАССИНХРОН ЛИМИТА!</b>\n'
+                f'  • В БД: <b>{expected_gb} ГБ</b>\n'
+                f'  • В панели: <b>{panel_limit_gb} ГБ</b>\n'
+                f'  • Статус панели: <b>{panel_status}</b>'
+            )
+        else:
+            lines.append(
+                f'✅ Лимит в панели: <b>{panel_limit_gb} ГБ</b> (совпадает с БД)\n'
+                f'✅ Статус в панели: <b>{panel_status}</b>'
+            )
+        return lines
+
+    def _build_admin_audit_keyboard(self, user: Any, subscription: Any) -> types.InlineKeyboardMarkup | None:
+        buttons: list[types.InlineKeyboardButton] = []
+        admin_base = (settings.CABINET_URL or '').rstrip('/')
+        user_id = getattr(user, 'id', None)
+        if admin_base and user_id:
+            buttons.append(
+                types.InlineKeyboardButton(
+                    text='🔗 Открыть в админке',
+                    url=f'{admin_base}/admin/users/{user_id}',
+                )
+            )
+        panel_base = (settings.REMNAWAVE_API_URL or '').rstrip('/').removesuffix('/api')
+        panel_id = getattr(subscription, 'remnawave_id', None)
+        if panel_base and panel_id:
+            buttons.append(
+                types.InlineKeyboardButton(
+                    text='⚙️ Панель RemnaWave',
+                    url=f'{panel_base}/users/{panel_id}',
+                )
+            )
+        if buttons:
+            return types.InlineKeyboardMarkup(inline_keyboard=[[btn] for btn in buttons])
+        return None
+
+    async def send_traffic_reset_notification(
+        self,
+        db: AsyncSession,
+        user: Any,
+        subscription: Any,
+        *,
+        reset_scope: str,  # 'regular', 'whitelist' / 'lte', 'admin', 'topup'
+        cleared_gb: float,
+        price_kopeks: int = 0,
+        payment_method: str = 'Баланс',
+        transaction: Any = None,
+        old_state: dict[str, Any] | None = None,
+        admin_user: Any = None,
+    ) -> bool:
+        if not self._is_enabled():
+            return False
+
+        try:
+            if reset_scope == 'regular':
+                title = '🔄 СБРОС ОСНОВНОГО ТРАФИКА'
+            elif reset_scope in ('whitelist', 'lte'):
+                title = '🔄 СБРОС ТРАФИКА LTE (Белый интернет)'
+            elif reset_scope == 'topup':
+                title = '📈 ДОКУПКА ТРАФИКА'
+            elif reset_scope == 'admin':
+                admin_name = (
+                    getattr(admin_user, 'full_name', '')
+                    or getattr(admin_user, 'username', '')
+                    or f'Admin#{getattr(admin_user, "id", "")}'
+                )
+                title = f'⚙️ АДМИН-СБРОС ТРАФИКА ({admin_name})'
+            else:
+                title = '🔄 СБРОС ТРАФИКА'
+
+            tariff_name = await self._get_tariff_name(db, subscription)
+            user_display = self._get_user_display(user)
+            user_id_display = self._get_user_identifier_display(user)
+
+            lines = [
+                f'<b>{title}</b>',
+                '',
+                f'👤 {user_display} ({user_id_display})',
+            ]
+
+            username = getattr(user, 'username', None)
+            if username:
+                lines.append(f'📱 {format_username_link(username)}')
+
+            email = getattr(user, 'email', None)
+            if email:
+                lines.append(f'📧 {html.escape(email)}')
+
+            sub_id = getattr(subscription, 'id', '—')
+            lines.append(f'🆔 User: #{getattr(user, "id", "—")} | Подписка: #{sub_id}')
+
+            if tariff_name:
+                lines.append(f'🏷️ Тариф: <b>{tariff_name}</b> (ID {getattr(subscription, "tariff_id", "—")})')
+
+            lines.append('')
+            lines.append(f'📉 Сброшено расхода: <b>{cleared_gb:.2f} ГБ</b>')
+
+            if reset_scope in ('whitelist', 'lte'):
+                wl_limit = getattr(subscription, 'whitelist_traffic_limit_gb', 0)
+                lines.append(f'📊 Лимит LTE: <b>{self._format_traffic(wl_limit)}</b>')
+            else:
+                main_limit = getattr(subscription, 'traffic_limit_gb', 0)
+                lines.append(f'📊 Лимит тарифа: <b>{self._format_traffic(main_limit)}</b>')
+
+            lines.append('')
+            # RemnaWave verification
+            rw_info = await self._verify_remnawave_state(subscription)
+            lines.extend(self._format_remnawave_verification(subscription, rw_info))
+
+            lines.append('')
+            if price_kopeks > 0:
+                lines.append(f'💵 <b>{settings.format_price(price_kopeks)}</b> • {payment_method}')
+            else:
+                lines.append('💸 Бесплатно')
+
+            balance_kopeks = getattr(user, 'balance_kopeks', None)
+            if balance_kopeks is not None:
+                lines.append(f'💰 Баланс: {settings.format_price(balance_kopeks)}')
+
+            if transaction:
+                lines.append(f'🆔 #{getattr(transaction, "id", "")}')
+
+            lines.extend(
+                [
+                    '',
+                    f'<i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M")}</i>',
+                ]
+            )
+
+            keyboard = self._build_admin_audit_keyboard(user, subscription)
+            return await self._send_message(
+                '\n'.join(lines),
+                reply_markup=keyboard,
+                category=NotificationCategory.ADDONS,
+            )
+
+        except Exception as e:
+            logger.error('Ошибка отправки уведомления о сбросе трафика', error=e)
+            return False
+
     async def send_subscription_purchase_notification(
         self,
         db: AsyncSession,
@@ -527,6 +881,7 @@ class AdminNotificationService:
         was_trial_conversion: bool = False,
         amount_kopeks: int | None = None,
         purchase_type: str | None = None,  # 'first_purchase', 'renewal', 'tariff_switch', None (auto-detect)
+        old_state: dict[str, Any] | None = None,
     ) -> bool:
         try:
             total_amount = (
@@ -591,19 +946,40 @@ class AdminNotificationService:
             if username:
                 message_lines.append(f'📱 {format_username_link(username)}')
 
+            email = getattr(user, 'email', None)
+            if email:
+                message_lines.append(f'📧 {html.escape(email)}')
+
+            sub_id = getattr(subscription, 'id', '—')
+            user_pk = getattr(user, 'id', '—')
+            message_lines.append(f'🆔 User: #{user_pk} | Подписка: #{sub_id}')
             message_lines.append(f'📋 {user_status}')
 
             # Тариф (если есть)
             if tariff_name:
-                message_lines.append(f'🏷️ Тариф: <b>{tariff_name}</b>')
+                message_lines.append(f'🏷️ Тариф: <b>{tariff_name}</b> (ID {getattr(subscription, "tariff_id", "—")})')
+
+            # Блок ЧТО ИЗМЕНИЛОСЬ (DIFF)
+            resolved_old_state = (
+                old_state if old_state is not None else getattr(subscription, '_previous_state', None)
+            )
+            diff_lines = await self._build_subscription_diff_block(
+                db, subscription, resolved_old_state, period_days=period_days, current_tariff_name=tariff_name
+            )
+            if diff_lines:
+                message_lines.append('')
+                message_lines.extend(diff_lines)
+
+            # Блок REMNAWAVE СИНХРОНИЗАЦИЯ
+            rw_info = await self._verify_remnawave_state(subscription)
+            message_lines.append('')
+            message_lines.extend(self._format_remnawave_verification(subscription, rw_info))
 
             message_lines.extend(
                 [
                     '',
+                    f'🌐 Серверы: {servers_info}',
                     f'💵 <b>{settings.format_price(total_amount)}</b> • {payment_method}',
-                    f'📅 {period_days} дн. • до {format_local_datetime(subscription.end_date, "%d.%m.%Y")}',
-                    f'📊 {self._format_traffic(subscription.traffic_limit_gb)} • 📱 {subscription.device_limit} устр.',
-                    f'🌐 {servers_info}',
                 ]
             )
 
@@ -635,7 +1011,8 @@ class AdminNotificationService:
             else:
                 cat = NotificationCategory.PURCHASES
 
-            return await self._send_message('\n'.join(message_lines), category=cat)
+            keyboard = self._build_admin_audit_keyboard(user, subscription)
+            return await self._send_message('\n'.join(message_lines), reply_markup=keyboard, category=cat)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о покупке', error=e)
@@ -1754,10 +2131,13 @@ class AdminNotificationService:
 
         return method_names.get(payment_method, f'💳 {html.escape(payment_method)}')
 
-    def _format_traffic(self, traffic_gb: int) -> str:
+    def _format_traffic(self, traffic_gb: float | None) -> str:
+        if traffic_gb is None:
+            return '—'
         if traffic_gb == 0:
             return '∞ Безлимит'
-        return f'{traffic_gb} ГБ'
+        val = int(traffic_gb) if traffic_gb == int(traffic_gb) else round(float(traffic_gb), 2)
+        return f'{val} ГБ'
 
     def _get_subscription_status(self, subscription: Subscription | None) -> str:
         if not subscription:
@@ -2046,9 +2426,17 @@ class AdminNotificationService:
             if username:
                 message_lines.append(f'📱 {format_username_link(username)}')
 
+            email = getattr(user, 'email', None)
+            if email:
+                message_lines.append(f'📧 {html.escape(email)}')
+
+            sub_id = getattr(subscription, 'id', '—')
+            user_pk = getattr(user, 'id', '—')
+            message_lines.append(f'🆔 User: #{user_pk} | Подписка: #{sub_id}')
+
             # Тариф (если есть)
             if tariff_name:
-                message_lines.append(f'🏷️ Тариф: <b>{tariff_name}</b>')
+                message_lines.append(f'🏷️ Тариф: <b>{tariff_name}</b> (ID {getattr(subscription, "tariff_id", "—")})')
 
             message_lines.append('')
 
@@ -2072,6 +2460,11 @@ class AdminNotificationService:
             else:
                 message_lines.append('💸 Бесплатно')
 
+            # Блок REMNAWAVE СИНХРОНИЗАЦИЯ
+            rw_info = await self._verify_remnawave_state(subscription)
+            message_lines.append('')
+            message_lines.extend(self._format_remnawave_verification(subscription, rw_info))
+
             message_lines.extend(
                 [
                     '',
@@ -2093,7 +2486,10 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.ADDONS)
+            keyboard = self._build_admin_audit_keyboard(user, subscription)
+            return await self._send_message(
+                '\n'.join(message_lines), reply_markup=keyboard, category=NotificationCategory.ADDONS
+            )
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления об изменении подписки', error=e)
