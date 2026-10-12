@@ -100,7 +100,7 @@ async def check_migration_eligibility(
     for sub in subscriptions:
         if sub.get('status') != 'ACTIVE':
             continue
-        if sub.get('isTrial'):
+        if sub.get('isTrial') or sub.get('trialId'):
             continue
         tariff_name = (sub.get('tariffName') or '').strip()
         if not tariff_name or tariff_name.lower() in trial_names:
@@ -207,7 +207,11 @@ async def execute_user_migration(
                     subscription_url=sub.subscription_url or '',
                     message='Ваша подписка уже успешно перенесена в Invoxy VPN!',
                 )
-        raise ValueError('Подписка в Лазейка ВПН не найдена или уже перенесена.')
+        raise ValueError(
+            'Активная оплаченная подписка в Лазейка ВПН не найдена или уже перенесена. '
+            'Пробный период не переносится. Оформите платную подписку в Лазейке, '
+            'затем перенесите её в Invoxy с бонусом +5 дней.'
+        )
 
     panel_user_id = int(candidate.panel_user_id)
     logger.info(

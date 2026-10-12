@@ -328,6 +328,81 @@ async def test_check_migration_rejects_trial_subscriptions():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('trial_fields', [
+    {'tariffName': ''},
+    {'tariffName': 'Пробная подписка'},
+    {'tariffName': 'Стандарт', 'isTrial': True},
+    {'tariffName': 'Стандарт', 'trialId': 'trial_1'},
+])
+async def test_trial_cannot_be_offered_or_executed(trial_fields):
+    """A direct execute request must not bypass the automatic trial exclusion."""
+    from fastapi import HTTPException
+
+    from app.cabinet.routes.migration import check_migration, execute_migration_endpoint
+    from app.handlers.migration import check_and_prompt_lazeika_migration
+
+    db = AsyncMock()
+    user = SimpleNamespace(id=42, telegram_id=123456789, email='user@example.com')
+    message = MagicMock()
+    message.answer = AsyncMock()
+    context = {
+        'found': True,
+        'client': {'id': 'client_1'},
+        'subscriptions': [{
+            'id': 'subscription_1',
+            'status': 'ACTIVE',
+            'expiresAt': (datetime.now(UTC) + timedelta(days=2)).isoformat(),
+            'remnawaveUuid': '183',
+            'trafficLimitBytes': '10737418240',
+            **trial_fields,
+        }],
+    }
+    with (
+        patch.object(LazeikaClient, 'get_client_context', AsyncMock(return_value=context)),
+        patch('app.services.migration.migration_service.get_active_subscriptions_by_user_id',
+              AsyncMock(return_value=[])),
+        patch('app.services.migration.migration_service.RemnaWaveService') as panel,
+        patch.object(LazeikaClient, 'annul_subscription', AsyncMock()) as annul,
+    ):
+        assert await check_migration(user, db) == {'eligible': False}
+        assert not await check_and_prompt_lazeika_migration(message, AsyncMock(), db, user=user)
+        message.answer.assert_not_awaited()
+        with pytest.raises(HTTPException) as error:
+            await execute_migration_endpoint(user, db)
+        assert error.value.status_code == 400
+        assert 'Пробный период не переносится' in error.value.detail
+        panel.assert_not_called()
+        annul.assert_not_awaited()
+        db.commit.assert_not_awaited()
+        db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_paid_subscription_after_trial_gets_bonus():
+    """A previous trial must not prevent transferring a subsequent paid subscription."""
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.first.return_value = None
+    db.execute.return_value = result
+    context = {
+        'found': True,
+        'client': {'id': 'client_1'},
+        'subscriptions': [
+            {'id': 'trial_1', 'status': 'ACTIVE', 'tariffName': 'Стандарт', 'trialId': 'trial_1'},
+            {
+                'id': 'paid_1', 'status': 'ACTIVE', 'tariffName': 'Стандарт', 'trialId': None,
+                'isTrial': False, 'remnawaveUuid': '183', 'trafficLimitBytes': '10737418240',
+                'expiresAt': (datetime.now(UTC) + timedelta(days=10)).isoformat(),
+            },
+        ],
+    }
+    with patch.object(LazeikaClient, 'get_client_context', AsyncMock(return_value=context)):
+        candidate = await check_migration_eligibility(db, telegram_id=123456789)
+    assert candidate.subscription_id == 'paid_1'
+    assert candidate.bonus_days == 5
+
+
+@pytest.mark.asyncio
 async def test_check_migration_eligibility_squad_empty_traffic_limit_bytes():
     """Squad tariffs with empty trafficLimitBytes but valid localTrafficLimitBytes must be accepted."""
     mock_db = AsyncMock()
@@ -468,6 +543,3 @@ async def test_notify_all_eligible_trial_users_flow():
         assert stats['eligible_found'] == 1
         assert stats['notified_success'] == 1
         assert stats['errors'] == 0
-
-
-

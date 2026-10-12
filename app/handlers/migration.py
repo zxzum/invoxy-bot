@@ -1,7 +1,7 @@
 """Telegram bot handlers for migrating users from Lazeika VPN (temporary)."""
 
 import structlog
-from aiogram import Bot, F, Router, types
+from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +13,6 @@ from app.services.migration import (
     check_migration_eligibility,
     execute_user_migration,
     get_migration_offer_keyboard,
-    send_migration_notification,
 )
 
 
@@ -204,7 +203,9 @@ async def handle_migration_execute(
         )
         info_text = (
             'ℹ️ <b>Подписка не найдена или уже перенесена</b>\n\n'
-            'Активная подписка в Лазейка ВПН не обнаружена, либо перенос уже был завершён ранее.\n\n'
+            'Активная оплаченная подписка в Лазейка ВПН не обнаружена, либо перенос уже был завершён ранее.\n\n'
+            'Пробный период не переносится. Оформите платную подписку в Лазейке, '
+            'затем перенесите её в Invoxy с бонусом +5 дней.\n\n'
             'Если вы считаете, что произошла ошибка, обратитесь в нашу поддержку.'
         )
         await state.clear()
@@ -283,7 +284,8 @@ async def handle_migration_check_callback(
     candidate = await check_migration_eligibility(db, telegram_id=telegram_id, user=user)
     if not candidate:
         await callback.answer(
-            'ℹ️ Активная подписка в Лазейка ВПН для вашего аккаунта не найдена или уже перенесена.',
+            'Оплаченная подписка не найдена или уже перенесена. Триал не переносится. '
+            'Оформите платную подписку в Лазейке и перенесите её с бонусом +5 дней.',
             show_alert=True,
         )
         return
@@ -310,7 +312,9 @@ async def handle_migration_command(
     if not candidate:
         await message.answer(
             'ℹ️ <b>Перенос из Лазейка ВПН</b>\n\n'
-            'Активная подписка в Лазейка ВПН для вашего Telegram ID не найдена, либо уже была перенесена ранее.\n\n'
+            'Активная оплаченная подписка в Лазейка ВПН для вашего Telegram ID не найдена, либо уже была перенесена ранее.\n\n'
+            'Пробный период не переносится. Оформите платную подписку в Лазейке, '
+            'затем перенесите её в Invoxy с бонусом +5 дней.\n\n'
             'Если вы считаете, что произошла ошибка, пожалуйста, обратитесь в поддержку.',
             parse_mode='HTML',
         )
@@ -326,4 +330,3 @@ async def handle_migration_command(
 
 def register_handlers(dp) -> None:
     dp.include_router(migration_router)
-
