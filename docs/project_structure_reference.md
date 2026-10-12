@@ -13,6 +13,7 @@
 - `.env.example` — файл
 - `.github/`
 - `.gitignore` — файл
+- `.invoxy-upstream.json` — файл
 - `.python-version` — файл
 - `.release-please-manifest.json` — файл
 - `AGENTS.md` — файл
