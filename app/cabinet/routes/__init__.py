@@ -68,6 +68,7 @@ from .partner_application import router as partner_application_router
 from .polls import router as polls_router
 from .promo import router as promo_router
 from .promocode import router as promocode_router
+from .public_catalog import router as public_catalog_router
 from .referral import router as referral_router
 from .site_verification import router as site_verification_router
 from .subscription import router as subscription_router
@@ -91,6 +92,7 @@ router = APIRouter(prefix='/cabinet', tags=['Cabinet'], redirect_slashes=False)
 # Final path becomes `/cabinet/public/site-verification`. Has its own
 # `/public` prefix so it's clearly separated from authenticated routes.
 router.include_router(site_verification_router)
+router.include_router(public_catalog_router)
 # Отписка от рассылок — тоже без авторизации: по ссылке ходят почтовые клиенты.
 router.include_router(unsubscribe_router)
 

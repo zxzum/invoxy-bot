@@ -987,6 +987,10 @@ async def get_devices(
                         'platform': platform,
                         'device_model': model,
                         'created_at': created_at,
+                        'registered_at': device.get('createdAt'),
+                        'last_seen_at': device.get('updatedAt') or device.get('lastSeen'),
+                        'os_version': device.get('osVersion'),
+                        'user_agent': device.get('userAgent'),
                         # Локальное имя, заданное юзером. None — алиаса нет,
                         # фронт фоллбэчит на platform/device_model.
                         'local_name': aliases.get(hwid) or None,

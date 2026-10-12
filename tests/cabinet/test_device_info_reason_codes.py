@@ -159,3 +159,36 @@ def test_every_unavailable_answer_carries_a_code():
         if not any("'reason_code'" in line for line in lines[i + 1 : i + 4])
     ]
     assert without_code == [], without_code
+
+
+@pytest.mark.asyncio
+async def test_device_list_preserves_client_metadata(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.cabinet.routes.subscription_modules import devices as route
+    from app.services.remnawave_service import RemnaWaveService
+
+    subscription = SimpleNamespace(device_limit=15)
+    monkeypatch.setattr(route, 'resolve_subscription', AsyncMock(return_value=subscription))
+    monkeypatch.setattr(route, '_resolve_panel_user_id', lambda *_: 42)
+    monkeypatch.setattr(route, 'get_aliases_for_user', AsyncMock(return_value={'phone-1': 'My phone'}))
+    api = AsyncMock()
+    api.get_user_devices_all.return_value = {'total': 1, 'devices': [{
+        'hwid': 'phone-1', 'platform': 'Android', 'deviceModel': 'Pixel 9',
+        'osVersion': '16', 'userAgent': 'InvoxyVPN/1.2',
+        'createdAt': '2026-10-01T10:00:00Z', 'updatedAt': '2026-10-09T10:00:00Z',
+    }]}
+    context = MagicMock()
+    context.__aenter__ = AsyncMock(return_value=api)
+    context.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(RemnaWaveService, 'get_api_client', lambda _: context)
+
+    result = await route.get_devices(subscription_id=10, user=SimpleNamespace(id=1), db=AsyncMock())
+    assert result['device_limit'] == 15
+    assert result['devices'] == [{
+        'hwid': 'phone-1', 'platform': 'Android', 'device_model': 'Pixel 9',
+        'local_name': 'My phone', 'os_version': '16', 'user_agent': 'InvoxyVPN/1.2',
+        'created_at': '2026-10-09T10:00:00Z',
+        'registered_at': '2026-10-01T10:00:00Z', 'last_seen_at': '2026-10-09T10:00:00Z',
+    }]
