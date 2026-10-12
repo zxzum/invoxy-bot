@@ -9,9 +9,7 @@ from aiogram import Dispatcher, types
 
 from app.config import settings
 from app.handlers import invoxy_reply_menu as menu, invoxy_screens as screens
-from app.keyboards.invoxy_reply import build_reply_keyboard
 from app.states import RegistrationStates, SubscriptionStates
-from app.utils import invoxy_keyboard_marker as marker
 
 
 NOW = datetime.now(UTC)
@@ -67,7 +65,6 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(menu, 'get_screen_banner', lambda kind: f'banner:{kind}')
     fake_cache = SimpleNamespace(_connected=True, setnx=AsyncMock(return_value=True), set=AsyncMock(return_value=True))
     monkeypatch.setattr(menu, 'cache', fake_cache)
-    monkeypatch.setattr(marker, 'cache', fake_cache)
     monkeypatch.setattr(menu, 'apply_user_profile', AsyncMock())
     update = AsyncMock()
     monkeypatch.setattr(menu, 'update_user', update)
@@ -254,14 +251,8 @@ async def test_language_choice_persists_and_relabels_everything(_env) -> None:
     edited = callback.message.edit_text.await_args
     assert edited.args[0] == 'Language switched: English.'
     assert edited.kwargs['reply_markup'].inline_keyboard[0][0].text == 'Main menu'
-    sent = callback.bot.send_message.await_args.kwargs
-    assert sent['chat_id'] == 42
-    assert [b.text for row in sent['reply_markup'].keyboard for b in row] == [
-        b.text for row in build_reply_keyboard('en').keyboard for b in row
-    ]
+    callback.bot.send_message.assert_not_awaited()
     menu.apply_user_profile.assert_awaited_once_with(callback.bot, 42, 'en')
-    _env.cache.set.assert_awaited_once()
-    assert _env.cache.set.await_args.args[0] == marker.marker_key(42, 'en')
 
 
 @pytest.mark.parametrize('data', ['ilang:xx', 'ilang:ua', 'ilang:', 'ilang:ru' + 'x' * 40])
@@ -277,6 +268,14 @@ async def test_language_choice_same_language_is_a_noop(_env) -> None:
     await menu.handle_language_choice(callback, AsyncMock(), _user(_sub(), language='ru'))
     _env.update_user.assert_not_awaited()
     assert callback.answer.await_args.args[0] == 'Этот язык уже выбран.'
+
+
+async def test_profile_update_failure_does_not_block_language_confirmation(_env) -> None:
+    menu.apply_user_profile.side_effect = RuntimeError('telegram down')
+    callback = _callback('ilang:en')
+    await menu.handle_language_choice(callback, AsyncMock(), _user(_sub(), language='ru'))
+    callback.answer.assert_awaited_once()
+    callback.bot.send_message.assert_not_awaited()
 
 
 async def test_language_choice_respects_available_languages(monkeypatch, _env) -> None:

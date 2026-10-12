@@ -13,6 +13,7 @@ from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database.crud.user import update_user
 from app.database.models import User
 from app.handlers.invoxy_screens import (
@@ -24,14 +25,18 @@ from app.handlers.invoxy_screens import (
     build_site_screen,
     build_tariff_screen,
 )
-from app.keyboards.inline import get_support_keyboard
-from app.keyboards.invoxy_reply import build_reply_keyboard, normalize_language, resolve_reply_action
+from app.keyboards.inline import get_main_menu_keyboard_async, get_support_keyboard
+from app.keyboards.invoxy_reply import normalize_language, resolve_reply_action
 from app.localization.texts import get_texts
+from app.services.main_menu_button_service import MainMenuButtonService
+from app.services.subscription_checkout_service import has_subscription_checkout_draft, should_offer_checkout_resume
 from app.services.support_settings_service import SupportSettingsService
+from app.services.user_cart_service import user_cart_service
 from app.states import RegistrationStates
 from app.utils.cache import cache
 from app.utils.invoxy_bot_profile import apply_user_profile
-from app.utils.invoxy_keyboard_marker import set_marker
+from app.utils.invoxy_main_menu import more_keyboard
+from app.utils.photo_message import edit_or_answer_photo
 from app.utils.screen_banners import get_screen_banner
 
 
@@ -191,12 +196,10 @@ async def handle_language_choice(callback: types.CallbackQuery, db: AsyncSession
         await callback.message.edit_text(texts.t('INVOXY_LANG_CHANGED'), reply_markup=main_menu, parse_mode='HTML')
     except Exception as error:
         logger.warning('Не удалось обновить сообщение выбора языка', error=error)
-    # reply-клавиатуру можно заменить только новым сообщением
-    await callback.bot.send_message(
-        chat_id=chat_id, text=texts.t('INVOXY_KEYBOARD_READY'), reply_markup=build_reply_keyboard(code)
-    )
-    await set_marker(db_user.telegram_id, code)
-    await apply_user_profile(callback.bot, chat_id, code)
+    try:
+        await apply_user_profile(callback.bot, chat_id, code)
+    except Exception as error:
+        logger.warning('Не удалось обновить профиль после смены языка', error=error)
     await callback.answer()
 
 
@@ -206,3 +209,45 @@ def register_handlers(dp: Dispatcher) -> None:
     dp.message.register(handle_reply_button, _is_reply_button, not_registering)
     dp.callback_query.register(handle_renew_page, F.data.startswith('rnw:'))
     dp.callback_query.register(handle_language_choice, F.data.startswith('ilang:'))
+    dp.callback_query.register(handle_more_menu, F.data == 'invoxy_more')
+
+
+async def handle_more_menu(callback: types.CallbackQuery, db: AsyncSession, db_user: User | None = None):
+    if db_user is None or not isinstance(callback.message, types.Message):
+        await callback.answer()
+        return
+    texts = get_texts(db_user.language)
+    is_admin = settings.is_admin(db_user.telegram_id)
+    active = any(sub.is_active or sub.actual_status == 'limited' for sub in getattr(db_user, 'subscriptions', []) or [])
+    custom = await MainMenuButtonService.get_buttons_for_user(
+        db, is_admin=is_admin, has_active_subscription=active, subscription_is_active=active
+    )
+    draft = await has_subscription_checkout_draft(db_user.id)
+    saved = await user_cart_service.has_user_cart(db_user.id)
+    full = await get_main_menu_keyboard_async(
+        db=db,
+        user=db_user,
+        language=db_user.language,
+        is_admin=is_admin,
+        is_moderator=(not is_admin) and SupportSettingsService.is_moderator(db_user.telegram_id),
+        has_had_paid_subscription=db_user.has_had_paid_subscription,
+        has_active_subscription=active,
+        subscription_is_active=active,
+        balance_kopeks=db_user.balance_kopeks,
+        subscription=db_user.subscription,
+        show_resume_checkout=should_offer_checkout_resume(db_user, draft),
+        has_saved_cart=saved,
+        custom_buttons=custom,
+        show_all=True,
+    )
+    from app.utils.message_patch import get_logo_media
+    from app.utils.screen_banners import get_screen_banner
+
+    await edit_or_answer_photo(
+        callback,
+        texts.t('INVOXY_HOME_MORE'),
+        more_keyboard(full, texts),
+        media=get_screen_banner('main') or get_logo_media(),
+        media_kind='main',
+    )
+    await callback.answer()

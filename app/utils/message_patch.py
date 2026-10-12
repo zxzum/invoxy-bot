@@ -290,7 +290,18 @@ async def _answer_with_photo(self: Message, text: str = None, **kwargs):
     media = kwargs.pop('media', None)
     media_kind = kwargs.pop('media_kind', None)
     # Уважаем флаг в рантайме: если логотип выключен — не подменяем ответ
-    if not settings.ENABLE_LOGO_MODE:
+    markup = kwargs.get('reply_markup')
+    compact_menu = settings.get_main_menu_mode() == 'compact' and any(
+        button.callback_data == 'invoxy_more'
+        for row in getattr(markup, 'inline_keyboard', [])
+        for button in row
+    )
+    if compact_menu and media is None:
+        from app.utils.screen_banners import get_screen_banner
+
+        media = get_screen_banner('main')
+        media_kind = 'main'
+    if not settings.ENABLE_LOGO_MODE and media is None and not compact_menu:
         # Фото-сообщения не показывают web page preview, текстовые — показывают.
         # Подавляем превью чтобы поведение не менялось при переключении режима логотипа.
         kwargs.setdefault('disable_web_page_preview', True)

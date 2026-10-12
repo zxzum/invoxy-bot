@@ -2307,7 +2307,7 @@
   "INVOXY_BTN_OPEN_SITE": "Open website",
   "INVOXY_BTN_PREV": "‹ Prev",
   "INVOXY_BTN_NEXT": "Next ›",
-  "INVOXY_KEYBOARD_READY": "The menu is at the bottom of the screen.",
+  "INVOXY_KEYBOARD_READY": "Use the buttons below the message. You can also open the website with the Website button.",
   "INVOXY_TARIFF_STATUS": "<b>My tariff</b>\n\nTariff: {tariff}\nValid until: {expires} ({days} days left)\nTraffic: {traffic}\n\n{next_action}",
   "INVOXY_TARIFF_EXPIRED": "<b>My tariff</b>\n\nYour “{tariff}” tariff ended on {expires}.\nRenew to get access back.",
   "INVOXY_TARIFF_INACTIVE": "Your “{tariff}” tariff is disabled or waiting for payment, so it can’t be renewed.\nIf this is a mistake, contact support.",
@@ -2340,5 +2340,15 @@
   "INVOXY_BOT_DESCRIPTION": "Invoxy — fast, simple VPN. Tariff, renewal and support right in the bot.{site_line}",
   "INVOXY_BOT_SHORT": "Invoxy VPN: tariff, renewal, support",
   "INVOXY_BTN_ALL_TARIFFS": "All tariffs",
-  "INVOXY_SITE_UNAVAILABLE": "The website link isn’t set up yet. Please check back later."
+  "INVOXY_SITE_UNAVAILABLE": "The website link isn’t set up yet. Please check back later.",
+  "INVOXY_BTN_MORE": "More",
+  "INVOXY_BTN_INVITE": "Invite a friend",
+  "INVOXY_HOME_MORE": "<b>More</b>\n\nRewards, settings and useful information.",
+  "INVOXY_HOME_LTE": "🔐 LTE traffic: {traffic}",
+  "INVOXY_BTN_MANAGE_SUBSCRIPTION": "Manage subscription",
+  "INVOXY_HOME_NO_SUB": "Choose a plan or start with a trial.",
+  "INVOXY_HOME_UNTIL": "Until {date} · {days} days",
+  "INVOXY_HOME_TRAFFIC": "Traffic: {traffic}",
+  "INVOXY_HOME_INACTIVE": "Choose a plan to return to your VPN.",
+  "INVOXY_HOME_OTHER_SUBS": "Other subscriptions: {count} · see Subscription for details"
 }

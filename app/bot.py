@@ -186,7 +186,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     dp.message.middleware(SubscriptionStatusMiddleware())
     dp.callback_query.middleware(SubscriptionStatusMiddleware())
     dp.pre_checkout_query.middleware(SubscriptionStatusMiddleware())
-    # INVOXY: reply-клавиатура ставится один раз на пользователя и язык (самый внутренний слой).
+    # INVOXY: снимаем сохранённую reply-клавиатуру; навигация остаётся в inline-меню.
     dp.message.middleware(InvoxyReplyKeyboardMiddleware())
     dp.callback_query.middleware(InvoxyReplyKeyboardMiddleware())
     # INVOXY: кнопки reply-меню должны сработать раньше общих хендлеров start.

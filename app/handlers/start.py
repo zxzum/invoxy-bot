@@ -357,9 +357,10 @@ async def send_menu_with_media(
     """
     from app.utils.message_patch import _cache_logo_file_id, caption_exceeds_telegram_limit, get_logo_media
 
+    compact = settings.get_main_menu_mode() == 'compact'
     caption_fits = not caption_exceeds_telegram_limit(text)
 
-    if caption_fits:
+    if caption_fits and not compact:
         from app.services.start_media_service import get_start_video_file_id
 
         video_file_id = await get_start_video_file_id(db)
@@ -379,7 +380,7 @@ async def send_menu_with_media(
                     error=str(video_error),
                 )
 
-    if settings.ENABLE_LOGO_MODE and caption_fits:
+    if (settings.ENABLE_LOGO_MODE or compact) and caption_fits:
         banner = get_screen_banner('main')
         photo = banner if banner is not None else get_logo_media()
         if photo is None:

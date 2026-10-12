@@ -540,6 +540,10 @@ async def _build_single_subscription_block(user: User, texts, db: AsyncSession) 
 
 async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
     """Собирает rich-HTML главного меню (контент, без клавиатуры)."""
+    if settings.get_main_menu_mode() == 'compact':
+        from app.utils.invoxy_main_menu import compact_menu_text
+
+        return await compact_menu_text(user, texts, db)
     blocks: list[str] = []
 
     logo_url = _resolve_rich_logo_url()
@@ -735,7 +739,8 @@ async def try_send_rich_main_menu(
     keyboard: InlineKeyboardMarkup,
 ) -> bool:
     """Отправляет главное меню rich-сообщением. False — показать классическое меню."""
-    if not is_rich_menu_enabled():
+    compact = settings.get_main_menu_mode() == 'compact'
+    if not compact and not is_rich_menu_enabled():
         return False
 
     try:
@@ -745,7 +750,12 @@ async def try_send_rich_main_menu(
         return False
 
     try:
-        await _send_rich_menu(bot, chat_id, rich_html, keyboard, db_user.language)
+        if compact:
+            from app.handlers.start import send_menu_with_media
+
+            await send_menu_with_media(bot, chat_id, rich_html, keyboard, db)
+        else:
+            await _send_rich_menu(bot, chat_id, rich_html, keyboard, db_user.language)
         return True
     except TelegramForbiddenError:
         # Пользователь заблокировал бота — классический рендер упадёт так же, не ретраим.
@@ -796,7 +806,8 @@ async def try_edit_rich_main_menu(
     keyboard: InlineKeyboardMarkup,
 ) -> bool:
     """Rich-аналог edit_or_answer_photo для callback-навигации. False — рисовать классику."""
-    if not is_rich_menu_enabled():
+    compact = settings.get_main_menu_mode() == 'compact'
+    if not compact and not is_rich_menu_enabled():
         return False
 
     message = callback.message
@@ -812,7 +823,8 @@ async def try_edit_rich_main_menu(
 
     chat_id = message.chat.id
     language = db_user.language
-    rich_html, keyboard = _apply_inline_buttons(rich_html, keyboard, for_edit=True)
+    if not compact:
+        rich_html, keyboard = _apply_inline_buttons(rich_html, keyboard, for_edit=True)
 
     is_editable_as_rich = (
         not isinstance(message, InaccessibleMessage)
@@ -821,6 +833,15 @@ async def try_edit_rich_main_menu(
     )
 
     try:
+        if compact:
+            from app.utils.message_patch import get_logo_media
+            from app.utils.photo_message import edit_or_answer_photo
+            from app.utils.screen_banners import get_screen_banner
+
+            await edit_or_answer_photo(
+                callback, rich_html, keyboard, media=get_screen_banner('main') or get_logo_media(), media_kind='main'
+            )
+            return True
         if is_editable_as_rich:
             # parse_mode=None явно: иначе дефолтный parse_mode бота (HTML) сериализуется
             # в запрос рядом с rich_message.

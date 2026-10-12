@@ -601,6 +601,7 @@ class BotConfigurationService:
         'MAIN_MENU_MODE': [
             ChoiceOption('default', '📋 Полное меню'),
             ChoiceOption('cabinet', '🏠 Cabinet (МиниАпп)'),
+            ChoiceOption('compact', '✨ Компактное меню'),
         ],
         'CABINET_BUTTON_STYLE': [
             ChoiceOption('', '🎨 По секциям (авто)'),

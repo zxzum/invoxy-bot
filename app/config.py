@@ -1143,7 +1143,7 @@ class Settings(BaseSettings):
     ETOPLATEZHI_CARD_ENABLED: bool = False
     ETOPLATEZHI_CARD_DISPLAY_NAME: str = 'Карта (Etoplatezhi)'
 
-    MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
+    MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet' | 'compact'
     # Rich-меню (Bot API 10.1): заголовки, таблица подписок, details-блоки, tg-time.
     # Требует telegram-bot-api с Bot API 10.1+; при недоступности бот сам откатывается
     # на классический рендер до рестарта. В rich-режиме главное меню идёт без логотипа.
@@ -1605,8 +1605,8 @@ class Settings(BaseSettings):
         }
 
         mode = aliases.get(normalized, normalized)
-        if mode not in {'default', 'cabinet'}:
-            raise ValueError('MAIN_MENU_MODE must be one of: default, cabinet')
+        if mode not in {'default', 'cabinet', 'compact'}:
+            raise ValueError('MAIN_MENU_MODE must be one of: default, cabinet, compact')
         return mode
 
     @field_validator('GRACE_ACCESS_MODE', mode='before')

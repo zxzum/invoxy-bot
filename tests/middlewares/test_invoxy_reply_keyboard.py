@@ -19,9 +19,8 @@ class _FakeCache:
         self.keys.add(key)
         return True
 
-    async def set(self, key, value, expire=None) -> bool:
-        self.keys.add(key)
-        return True
+    async def delete(self, key) -> None:
+        self.keys.discard(key)
 
 
 @pytest.fixture
@@ -52,30 +51,31 @@ async def _run(event, data, handler=None):
     return await mw.InvoxyReplyKeyboardMiddleware()(handler, event, data), handler
 
 
-async def test_installs_keyboard_once_per_language(cache) -> None:
+async def test_removes_keyboard_once_per_language(cache) -> None:
     data = _data(_user())
     result, _ = await _run(_event(), data)
     assert result == 'result'
     sent = data['bot'].send_message.await_args.kwargs
     assert sent['chat_id'] == 42
-    assert sent['text'] == 'Меню — внизу экрана.'
-    assert sent['reply_markup'].keyboard[0][0].text == 'Мой тариф'
+    assert 'под сообщением' in sent['text']
+    assert isinstance(sent['reply_markup'], types.ReplyKeyboardRemove)
+    assert sent['reply_markup'].remove_keyboard is True
     mw.apply_user_profile.assert_awaited_once()
     again = _data(_user())
     await _run(_event(), again)
     again['bot'].send_message.assert_not_awaited()
 
 
-async def test_english_user_gets_english_keyboard(cache) -> None:
+async def test_english_user_gets_english_removal_hint(cache) -> None:
     data = _data(_user('en'))
     await _run(_event(), data)
     sent = data['bot'].send_message.await_args.kwargs
-    assert sent['text'] == 'The menu is at the bottom of the screen.'
-    assert sent['reply_markup'].keyboard[0][0].text == 'My tariff'
+    assert 'buttons below the message' in sent['text']
+    assert sent['reply_markup'].remove_keyboard is True
 
 
-async def test_marker_set_by_language_switch_prevents_resend(cache) -> None:
-    await marker.set_marker(42, 'en')
+async def test_removal_marker_prevents_resend(cache) -> None:
+    assert await marker.claim_marker(42, 'en')
     data = _data(_user('en'))
     await _run(_event(), data)
     data['bot'].send_message.assert_not_awaited()
@@ -123,3 +123,36 @@ async def test_bots_and_non_message_events_are_ignored(cache) -> None:
     await _run(event, data)
     await _run(SimpleNamespace(), data)
     data['bot'].send_message.assert_not_awaited()
+
+
+async def test_old_install_marker_does_not_skip_removal(cache) -> None:
+    cache.keys.add('invoxy:rk:42:ru')
+    data = _data(_user())
+    await _run(_event(), data)
+    assert data['bot'].send_message.await_args.kwargs['reply_markup'].remove_keyboard
+
+
+async def test_removal_send_failure_retries_next_update(cache) -> None:
+    bot = AsyncMock()
+    bot.send_message.side_effect = RuntimeError('telegram down')
+    await _run(_event(), _data(_user(), bot))
+    data = _data(_user())
+    await _run(_event(), data)
+    data['bot'].send_message.assert_awaited_once()
+
+
+async def test_group_messages_are_ignored(cache) -> None:
+    event = _event()
+    event.chat.type = 'group'
+    data = _data(_user())
+    await _run(event, data)
+    data['bot'].send_message.assert_not_awaited()
+
+
+async def test_inline_callback_removes_old_keyboard(cache) -> None:
+    event = AsyncMock(spec=types.CallbackQuery)
+    event.from_user = SimpleNamespace(id=42, is_bot=False)
+    event.message = _event()
+    data = _data(_user())
+    await _run(event, data)
+    assert data['bot'].send_message.await_args.kwargs['reply_markup'].remove_keyboard

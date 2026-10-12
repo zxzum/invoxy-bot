@@ -10,6 +10,7 @@ from app.config import PERIOD_PRICES, settings
 from app.database.models import User
 from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
+from app.utils.invoxy_links import website_url
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 from app.utils.price_display import PriceInfo, format_price_button
 from app.utils.pricing_utils import (
@@ -40,6 +41,7 @@ async def get_main_menu_keyboard_async(
     is_moderator: bool = False,
     custom_buttons: list[InlineKeyboardButton] | None = None,
     user=None,  # Добавляем параметр пользователя для получения данных
+    show_all: bool = False,
 ) -> InlineKeyboardMarkup:
     """
     Асинхронная версия get_main_menu_keyboard с поддержкой конструктора меню.
@@ -137,7 +139,7 @@ async def get_main_menu_keyboard_async(
             has_autopay=has_autopay,
         )
 
-        return await MenuLayoutService.build_keyboard(db, context)
+        return _with_website_button(await MenuLayoutService.build_keyboard(db, context), language, show_all)
 
     # Fallback на синхронную версию
     return get_main_menu_keyboard(
@@ -152,6 +154,7 @@ async def get_main_menu_keyboard_async(
         has_saved_cart=has_saved_cart,
         is_moderator=is_moderator,
         custom_buttons=custom_buttons,
+        show_all=show_all,
     )
 
 
@@ -331,6 +334,21 @@ def get_language_selection_keyboard(
         buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def _with_website_button(
+    keyboard: InlineKeyboardMarkup, language: str, show_all: bool = False
+) -> InlineKeyboardMarkup:
+    url = website_url()
+    if url and not any(button.url == url for row in keyboard.inline_keyboard for button in row):
+        keyboard.inline_keyboard.append(
+            [InlineKeyboardButton(text=get_texts(language).t('INVOXY_BTN_SITE'), url=url)]
+        )
+    if settings.get_main_menu_mode() == 'compact' and not show_all:
+        from app.utils.invoxy_main_menu import compact_keyboard
+
+        return compact_keyboard(keyboard, get_texts(language))
+    return keyboard
 
 
 def _get_balance_text(cached_styles: dict, language: str, texts, balance_kopeks: int) -> str:
@@ -573,7 +591,7 @@ def _build_cabinet_main_menu_keyboard(
     if is_moderator and not is_admin:
         keyboard_rows.append([InlineKeyboardButton(text='🧑‍⚖️ Модерация', callback_data='moderator_panel')])
 
-    return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+    return _with_website_button(InlineKeyboardMarkup(inline_keyboard=keyboard_rows), language)
 
 
 def get_main_menu_keyboard(
@@ -589,6 +607,7 @@ def get_main_menu_keyboard(
     *,
     is_moderator: bool = False,
     custom_buttons: list[InlineKeyboardButton] | None = None,
+    show_all: bool = False,
 ) -> InlineKeyboardMarkup:
     texts = get_texts(language)
 
@@ -631,6 +650,7 @@ def get_main_menu_keyboard(
         def _fallback_connect_button() -> InlineKeyboardButton:
             return InlineKeyboardButton(
                 text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                style='success',
                 callback_data='subscription_connect',
             )
 
@@ -640,6 +660,7 @@ def get_main_menu_keyboard(
                     [
                         InlineKeyboardButton(
                             text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                            style='success',
                             web_app=types.WebAppInfo(url=subscription_link),
                         )
                     ]
@@ -651,6 +672,7 @@ def get_main_menu_keyboard(
                 [
                     InlineKeyboardButton(
                         text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                        style='success',
                         web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
                     )
                 ]
@@ -658,7 +680,13 @@ def get_main_menu_keyboard(
         elif connect_mode == 'link':
             if subscription_link:
                 keyboard.append(
-                    [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), url=subscription_link)]
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                            style='success',
+                            url=subscription_link,
+                        )
+                    ]
                 )
             else:
                 keyboard.append([_fallback_connect_button()])
@@ -668,6 +696,7 @@ def get_main_menu_keyboard(
                     [
                         InlineKeyboardButton(
                             text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                            style='success',
                             callback_data=(
                                 'subscription_connect'
                                 if settings.is_multi_tariff_enabled()
@@ -718,7 +747,11 @@ def get_main_menu_keyboard(
         and settings.TRIAL_DISABLED_FOR != 'all'
     )
 
-    show_buy = not has_active_subscription or not subscription_is_active
+    show_buy = (
+        not has_active_subscription
+        or not subscription_is_active
+        or (settings.get_main_menu_mode() == 'compact' and getattr(subscription, 'is_trial', False))
+    )
     current_subscription = subscription
     bool(
         current_subscription
@@ -735,10 +768,14 @@ def get_main_menu_keyboard(
     subscription_buttons: list[InlineKeyboardButton] = []
 
     if show_trial:
-        subscription_buttons.append(InlineKeyboardButton(text=texts.MENU_TRIAL, callback_data='menu_trial'))
+        subscription_buttons.append(
+            InlineKeyboardButton(text=texts.MENU_TRIAL, callback_data='menu_trial', style='primary')
+        )
 
     if show_buy:
-        subscription_buttons.append(InlineKeyboardButton(text=texts.MENU_BUY_SUBSCRIPTION, callback_data='menu_buy'))
+        subscription_buttons.append(
+            InlineKeyboardButton(text=texts.MENU_BUY_SUBSCRIPTION, callback_data='menu_buy', style='success')
+        )
 
     if subscription_buttons:
         paired_buttons.extend(subscription_buttons)
@@ -750,6 +787,7 @@ def get_main_menu_keyboard(
         paired_buttons.append(
             InlineKeyboardButton(
                 text=texts.RETURN_TO_SUBSCRIPTION_CHECKOUT,
+                style='success',
                 callback_data=resume_callback,
             )
         )
@@ -813,7 +851,7 @@ def get_main_menu_keyboard(
     if (not is_admin) and is_moderator:
         keyboard.append([InlineKeyboardButton(text='🧑‍⚖️ Модерация', callback_data='moderator_panel')])
 
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+    return _with_website_button(InlineKeyboardMarkup(inline_keyboard=keyboard), language, show_all)
 
 
 def get_info_menu_keyboard(

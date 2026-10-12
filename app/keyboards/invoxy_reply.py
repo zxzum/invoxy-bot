@@ -1,15 +1,8 @@
-"""Постоянная reply-клавиатура Invoxy: основной путь пользователя в боте.
-
-Кнопки — обычные текстовые: «Кабинет» и «Продлить» отвечают сообщением с inline
-web_app-кнопкой (reply-кнопки web_app не получают initData, вход в кабинет не пройдёт).
-"""
+"""Языки и текстовые алиасы старой клавиатуры Invoxy."""
 
 from __future__ import annotations
 
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
-
 from app.localization.texts import get_texts
-from app.utils.invoxy_links import website_url
 
 
 SUPPORTED_LANGUAGES: tuple[str, ...] = ('ru', 'en')
@@ -35,13 +28,6 @@ def normalize_language(code: str | None) -> str:
 def action_label(action: str, language: str | None) -> str:
     key, default = _LABELS[action]
     return get_texts(normalize_language(language)).t(key, default)
-
-
-def build_reply_keyboard(language: str | None) -> ReplyKeyboardMarkup:
-    actions = [a for a in REPLY_ACTIONS if a != 'site' or website_url()]
-    buttons = [KeyboardButton(text=action_label(action, language)) for action in actions]
-    rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
 
 
 def resolve_reply_action(text: str | None) -> str | None:

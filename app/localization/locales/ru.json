@@ -2307,7 +2307,7 @@
   "INVOXY_BTN_OPEN_SITE": "Открыть сайт",
   "INVOXY_BTN_PREV": "‹ Пред.",
   "INVOXY_BTN_NEXT": "След. ›",
-  "INVOXY_KEYBOARD_READY": "Меню — внизу экрана.",
+  "INVOXY_KEYBOARD_READY": "Меню — в кнопках под сообщением. Сайт тоже доступен по кнопке «Сайт».",
   "INVOXY_TARIFF_STATUS": "<b>Мой тариф</b>\n\nТариф: {tariff}\nДействует до: {expires} (осталось {days} дн.)\nТрафик: {traffic}\n\n{next_action}",
   "INVOXY_TARIFF_EXPIRED": "<b>Мой тариф</b>\n\nТариф «{tariff}» закончился {expires}.\nПродлите, чтобы вернуть доступ.",
   "INVOXY_TARIFF_INACTIVE": "Ваш тариф «{tariff}» сейчас отключён или ждёт оплаты, поэтому продлить его нельзя.\nЕсли это ошибка — напишите в поддержку.",
@@ -2340,5 +2340,15 @@
   "INVOXY_BOT_DESCRIPTION": "Invoxy — быстрый и простой VPN. Тариф, продление и поддержка — прямо в боте.{site_line}",
   "INVOXY_BOT_SHORT": "Invoxy VPN: тариф, продление, поддержка",
   "INVOXY_BTN_ALL_TARIFFS": "Все тарифы",
-  "INVOXY_SITE_UNAVAILABLE": "Ссылка на сайт пока не настроена. Загляните позже."
+  "INVOXY_SITE_UNAVAILABLE": "Ссылка на сайт пока не настроена. Загляните позже.",
+  "INVOXY_BTN_MORE": "Ещё",
+  "INVOXY_BTN_INVITE": "Пригласить друга",
+  "INVOXY_HOME_MORE": "<b>Ещё</b>\n\nБонусы, настройки и полезная информация.",
+  "INVOXY_HOME_LTE": "🔐 LTE-трафик: {traffic}",
+  "INVOXY_BTN_MANAGE_SUBSCRIPTION": "Управление подпиской",
+  "INVOXY_HOME_NO_SUB": "Выберите тариф или начните с пробного периода.",
+  "INVOXY_HOME_UNTIL": "До {date} · {days} дн.",
+  "INVOXY_HOME_TRAFFIC": "Трафик: {traffic}",
+  "INVOXY_HOME_INACTIVE": "Оформите тариф, чтобы вернуться к VPN.",
+  "INVOXY_HOME_OTHER_SUBS": "Ещё подписок: {count} · подробности в «Подписке»"
 }

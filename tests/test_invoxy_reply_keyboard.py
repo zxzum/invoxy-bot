@@ -2,6 +2,7 @@ import pytest
 
 from app.config import settings
 from app.keyboards import invoxy_reply
+from app.keyboards.inline import get_main_menu_keyboard
 from app.utils import invoxy_links
 
 
@@ -12,7 +13,7 @@ def _urls(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _labels(markup) -> list[str]:
-    return [button.text for row in markup.keyboard for button in row]
+    return [invoxy_reply.action_label(action, markup) for action in invoxy_reply.REPLY_ACTIONS]
 
 
 @pytest.mark.parametrize(
@@ -26,23 +27,15 @@ def _labels(markup) -> list[str]:
     ],
 )
 def test_keyboard_labels_per_language(language, expected) -> None:
-    assert _labels(invoxy_reply.build_reply_keyboard(language)) == expected
-
-
-def test_keyboard_is_persistent_two_columns() -> None:
-    markup = invoxy_reply.build_reply_keyboard('ru')
-    assert markup.is_persistent is True
-    assert markup.resize_keyboard is True
-    assert [len(row) for row in markup.keyboard] == [2, 2, 2]
-    assert all(button.web_app is None for row in markup.keyboard for button in row)
+    assert _labels(language) == expected
 
 
 @pytest.mark.parametrize('value', [None, '', '   ', 'ftp://site.example', 'site.example'])
 def test_site_button_omitted_without_valid_website_url(monkeypatch, value) -> None:
     monkeypatch.setattr(settings, 'SERVICE_WEBSITE_URL', value)
-    labels = _labels(invoxy_reply.build_reply_keyboard('ru'))
-    assert 'Сайт' not in labels
-    assert len(labels) == 5
+    monkeypatch.setattr(settings, 'MAIN_MENU_MODE', 'default')
+    markup = get_main_menu_keyboard()
+    assert all(button.url != 'https://site.example' for row in markup.inline_keyboard for button in row)
 
 
 def test_site_is_never_aliased_to_cabinet_url(monkeypatch) -> None:

@@ -1442,6 +1442,11 @@ async def _get_multi_tariff_status(user, texts, db: AsyncSession) -> tuple[str, 
 async def get_main_menu_text(user, texts, db: AsyncSession):
     from app.config import settings
 
+    if settings.get_main_menu_mode() == 'compact':
+        from app.utils.invoxy_main_menu import compact_menu_text
+
+        return await compact_menu_text(user, texts, db)
+
     # Multi-tariff: show summary of all subscriptions
     if settings.is_multi_tariff_enabled():
         subscriptions_status, tariff_info_block = await _get_multi_tariff_status(user, texts, db)

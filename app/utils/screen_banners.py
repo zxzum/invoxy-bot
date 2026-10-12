@@ -53,7 +53,8 @@ def get_screen_banner(kind: str):
     filename = SCREEN_BANNERS.get(kind)
     if filename is None:
         return None
-    if not settings.ENABLE_LOGO_MODE:
+    # INVOXY: the main card keeps its mandatory banner in compact mode.
+    if not settings.ENABLE_LOGO_MODE and not (kind == 'main' and settings.get_main_menu_mode() == 'compact'):
         return None
     if kind in _file_id_cache:
         return _file_id_cache[kind]

@@ -1,9 +1,4 @@
-"""Отметка «reply-клавиатура Invoxy уже установлена у пользователя на этом языке».
-
-Telegram хранит reply-клавиатуру на стороне клиента, поэтому достаточно отправить её один раз
-на язык. Без Redis отметку поставить нельзя — тогда клавиатуру не шлём (иначе она приходила бы
-с каждым апдейтом).
-"""
+"""Отметка снятия старой reply-клавиатуры; отдельный ключ от прежней установки."""
 
 from __future__ import annotations
 
@@ -15,11 +10,11 @@ MARKER_TTL_SECONDS = 90 * 24 * 3600
 
 
 def marker_key(telegram_id: int, language: str | None) -> str:
-    return f'invoxy:rk:{telegram_id}:{normalize_language(language)}'
+    return f'invoxy:rk-removed:{telegram_id}:{normalize_language(language)}'
 
 
 async def claim_marker(telegram_id: int, language: str | None) -> bool:
-    """True, если отметки не было и мы её только что поставили (клавиатуру надо отправить)."""
+    """True, если этому пользователю ещё нужно отправить ReplyKeyboardRemove."""
     if not getattr(cache, '_connected', False):
         return False
     try:
@@ -28,10 +23,10 @@ async def claim_marker(telegram_id: int, language: str | None) -> bool:
         return False
 
 
-async def set_marker(telegram_id: int, language: str | None) -> None:
+async def release_marker(telegram_id: int, language: str | None) -> None:
     if not getattr(cache, '_connected', False):
         return
     try:
-        await cache.set(marker_key(telegram_id, language), 1, expire=MARKER_TTL_SECONDS)
+        await cache.delete(marker_key(telegram_id, language))
     except Exception:
         return
