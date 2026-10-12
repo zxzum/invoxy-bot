@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, Subscription, TransactionType
+from app.services.payment.payer_identity import PayerIdentity, payer_from_guest, resolve_user_payer
 from app.services.platega_service import PlategaService
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
@@ -52,7 +53,10 @@ class PlategaPaymentMixin:
         payment_method_code: int,
         return_url: str | None = None,
         failed_url: str | None = None,
+        payer: PayerIdentity | None = None,
     ) -> dict[str, Any] | None:
+        """Разовый платёж Platega. ``payer`` — плательщик-гость лендинга; у пользователя
+        он читается по ``user_id`` (metadata.userId/userName обязательны, см. payer_identity)."""
         service: PlategaService | None = getattr(self, 'platega_service', None)
         if not service or not service.is_configured:
             logger.error('Platega сервис не инициализирован')
@@ -82,8 +86,17 @@ class PlategaPaymentMixin:
         effective_return_url = return_url or settings.get_platega_return_url()
         effective_failed_url = failed_url or settings.get_platega_failed_url()
 
+        if payer is None:
+            payer = (
+                await resolve_user_payer(db, user_id)
+                if user_id is not None
+                # Ни пользователя, ни гостя вызывающий не дал — плательщик по id платежа.
+                else payer_from_guest(correlation_id, contact_type=None, contact_value=None)
+            )
+
         try:
             response = await service.create_payment(
+                payer=payer,
                 payment_method=payment_method_code,
                 amount=amount_value,
                 currency=settings.PLATEGA_CURRENCY,
@@ -132,7 +145,7 @@ class PlategaPaymentMixin:
         )
 
         logger.info(
-            'Создан Platega платеж для пользователя (метод , сумма ₽)',
+            'Создан Platega платёж',
             transaction_id=transaction_id or payment.id,
             user_id=user_id,
             payment_method_code=payment_method_code,
@@ -174,7 +187,7 @@ class PlategaPaymentMixin:
         # Ленивый импорт: monitoring_service импортирует платёжный слой,
         # прямой импорт на уровне модуля создал бы циклическую зависимость.
         from app.database.crud import platega_subscription as sub_crud
-        from app.services.monitoring_service import resolve_autopay_period_candidate
+        from app.services.autopay_period import resolve_autopay_period_candidate
         from app.services.platega_recurrent import resolve_platega_interval
 
         existing = await sub_crud.get_active_platega_subscription_by_subscription(db, subscription.id)
@@ -194,9 +207,11 @@ class PlategaPaymentMixin:
 
         # Взаимоисключение с рекуррентом Lava: оба движка push-модели, и две
         # живые привязки на одной подписке списывали бы дважды за цикл.
+        from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
         from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
 
         await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+        await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
 
         period_days = (
             resolve_autopay_period_candidate(getattr(subscription, 'autopay_period_days', None), tariff)
@@ -238,6 +253,7 @@ class PlategaPaymentMixin:
             raise ValueError(f'Тариф не имеет цены за период {charge_days} дней — СБП-автопродление недоступно')
 
         response = await self.platega_service.create_subscription(
+            payer=await resolve_user_payer(db, user_id),
             amount=amount_kopeks / 100,
             currency=settings.PLATEGA_CURRENCY,
             interval=interval,
@@ -504,7 +520,16 @@ class PlategaPaymentMixin:
                 )
                 return
 
+            # Оверлей грейса, осевший в подписке, — не её срок: иначе новый период
+            # отсчитывался бы от конца грейса.
+            from app.services.grace_access_echo import undo_grace_overlay_echo
+
+            await undo_grace_overlay_echo(db, subscription)
             subscription.extend_subscription(record.charge_days)
+            # Условия тарифа на новый период: база тарифа + активные докупки.
+            from app.database.crud.subscription import reconcile_tariff_traffic_limit
+
+            await reconcile_tariff_traffic_limit(db, subscription)
 
             # Списание по локально ОТМЕНЁННОЙ записи = удалённая отмена не
             # прошла (сбой Platega в момент cancel). Деньги взяты — продлеваем

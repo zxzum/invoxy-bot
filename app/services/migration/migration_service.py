@@ -17,6 +17,7 @@ from app.database.models import Subscription, SubscriptionStatus, Transaction, T
 from app.external.remnawave_api import UserStatus
 from app.services.migration.lazeika_client import LazeikaClient
 from app.services.migration.tariff_mapping import resolve_target_tariff
+from app.services.panel_sync import panel_expire_at
 from app.services.remnawave_service import RemnaWaveService
 
 
@@ -248,11 +249,11 @@ async def execute_user_migration(
             username=new_username,
             status=UserStatus.ACTIVE,
             traffic_limit_bytes=traffic_bytes,
-            expire_at=candidate.new_end_date,
+            expire_at=panel_expire_at(candidate.new_end_date, is_active=True, creating=False),
             hwid_device_limit=candidate.device_limit,
             active_internal_squads=squads,
-            telegram_id=user.telegram_id if user.telegram_id else None,
-            email=user.email if user.email else None,
+            telegram_id=user.telegram_id or None,
+            email=user.email or None,
         )
 
         # Reset traffic as bonus!

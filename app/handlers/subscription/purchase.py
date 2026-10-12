@@ -41,6 +41,7 @@ from app.localization.texts import Texts, get_texts
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.pricing_engine import pricing_engine
 from app.services.remnawave_service import RemnaWaveConfigurationError
+from app.services.subscription_auto_purchase_service import ADDON_CART_MODES
 from app.services.subscription_checkout_service import (
     clear_subscription_checkout_draft,
     get_subscription_checkout_draft,
@@ -57,6 +58,7 @@ from app.services.trial_activation_service import (
 )
 from app.services.user_cart_service import user_cart_service
 from app.utils.decorators import error_handler
+from app.utils.legacy_subscription import is_legacy_subscription as _legacy_subscription
 from app.utils.photo_message import edit_or_answer_photo
 from app.utils.screen_banners import get_screen_banner
 
@@ -114,6 +116,7 @@ from app.utils.pricing_utils import (
     calculate_months_from_days,
     format_period_description,
 )
+from app.utils.subscription_time import format_expiry_warning, format_time_left
 from app.utils.subscription_utils import (
     get_display_subscription_link,
     resolve_simple_subscription_device_limit,
@@ -122,6 +125,8 @@ from app.utils.timezone import format_local_datetime
 
 from .autopay import (
     handle_autopay_menu,
+    handle_cashera_recurring_cancel,
+    handle_cashera_recurring_enable,
     handle_sbp_recurring_cancel,
     handle_sbp_recurring_enable,
     handle_sbp_recurring_menu,
@@ -269,31 +274,8 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
         status_display = texts.t('SUBSCRIPTION_STATUS_UNKNOWN', 'Неизвестно')
         status_emoji = '❓'
 
-    if subscription.end_date <= current_time:
-        days_left = 0
-        time_left_text = texts.t('SUBSCRIPTION_TIME_LEFT_EXPIRED', 'истёк')
-        warning_text = ''
-    else:
-        delta = subscription.end_date - current_time
-        days_left = delta.days
-        hours_left = delta.seconds // 3600
-
-        if days_left > 1:
-            time_left_text = texts.t('SUBSCRIPTION_TIME_LEFT_DAYS', '{days} дн.').format(days=days_left)
-            warning_text = ''
-        elif days_left == 1:
-            time_left_text = texts.t('SUBSCRIPTION_TIME_LEFT_DAYS', '{days} дн.').format(days=days_left)
-            warning_text = texts.t('SUBSCRIPTION_WARNING_TOMORROW', '\n⚠️ истекает завтра!')
-        elif hours_left > 0:
-            time_left_text = texts.t('SUBSCRIPTION_TIME_LEFT_HOURS', '{hours} ч.').format(hours=hours_left)
-            warning_text = texts.t('SUBSCRIPTION_WARNING_TODAY', '\n⚠️ истекает сегодня!')
-        else:
-            minutes_left = (delta.seconds % 3600) // 60
-            time_left_text = texts.t('SUBSCRIPTION_TIME_LEFT_MINUTES', '{minutes} мин.').format(minutes=minutes_left)
-            warning_text = texts.t(
-                'SUBSCRIPTION_WARNING_MINUTES',
-                '\n🔴 истекает через несколько минут!',
-            )
+    time_left_text = format_time_left(texts, subscription.end_date, current_time)
+    warning_text = format_expiry_warning(texts, subscription.end_date, current_time)
 
     subscription_type = (
         texts.t('SUBSCRIPTION_TYPE_TRIAL', 'Триал')
@@ -561,7 +543,7 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
                 bar = '▰' * filled + '▱' * (bar_length - filled)
 
                 # Форматируем дату истечения
-                expire_date = purchase.expires_at.strftime('%d.%m.%Y')
+                expire_date = format_local_datetime(purchase.expires_at, '%d.%m.%Y')
 
                 # Формируем текст о времени
                 if days_remaining == 0:
@@ -1478,6 +1460,14 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
         await return_to_saved_tariff_cart(callback, state, db_user, db, cart_data)
         return
 
+    # Докупка трафика/устройств — не подписка: у такой корзины нет period_days,
+    # и общая ветка ниже объявляла её «повреждённой» и удаляла.
+    if cart_mode in ADDON_CART_MODES:
+        from .addon_cart import resume_addon_cart_from_button
+
+        await resume_addon_cart_from_button(callback, db_user, db, cart_data)
+        return
+
     preserved_metadata_keys = {
         'saved_cart',
         'missing_amount',
@@ -1731,7 +1721,12 @@ async def handle_extend_subscription(
             '⚠️ Ваша текущая подписка продолжит действовать до окончания срока.',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='📦 Выбрать тариф', callback_data='tariff_switch')],
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('MOVE_TO_TARIFF_BUTTON', '📦 Перейти на тариф'),
+                            callback_data='tariff_switch',
+                        )
+                    ],
                     [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
                 ]
             ),
@@ -1820,7 +1815,7 @@ async def handle_extend_subscription(
     renewal_lines = [
         '⏰ Продление подписки',
         '',
-        f'Осталось дней: {subscription.days_left}',
+        f'Осталось: {format_time_left(texts, subscription.end_date)}',
         '',
         '<b>Ваша текущая конфигурация:</b>',
         f'🌍 Серверов: {len(subscription.connected_squads or [])}',
@@ -2508,6 +2503,11 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 except Exception as conversion_error:
                     logger.error('Ошибка записи конверсии', conversion_error=conversion_error)
 
+            # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок и не её
+            # серверы: вернуть до расчёта (страны по умолчанию берутся из подписки).
+            from app.services.grace_access_echo import undo_grace_overlay_echo
+
+            await undo_grace_overlay_echo(db, existing_subscription)
             existing_subscription.is_trial = False
             if was_trial_conversion:
                 # is_trial сбрасывается и при обычном продлении платной подписки —
@@ -3013,7 +3013,11 @@ async def handle_subscription_settings(callback: types.CallbackQuery, db_user: U
     await callback.message.edit_text(
         settings_text,
         reply_markup=get_updated_subscription_settings_keyboard(
-            db_user.language, show_countries, tariff=tariff, subscription=subscription
+            db_user.language,
+            show_countries,
+            tariff=tariff,
+            subscription=subscription,
+            is_legacy_subscription=_legacy_subscription(subscription),
         ),
         parse_mode='HTML',
     )
@@ -3148,6 +3152,7 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
         # Принудительный resume: снимаем паузу + восстанавливаем статус ACTIVE
         from app.database.crud.subscription import resume_daily_subscription
 
+        was_limited = subscription.status == SubscriptionStatus.LIMITED.value
         subscription = await resume_daily_subscription(db, subscription)
         message = texts.t('DAILY_SUBSCRIPTION_RESUMED', '▶️ Подписка возобновлена!')
         # Восстанавливаем connected_squads из тарифа, если очищены деактивацией
@@ -3169,6 +3174,13 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
         # Синхронизируем с Remnawave - активируем пользователя
         try:
             from app.services.subscription_service import SubscriptionService
+            from app.services.traffic_reset_policy import lift_panel_traffic_limit, should_reset_traffic_on_daily_charge
+
+            # Возобновление после остановки системой списывает суточную оплату —
+            # обнуление счётчика решает та же политика, что и в ночном списании,
+            # а не жёсткая константа. Снятие своей паузы оплатой не является.
+            reset_traffic = is_inactive and should_reset_traffic_on_daily_charge(tariff)
+            reset_reason = 'суточное списание (возобновление)' if reset_traffic else None
 
             subscription_service = SubscriptionService()
             # В multi-tariff панельная идентичность живёт на подписке, а
@@ -3183,16 +3195,16 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
                 await subscription_service.update_remnawave_user(
                     db,
                     subscription,
-                    reset_traffic=False,
-                    reset_reason=None,
+                    reset_traffic=reset_traffic,
+                    reset_reason=reset_reason,
                     sync_squads=True,
                 )
             else:
                 await subscription_service.create_remnawave_user(
                     db,
                     subscription,
-                    reset_traffic=False,
-                    reset_reason=None,
+                    reset_traffic=reset_traffic,
+                    reset_reason=reset_reason,
                 )
                 # POST может игнорировать activeInternalSquads — отправляем PATCH
                 await db.refresh(db_user)
@@ -3203,6 +3215,8 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
                 )
                 if _panel_user_id and subscription.connected_squads:
                     try:
+                        # Досыл сквадов — часть того же события оплаты:
+                        # счётчик уже обнулён вызовом выше, второй раз не надо.
                         await subscription_service.update_remnawave_user(
                             db,
                             subscription,
@@ -3211,6 +3225,15 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
                         )
                     except Exception as patch_err:
                         logger.warning('Не удалось синхронизировать сквады после создания', error=patch_err)
+
+            if reset_traffic:
+                # Счётчик бота ведут по данным панели, но до ближайшего прохода
+                # мониторинга он показывал бы исчерпанный трафик.
+                subscription.traffic_used_gb = 0.0
+                await db.commit()
+                if was_limited:
+                    # PATCH сам по себе статус «трафик исчерпан» не снимает.
+                    await lift_panel_traffic_limit(db, subscription, service=subscription_service)
             logger.info(
                 '✅ Синхронизировано с Remnawave после возобновления суточной подписки', subscription_id=subscription.id
             )
@@ -4255,6 +4278,10 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_sbp_recurring_enable, F.data == 'sbp_recurring_enable')
 
     dp.callback_query.register(handle_sbp_recurring_cancel, F.data == 'sbp_recurring_cancel')
+
+    dp.callback_query.register(handle_cashera_recurring_enable, F.data == 'cashera_recurring_enable')
+
+    dp.callback_query.register(handle_cashera_recurring_cancel, F.data == 'cashera_recurring_cancel')
 
     dp.callback_query.register(handle_subscription_config_back, F.data == 'subscription_config_back')
 

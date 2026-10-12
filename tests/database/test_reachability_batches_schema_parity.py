@@ -20,12 +20,12 @@ from app.database.models import Base, ReachabilityBatch, ReachabilityJob, Reacha
 
 
 VERSIONS = pathlib.Path(__file__).resolve().parents[2] / 'migrations/alembic/versions'
-MIGRATIONS = ('0115_create_reachability_tables.py', '0116_reachability_batches.py')
+MIGRATIONS = ('0123_create_reachability_tables.py', '0124_reachability_batches.py')
 TABLES = ('reachability_batches', 'reachability_jobs')
 
 
 def _load_migration(name: str):
-    spec = importlib.util.spec_from_file_location(name.split('_')[0], VERSIONS / name)
+    spec = importlib.util.spec_from_file_location(name.split('_', maxsplit=1)[0], VERSIONS / name)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

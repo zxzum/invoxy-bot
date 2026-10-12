@@ -791,7 +791,7 @@ async def test_whitelist_quota_displayed_in_single_mode(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(_make_user(subscription), DummyTexts(), AsyncMock())
 
-    assert '<b>🔐 LTE сервера: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in html_out
+    assert '<b>🔐 Белые списки: 2.0 / 5 ГБ (40%)</b>' in html_out
 
 
 async def test_usage_row_in_multi_tariff_table(monkeypatch):
@@ -830,7 +830,7 @@ async def test_whitelist_quota_displayed_in_multi_tariff_table(monkeypatch):
 
     html_out = await rich_menu.build_main_menu_rich_html(_make_user(subscription), DummyTexts(), AsyncMock())
 
-    assert '<b>🔐 LTE сервера: 2.0 / 5 ГБ [████░░░░░░] 40%</b>' in html_out
+    assert '<b>🔐 Белые списки: 2.0 / 5 ГБ (40%)</b>' in html_out
 
 
 async def test_send_passes_message_effect(monkeypatch):
@@ -915,7 +915,7 @@ async def test_logo_auto_url_from_webhook(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, 'WEBHOOK_URL', 'https://bot.example.com/webhook', raising=False)
     monkeypatch.setattr(settings, 'LOGO_FILE', str(logo), raising=False)
 
-    assert rich_menu._resolve_rich_logo_url() == 'https://bot.example.com/cabinet/branding/bot-logo'
+    assert rich_menu._resolve_rich_logo_url().startswith('https://bot.example.com/cabinet/branding/bot-logo?v=')
 
     # Файла нет — логотип не подставляется
     monkeypatch.setattr(settings, 'LOGO_FILE', str(tmp_path / 'missing.png'), raising=False)

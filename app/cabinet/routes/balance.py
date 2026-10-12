@@ -214,6 +214,8 @@ async def get_payment_methods(
                     elif opt_id in ('card', 'bank_card'):
                         opt_name = '💳 Карты РФ (МИР, Visa, MC)'
                         description = 'МИР, Visa, Mastercard любых российских банков'
+                elif method_id == 'cashera':
+                    description = settings.get_cashera_method_display_name(opt_id)
 
                 formatted_options.append(
                     {
@@ -1365,6 +1367,19 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
             'cancelled': ('❌', 'Отменено'),
             'expired': ('⌛', 'Истёк'),
             'failed': ('❌', 'Ошибка'),
+            'error': ('❌', 'Ошибка'),
+            'amount_mismatch': ('⚠️', 'Несовпадение суммы'),
+        }
+        return mapping.get(status, ('❓', 'Неизвестно'))
+
+    if record.method == PaymentMethod.CASHERA:
+        mapping = {
+            'pending': ('⏳', 'Ожидает оплаты'),
+            'success': ('✅', 'Оплачено'),
+            'failed': ('❌', 'Оплата не прошла'),
+            'expired': ('⌛', 'Истёк'),
+            'refunded': ('↩️', 'Возвращён'),
+            'chargeback': ('↩️', 'Чарджбэк'),
             'error': ('❌', 'Ошибка'),
             'amount_mismatch': ('⚠️', 'Несовпадение суммы'),
         }

@@ -16,7 +16,8 @@ def anyio_backend() -> str:
 
 
 @pytest.mark.asyncio
-async def test_create_rollypay_payment_email_user_order_id(monkeypatch):
+@pytest.mark.parametrize(('method', 'api_method'), [('sbp', 'sbp'), ('foreign_card', 'intl_card')])
+async def test_create_rollypay_payment_email_user_order_id(monkeypatch, method, api_method):
     """Verify that email user without telegram_id gets order_id with user.id, not 'rpNone_'."""
     monkeypatch.setattr(settings, 'ROLLYPAY_ENABLED', True, raising=False)
     monkeypatch.setattr(settings, 'ROLLYPAY_API_KEY', 'test_key', raising=False)
@@ -30,10 +31,11 @@ async def test_create_rollypay_payment_email_user_order_id(monkeypatch):
     # User with id 42 and telegram_id=None
     email_user = User(id=42, telegram_id=None, email='playxd2791@gmail.com')
 
-    with patch('app.services.payment_service.get_user_by_id', return_value=email_user), \
-         patch('app.services.rollypay_service.rollypay_service.create_payment', new_callable=AsyncMock) as mock_api, \
-         patch('app.database.crud.rollypay.create_rollypay_payment', new_callable=AsyncMock) as mock_crud:
-
+    with (
+        patch('app.services.payment_service.get_user_by_id', return_value=email_user),
+        patch('app.services.rollypay_service.rollypay_service.create_payment', new_callable=AsyncMock) as mock_api,
+        patch('app.database.crud.rollypay.create_rollypay_payment', new_callable=AsyncMock) as mock_crud,
+    ):
         mock_api.return_value = {
             'pay_url': 'https://pay.rollypay.io/f0e5643f',
             'payment_id': 'pay_123456',
@@ -54,6 +56,7 @@ async def test_create_rollypay_payment_email_user_order_id(monkeypatch):
             amount_kopeks=20000,
             description='Оплата тарифа «Стандарт LTE» (30 дн.)',
             extra_metadata=extra,
+            payment_method_type=method,
         )
 
         assert result is not None
@@ -64,6 +67,7 @@ async def test_create_rollypay_payment_email_user_order_id(monkeypatch):
         assert order_id.startswith('rp42_')
         assert 'None' not in order_id
         assert call_kwargs['customer_id'] == '42'
+        assert call_kwargs['payment_method'] == api_method
 
         # Verify CRUD call metadata_json persistence
         assert mock_crud.called
@@ -98,15 +102,16 @@ async def test_finalize_rollypay_payment_reconstructs_cart_fallback():
 
     mock_tariff = Tariff(id=5, name='Стандарт LTE', is_active=True, is_daily=False)
 
-    with patch('app.services.payment_service.get_user_by_id', return_value=user), \
-         patch('app.services.payment_service.get_transaction_by_external_id', return_value=None), \
-         patch('app.services.payment_service.create_transaction', return_value=MagicMock(id=999)), \
-         patch('app.database.crud.rollypay.link_rollypay_payment_to_transaction', new_callable=AsyncMock), \
-         patch('app.database.crud.user.lock_user_for_update', return_value=user), \
-         patch('app.database.crud.transaction.emit_transaction_side_effects', new_callable=AsyncMock), \
-         patch('app.database.crud.tariff.get_all_active_tariffs', return_value=[mock_tariff]), \
-         patch('app.services.payment.common.send_cart_notification_after_topup', new_callable=AsyncMock) as mock_notify:
-
+    with (
+        patch('app.services.payment_service.get_user_by_id', return_value=user),
+        patch('app.services.payment_service.get_transaction_by_external_id', return_value=None),
+        patch('app.services.payment_service.create_transaction', return_value=MagicMock(id=999)),
+        patch('app.database.crud.rollypay.link_rollypay_payment_to_transaction', new_callable=AsyncMock),
+        patch('app.database.crud.user.lock_user_for_update', return_value=user),
+        patch('app.database.crud.transaction.emit_transaction_side_effects', new_callable=AsyncMock),
+        patch('app.database.crud.tariff.get_all_active_tariffs', return_value=[mock_tariff]),
+        patch('app.services.payment.common.send_cart_notification_after_topup', new_callable=AsyncMock) as mock_notify,
+    ):
         success = await service._finalize_rollypay_payment(
             db,
             payment,
@@ -144,11 +149,26 @@ async def test_auto_purchase_saved_cart_after_topup_with_fallback(monkeypatch):
         'return_to_cart': True,
     }
 
-    with patch('app.services.user_cart_service.user_cart_service.get_user_cart', new_callable=AsyncMock, return_value=None), \
-         patch('app.services.user_cart_service.user_cart_service.get_all_subscription_carts', new_callable=AsyncMock, return_value=[]), \
-         patch('app.services.user_cart_service.user_cart_service.has_topup_intent', new_callable=AsyncMock, return_value=False), \
-         patch('app.services.subscription_auto_purchase_service._process_single_cart', new_callable=AsyncMock, return_value=True) as mock_process:
-
+    with (
+        patch(
+            'app.services.user_cart_service.user_cart_service.get_user_cart', new_callable=AsyncMock, return_value=None
+        ),
+        patch(
+            'app.services.user_cart_service.user_cart_service.get_all_subscription_carts',
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            'app.services.user_cart_service.user_cart_service.has_topup_intent',
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            'app.services.subscription_auto_purchase_service._process_single_cart',
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_process,
+    ):
         result = await auto_purchase_saved_cart_after_topup(
             db,
             user,

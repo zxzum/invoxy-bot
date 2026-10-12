@@ -16,9 +16,9 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
-      - run: uv sync --group dev
+      - run: uv sync --frozen --group dev
 
       - name: Check formatting
         run: uv run ruff format --check .

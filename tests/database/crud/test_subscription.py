@@ -65,6 +65,7 @@ async def test_extend_subscription_tariff_change_preserves_usage_and_trial(monke
     )
     monkeypatch.setattr(subscription_crud.settings, 'RESET_TRAFFIC_ON_TARIFF_SWITCH', True)
     monkeypatch.setattr(subscription_crud.settings, 'RESET_TRAFFIC_ON_PAYMENT', True)
+    monkeypatch.setattr('app.services.grace_access_echo.undo_grace_overlay_echo', AsyncMock(return_value=set()))
     monkeypatch.setattr('app.database.crud.subscription.clear_notifications', AsyncMock())
     monkeypatch.setattr(
         'app.database.crud.tariff.get_tariff_by_id', AsyncMock(return_value=SimpleNamespace(is_daily=False))
@@ -185,6 +186,7 @@ async def test_extend_subscription_default_converts_trial_on_purchase(monkeypatc
 
     monkeypatch.setattr('app.database.crud.subscription._lock_subscription_row', AsyncMock())
     monkeypatch.setattr('app.database.crud.subscription._housekeep_expired_purchases', AsyncMock())
+    monkeypatch.setattr('app.services.grace_access_echo.undo_grace_overlay_echo', AsyncMock(return_value=set()))
     monkeypatch.setattr('app.database.crud.subscription.clear_notifications', AsyncMock())
     monkeypatch.setattr(
         'app.database.crud.tariff.get_tariff_by_id', AsyncMock(return_value=SimpleNamespace(is_daily=False))

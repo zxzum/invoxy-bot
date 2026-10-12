@@ -2,6 +2,8 @@
 
 from .autopay import (
     handle_autopay_menu,
+    handle_cashera_recurring_cancel,
+    handle_cashera_recurring_enable,
     handle_confirm_unlink,
     handle_saved_cards_list,
     handle_sbp_recurring_cancel,
@@ -189,6 +191,8 @@ __all__ = [
     'handle_all_devices_reset_from_management',
     'handle_app_selection',
     'handle_autopay_menu',
+    'handle_cashera_recurring_cancel',
+    'handle_cashera_recurring_enable',
     'handle_change_devices',
     'handle_confirm_lte_reset',
     'handle_confirm_unlink',

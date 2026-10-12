@@ -40,7 +40,7 @@ from app.keyboards.inline import (
     get_rules_keyboard,
 )
 from app.localization.loader import DEFAULT_LANGUAGE
-from app.localization.texts import get_privacy_policy, get_rules, get_texts
+from app.localization.texts import get_default_rules, get_rules, get_texts
 from app.middlewares.channel_checker import (
     delete_pending_payload_from_redis,
     get_pending_payload_from_redis,
@@ -91,9 +91,10 @@ from app.services.telegram_link_service import (
 from app.services.web_auth_service import WEB_AUTH_TOKEN_MIN_LENGTH, link_web_auth_token
 from app.states import RegistrationStates
 from app.utils.gift_links import InvalidGiftTokenError, parse_gift_claim_input
-from app.utils.long_messages import answer_long_text, edit_long_text, send_long_text
+from app.utils.long_messages import answer_long_text, send_long_text
 from app.utils.rich_menu import try_answer_rich_main_menu, try_send_rich_main_menu
 from app.utils.screen_banners import cache_screen_banner_file_id, get_screen_banner
+from app.utils.telegram_html import html_to_telegram
 from app.utils.user_utils import generate_unique_referral_code
 
 
@@ -1379,7 +1380,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                     '🔐 Подтвердите вход в личный кабинет. Если вы не запрашивали вход — нажмите «Нет».',
                 )
                 banner_path = Path('/app/accept_login.png')
-                if banner_path.is_file():
+                if await asyncio.to_thread(banner_path.is_file):
                     await message.answer_photo(FSInputFile(banner_path), caption=prompt, reply_markup=keyboard)
                 else:
                     await message.answer(prompt, reply_markup=keyboard)
@@ -2011,8 +2012,17 @@ async def _send_rules_prompt(target_message: types.Message, language: str) -> No
         await target_message.answer(greeting, reply_markup=_get_compact_legal_keyboard(language), parse_mode='HTML')
         return
 
-    rules_text = await get_rules(language)
+    rules_text = await _rules_for_telegram(language)
     await answer_long_text(target_message, rules_text, reply_markup=get_rules_keyboard(language))
+async def _rules_for_telegram(language: str) -> str:
+    """Правила для регистрации — в разметке, которую принимает Telegram.
+
+    Текст правил редактируется в кабинете как HTML (заголовки, абзацы, списки),
+    а Telegram понимает восемь тегов: без преобразования регистрация падала на
+    шаге правил с «Unsupported start tag». Если после очистки текста не осталось,
+    показываются правила по умолчанию из локали — пустое сообщение Telegram не примет.
+    """
+    return html_to_telegram(await get_rules(language)) or html_to_telegram(get_default_rules(language))
 
 
 async def _show_privacy_policy_after_rules(
@@ -2026,47 +2036,6 @@ async def _show_privacy_policy_after_rules(
     INVOXY: согласие с политикой отключено в боте (достаточно документов на сайте/в кабинете).
     """
     return False
-
-    if not policy.content or not policy.content.strip():
-        privacy_policy_text = get_privacy_policy(language)
-        if not privacy_policy_text or not privacy_policy_text.strip():
-            logger.info('⚠️ Политика конфиденциальности включена, но дефолтный текст пустой, пропускаем показ')
-            return False
-        logger.info(
-            '🔒 Используется дефолтный текст политики конфиденциальности из локализации для языка', language=language
-        )
-    else:
-        privacy_policy_text = policy.content
-        logger.info('🔒 Используется политика конфиденциальности из БД для языка', language=language)
-
-    try:
-        await edit_long_text(
-            callback.message,
-            privacy_policy_text,
-            reply_markup=get_privacy_policy_keyboard(language),
-            parse_mode='HTML',
-        )
-        await state.set_state(RegistrationStates.waiting_for_privacy_policy_accept)
-        logger.info('🔒 Политика конфиденциальности отправлена пользователю', from_user_id=callback.from_user.id)
-        return True
-    except Exception as e:
-        logger.error('Ошибка при показе политики конфиденциальности', error=e, exc_info=True)
-        try:
-            await answer_long_text(
-                callback.message,
-                privacy_policy_text,
-                reply_markup=get_privacy_policy_keyboard(language),
-                parse_mode='HTML',
-            )
-            await state.set_state(RegistrationStates.waiting_for_privacy_policy_accept)
-            logger.info(
-                '🔒 Политика конфиденциальности отправлена новым сообщением пользователю',
-                from_user_id=callback.from_user.id,
-            )
-            return True
-        except Exception as e2:
-            logger.error('Критическая ошибка при отправке политики конфиденциальности', e2=e2, exc_info=True)
-            return False
 
 
 async def _continue_registration_after_rules(
@@ -3467,7 +3436,7 @@ async def required_sub_channel_check(
                     await state.set_state(RegistrationStates.waiting_for_rules_accept)
                     return None
 
-                rules_text = await get_rules(language)
+                rules_text = await _rules_for_telegram(language)
 
                 if settings.ENABLE_LOGO_MODE and not caption_exceeds_telegram_limit(rules_text):
                     _result = await bot.send_photo(

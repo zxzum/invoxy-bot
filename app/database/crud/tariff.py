@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.models import PromoGroup, Subscription, SubscriptionStatus, Tariff
+from app.utils.panel_tag import normalize_panel_tag
 
 
 logger = structlog.get_logger(__name__)
@@ -234,6 +235,10 @@ async def create_tariff(
     main_traffic_reset_price_kopeks: int | None = None,
     main_traffic_reset_min_used_gb: int = 100,
     main_traffic_reset_max_per_month: int = 0,
+    # Свой тег панели (нормализуется; недопустимый — ValueError)
+    panel_tag: str | None = None,
+    # Дни триала на тарифе; None = глобальный TRIAL_DURATION_DAYS
+    trial_duration_days: int | None = None,
 ) -> Tariff:
     """Создает новый тариф."""
     normalized_prices = _normalize_period_prices(period_prices)
@@ -291,6 +296,8 @@ async def create_tariff(
         main_traffic_reset_price_kopeks=main_traffic_reset_price_kopeks,
         main_traffic_reset_min_used_gb=max(0, main_traffic_reset_min_used_gb),
         main_traffic_reset_max_per_month=max(0, main_traffic_reset_max_per_month),
+        panel_tag=normalize_panel_tag(panel_tag),
+        trial_duration_days=trial_duration_days,
     )
 
     db.add(tariff)
@@ -378,6 +385,8 @@ async def update_tariff(
     main_traffic_reset_price_kopeks: int | None = ...,  # ... = не передан, None = сбросить к дефолту (null)
     main_traffic_reset_min_used_gb: int | None = None,
     main_traffic_reset_max_per_month: int | None = None,
+    # Свой тег панели: ... = не передан, None/'' = снять
+    panel_tag: str | None = ...,
 ) -> Tariff:
     """Обновляет существующий тариф."""
     if name is not None:
@@ -478,6 +487,8 @@ async def update_tariff(
     # Режим сброса трафика
     if traffic_reset_mode is not ...:
         tariff.traffic_reset_mode = traffic_reset_mode
+    if panel_tag is not ...:
+        tariff.panel_tag = normalize_panel_tag(panel_tag)
     # Внешний сквад
     if external_squad_uuid is not ...:
         tariff.external_squad_uuid = external_squad_uuid

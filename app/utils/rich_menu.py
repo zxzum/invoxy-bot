@@ -46,10 +46,13 @@ from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.user_message import get_random_active_message
 from app.database.models import User
 from app.localization.texts import Texts
+from app.utils.cache import cache
 from app.utils.formatters import format_username_link, format_whitelist_traffic
+from app.utils.logo_fingerprint import logo_version
 from app.utils.miniapp_buttons import build_miniapp_startapp_url
 from app.utils.promo_offer import build_promo_offer_hint, build_test_access_hint
 from app.utils.rich_buttons import render_keyboard_as_rich_html
+from app.utils.subscription_time import local_days_until
 from app.utils.subscription_utils import get_happ_cryptolink_redirect_link
 from app.utils.timezone import format_local_datetime
 from app.utils.validators import sanitize_html
@@ -163,7 +166,8 @@ def _resolve_rich_logo_url() -> str:
 
     Иначе, если задан WEBHOOK_URL (публичный origin нашего FastAPI) и файл
     LOGO_FILE существует, логотип отдаётся собственным эндпоинтом
-    /cabinet/branding/bot-logo.
+    /cabinet/branding/bot-logo?v=<отпечаток файла>. Telegram кэширует картинку
+    по адресу: без версии заменённый файл показывался старым до ручного ``?v=``.
     """
     if _logo_unavailable:
         return ''
@@ -187,7 +191,10 @@ def _resolve_rich_logo_url() -> str:
     parsed = urlparse(webhook_url)
     if not parsed.scheme or not parsed.netloc:
         return ''
-    return f'{parsed.scheme}://{parsed.netloc}/cabinet/branding/bot-logo'
+    version = logo_version(Path(settings.LOGO_FILE))
+    if version is None:
+        return ''
+    return f'{parsed.scheme}://{parsed.netloc}/cabinet/branding/bot-logo?v={version}'
 
 
 def _is_media_fetch_error(error: Exception) -> bool:
@@ -353,6 +360,53 @@ def _traffic_usage_text(subscription, texts) -> str:
     return f'{used} / {limit}'
 
 
+LIVE_MENU_TTL = 30 * 24 * 3600  # ponytail: меню, которое не открывали месяц, не оживляем; открыл меню — отсчёт заново
+
+
+def live_menu_fingerprint(user: User, texts) -> str:
+    """Только то, что видно в меню. HTML сравнивать нельзя: случайное сообщение админа и таймеры."""
+    now = datetime.now(UTC)
+    subscriptions = [
+        (
+            s.id,
+            s.actual_status,
+            s.end_date,
+            s.end_date and max((s.end_date - now).days, 0),  # «(N дн.)» вне tg-time
+            s.tariff_id,
+            bool(s.is_trial),
+            _traffic_usage_text(s, texts),
+            s.device_limit,
+        )
+        for s in user.subscriptions or []
+    ]
+    return repr((user.language, user.balance_kopeks, subscriptions))
+
+
+async def remember_live_menu(chat_id: int, message_id: int | None, user: User, texts) -> None:
+    """Запоминает последнее rich-меню чата для фоновой перерисовки. Никогда не бросает."""
+    if not settings.MAIN_MENU_LIVE_ENABLED or not message_id:
+        return
+    try:
+        state = {'m': message_id, 'fp': live_menu_fingerprint(user, texts)}
+        await cache.set(f'live_menu:{chat_id}', state, expire=LIVE_MENU_TTL)
+    except Exception as error:  # меню уже показано — живость не повод уводить его в классику
+        logger.warning('Живое меню: не удалось запомнить меню', chat_id=chat_id, error=str(error))
+
+
+async def forget_live_menu_on_callback(handler, event: CallbackQuery, data: dict):
+    """Нажали кнопку на живом меню — дальше подменю, фон это сообщение не трогает.
+
+    Работает и при выключенной настройке: иначе после «выкл → подменю → вкл» фон перетёр бы подменю.
+    """
+    message = event.message
+    if message is not None:
+        key = f'live_menu:{message.chat.id}'
+        state = await cache.get(key)
+        if state and state.get('m') == message.message_id:
+            await cache.delete(key)
+    return await handler(event, data)
+
+
 def _connect_url(subscription) -> str:
     """URL мгновенного подключения подписки для текстовой ссылки.
 
@@ -431,9 +485,9 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
         end_date = getattr(subscription, 'end_date', None)
         end_date_text = format_local_datetime(end_date, '%d.%m.%Y') if end_date else ''
         if end_date and end_date > current_time and actual_status in {'active', 'trial', 'limited'}:
-            days_left = (end_date - current_time).days
+            days_left = local_days_until(end_date, current_time)
             days_text = texts.t('MAIN_MENU_RICH_DAYS_LEFT', '{days} дн.').replace('{days}', str(days_left))
-            until_cell = f'{_tg_time(end_date, "d", end_date_text)} ({days_text})'
+            until_cell = f'{_tg_time(end_date, "d", end_date_text)} ({_rich_text(days_text)})'
         elif end_date:
             until_cell = _tg_time(end_date, 'd', end_date_text)
         else:
@@ -506,7 +560,7 @@ async def _build_single_subscription_block(user: User, texts, db: AsyncSession) 
         total_seconds = (end_date - start_date).total_seconds() if start_date else 0
         relative_template = texts.t('MAIN_MENU_RICH_EXPIRES_RELATIVE', '⏳ истекает {when}')
         days_left_text = texts.t('MAIN_MENU_RICH_DAYS_LEFT', 'осталось {days} дн.').replace(
-            '{days}', str(max((end_date - current_time).days, 0))
+            '{days}', str(local_days_until(end_date, current_time))
         )
         relative_line = _rich_text(relative_template).replace('{when}', _tg_time(end_date, 'r', days_left_text))
         lines.append(f'<code>{_progress_bar(seconds_left, total_seconds)}</code> {relative_line}')
@@ -683,7 +737,7 @@ async def _send_rich_menu(
     rich_html: str,
     keyboard: InlineKeyboardMarkup,
     language: str | None,
-) -> None:
+) -> Message | None:
     global _effect_unavailable
 
     rich_html, keyboard = _apply_inline_buttons(rich_html, keyboard)
@@ -692,7 +746,7 @@ async def _send_rich_menu(
         effect_id = None
 
     try:
-        await bot.send_rich_message(
+        return await bot.send_rich_message(
             chat_id=chat_id,
             rich_message=_input_rich_message(rich_html, language),
             reply_markup=keyboard,
@@ -705,13 +759,12 @@ async def _send_rich_menu(
                 error=str(error),
                 chat_id=chat_id,
             )
-            await bot.send_rich_message(
+            return await bot.send_rich_message(
                 chat_id=chat_id,
                 rich_message=_input_rich_message(_strip_tg_time(rich_html), language),
                 reply_markup=keyboard,
                 message_effect_id=effect_id,
             )
-            return
         # Невалидный/отключённый эффект не должен ронять rich-меню в классику —
         # повторяем без эффекта и больше его не шлём до рестарта.
         if effect_id and 'effect' in str(error).lower():
@@ -721,13 +774,12 @@ async def _send_rich_menu(
                 effect_id=effect_id,
                 error=str(error),
             )
-            await bot.send_rich_message(
+            return await bot.send_rich_message(
                 chat_id=chat_id,
                 rich_message=_input_rich_message(rich_html, language),
                 reply_markup=keyboard,
             )
-        else:
-            raise
+        raise
 
 
 async def try_send_rich_main_menu(
@@ -755,7 +807,8 @@ async def try_send_rich_main_menu(
 
             await send_menu_with_media(bot, chat_id, rich_html, keyboard, db)
         else:
-            await _send_rich_menu(bot, chat_id, rich_html, keyboard, db_user.language)
+            sent = await _send_rich_menu(bot, chat_id, rich_html, keyboard, db_user.language)
+            await remember_live_menu(chat_id, getattr(sent, 'message_id', None), db_user, texts)
         return True
     except TelegramForbiddenError:
         # Пользователь заблокировал бота — классический рендер упадёт так же, не ретраим.
@@ -854,6 +907,7 @@ async def try_edit_rich_main_menu(
                     parse_mode=None,
                 )
             )
+            menu_message_id = message.message_id
         else:
             # Фото/медиа-сообщение (логотип) или недоступное (>48ч) нельзя превратить
             # в rich редактированием — пересоздаём, как это делает edit_or_answer_photo
@@ -867,13 +921,16 @@ async def try_edit_rich_main_menu(
                     # отредактирует уцелевшее сообщение на месте и не наплодит дублей.
                     logger.debug('Не удалось удалить сообщение перед rich-меню', error=str(delete_error))
                     return False
-            await _send_rich_menu(bot, chat_id, rich_html, keyboard, language)
+            sent = await _send_rich_menu(bot, chat_id, rich_html, keyboard, language)
+            menu_message_id = getattr(sent, 'message_id', None)
+        await remember_live_menu(chat_id, menu_message_id, db_user, texts)
         return True
     except TelegramForbiddenError:
         logger.warning('Не удалось показать rich-меню: бот заблокирован пользователем', chat_id=chat_id)
         return True
     except (TelegramNotFound, TelegramBadRequest) as error:
         if 'message is not modified' in str(error).lower():
+            await remember_live_menu(chat_id, message.message_id, db_user, texts)
             return True
         if _is_rich_date_error(error) and is_editable_as_rich:
             # Та же страховка, что и в _send_rich_menu: дата вне диапазона роняет
@@ -889,6 +946,7 @@ async def try_edit_rich_main_menu(
                         parse_mode=None,
                     )
                 )
+                await remember_live_menu(chat_id, message.message_id, db_user, texts)
                 return True
             except TelegramBadRequest as retry_error:
                 logger.warning('Повтор rich-меню без tg-time не удался', error=str(retry_error))

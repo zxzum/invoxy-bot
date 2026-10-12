@@ -41,6 +41,7 @@ from app.database.models import (
     BroadcastHistory,
     ButtonClickLog,
     CabinetRefreshToken,
+    CasheraPayment,
     CisPayPayment,
     CloudPaymentsPayment,
     ContestAttempt,
@@ -137,6 +138,7 @@ from app.database.models import (
     server_squad_promo_groups,
     tariff_promo_groups,
 )
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -268,6 +270,7 @@ class BackupService:
             DonutPayment,
             LavaPayment,
             CisPayPayment,
+            CasheraPayment,
             TabPayPayment,
             ParityPayPayment,
             AppleIAPAccount,
@@ -1705,6 +1708,7 @@ class BackupService:
             'tabpay_payments',
             'paritypay_payments',
             'cispay_payments',
+            'cashera_payments',
             'donut_payments',
             'jupiter_payments',
             'lava_payments',
@@ -2139,7 +2143,7 @@ class BackupService:
             if file_path:
                 notification_text += f'\n📁 <code>{Path(file_path).name}</code>'
 
-            notification_text += f'\n\n⏰ <i>{datetime.now(UTC).strftime("%d.%m.%Y %H:%M:%S")}</i>'
+            notification_text += f'\n\n⏰ <i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}</i>'
 
             try:
                 from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
@@ -2175,7 +2179,7 @@ class BackupService:
             caption = '📦 <b>Резервная копия</b>\n\n'
             if temp_zip_path:
                 caption += '🔐 <b>Архив защищён паролем</b>\n\n'
-            caption += f'⏰ <i>{datetime.now(UTC).strftime("%d.%m.%Y %H:%M:%S")}</i>'
+            caption += f'⏰ <i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}</i>'
 
             send_kwargs = {
                 'chat_id': chat_id,

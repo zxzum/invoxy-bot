@@ -22,7 +22,7 @@ from app.database.models import Base, ParityPayPayment
 
 
 VERSIONS = pathlib.Path(__file__).resolve().parents[2] / 'migrations/alembic/versions'
-MIGRATION = '0114_create_paritypay_payments.py'
+MIGRATION = '0122_create_paritypay_payments.py'
 TABLE = 'paritypay_payments'
 
 

@@ -26,6 +26,7 @@ from app.database.models import (
     WhitelistTrafficUsageSnapshot,
 )
 from app.services.remnawave_service import RemnaWaveService
+from app.utils.timezone import local_date
 
 
 logger = structlog.get_logger(__name__)
@@ -107,9 +108,10 @@ class WhitelistTrafficAccountingService:
 
         async with self._lock:
             now = datetime.now(UTC)
-            period_key = now.strftime('%Y-%m')
-            start_date = f'{now.year:04d}-{now.month:02d}-01'
-            end_date = now.date().isoformat()
+            today = local_date(now)
+            period_key = today.strftime('%Y-%m')
+            start_date = f'{today.year:04d}-{today.month:02d}-01'
+            end_date = today.isoformat()
             panel_squad_uuid = str(settings.WHITELIST_SQUAD_UUID).strip().lower()
             remnawave = RemnaWaveService()
 

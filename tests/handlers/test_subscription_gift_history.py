@@ -97,6 +97,17 @@ def mock_db() -> AsyncMock:
     return db
 
 
+@pytest.fixture(autouse=True)
+def capture_menu_render(monkeypatch):
+    monkeypatch.setattr('app.services.gift_purchase_service.is_gift_enabled', AsyncMock(return_value=True))
+    # INVOXY: menu assertions use the banner renderer's caption, independently of Telegram transport.
+    async def render(callback, text, keyboard, **kwargs):
+        await callback.message.edit_text(text, reply_markup=keyboard)
+
+    monkeypatch.setattr('app.handlers.subscription.purchase.edit_or_answer_photo', render)
+    monkeypatch.setattr('app.handlers.subscription.my_subscriptions.edit_or_answer_photo', render)
+
+
 @pytest.fixture
 def mock_callback(mock_db_user) -> AsyncMock:
     callback = AsyncMock(spec=CallbackQuery)

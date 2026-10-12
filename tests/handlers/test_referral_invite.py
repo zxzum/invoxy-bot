@@ -3,7 +3,7 @@
 The invite is shown inside a <blockquote> with "tap to copy". Telegram keeps
 <code> content in the clipboard but DROPS auto-linked raw URLs when copying a
 quote, so plain-URL bot/cabinet links fell out of the copied text. The fix
-wraps both links in <code>.
+wraps the whole invitation in <code>.
 """
 
 from types import SimpleNamespace
@@ -38,10 +38,10 @@ async def test_create_invite_message_wraps_links_in_code(monkeypatch):
     await ref.create_invite_message(callback, db_user, None)
 
     html = captured['text']
-    # Both links are wrapped in <code> so tap-to-copy captures them whole.
-    assert '<code>https://t.me/bot?start=ref_X</code>' in html
-    # `&` in the cabinet URL is HTML-escaped, but the <code> tags are NOT escaped.
-    assert '<code>https://cab.example/?ref=X&amp;u=1</code>' in html
+    # INVOXY: one code block copies the complete invitation, including both links.
+    assert html.count('<code>') == html.count('</code>') == 1
+    code = html.split('<code>', 1)[1].split('</code>', 1)[0]
+    assert 'https://t.me/bot?start=ref_X' in code
+    assert 'https://cab.example/?ref=X&amp;u=1' in code
     assert '&lt;code&gt;' not in html
-    # Still rendered inside the copyable quote.
-    assert '<blockquote>' in html and '</blockquote>' in html
+    assert 'Присоединяйся' in code

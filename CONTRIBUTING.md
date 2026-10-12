@@ -92,7 +92,7 @@
 - Python 3.11+
 - Docker и Docker Compose
 - Git
-- PostgreSQL 15+ (опционально для локальной разработки)
+- PostgreSQL 18 (опционально для локальной разработки)
 - Redis (опционально для локальной разработки)
 
 ### Установка
@@ -160,16 +160,15 @@ async def get_user_subscription(user_id: int) -> Optional[Subscription]:
     """Получает активную подписку пользователя."""
     async with get_session() as session:
         result = await session.execute(
-            select(Subscription)
-            .where(Subscription.user_id == user_id)
-            .where(Subscription.is_active == True)
+            select(Subscription).where(Subscription.user_id == user_id).where(Subscription.is_active == True)
         )
         return result.scalar_one_or_none()
+
 
 # ❌ Плохо
 async def getUserSub(uid):
     session = get_session()
-    sub = session.query(Subscription).filter(Subscription.user_id==uid,Subscription.is_active==True).first()
+    sub = session.query(Subscription).filter(Subscription.user_id == uid, Subscription.is_active == True).first()
     return sub
 ```
 
@@ -187,11 +186,8 @@ async def getUserSub(uid):
 ```python
 from typing import Optional, List, Dict, Any
 
-async def create_subscription(
-    user_id: int, 
-    duration_days: int,
-    traffic_limit_gb: Optional[int] = None
-) -> Subscription:
+
+async def create_subscription(user_id: int, duration_days: int, traffic_limit_gb: Optional[int] = None) -> Subscription:
     """Создает новую подписку."""
     # implementation
 ```
@@ -218,20 +214,20 @@ pricing = PricingEngine.calculate_renewal_price(
 # ✅ Хорошо
 try:
     subscription = await subscription_service.create_subscription(user_id, data)
-    await message.answer("✅ Подписка создана успешно!")
+    await message.answer('✅ Подписка создана успешно!')
 except RemnaWaveAPIError as e:
-    logger.error(f"RemnaWave API error: {e}")
-    await message.answer("❌ Ошибка при создании подписки. Попробуйте позже.")
+    logger.error(f'RemnaWave API error: {e}')
+    await message.answer('❌ Ошибка при создании подписки. Попробуйте позже.')
 except ValidationError as e:
-    logger.warning(f"Validation error: {e}")
-    await message.answer("❌ Некорректные данные для создания подписки.")
+    logger.warning(f'Validation error: {e}')
+    await message.answer('❌ Некорректные данные для создания подписки.')
 
 # ❌ Плохо
 try:
     subscription = await subscription_service.create_subscription(user_id, data)
-    await message.answer("✅ Подписка создана успешно!")
+    await message.answer('✅ Подписка создана успешно!')
 except:
-    await message.answer("Ошибка")
+    await message.answer('Ошибка')
 ```
 
 ### Логирование
@@ -242,11 +238,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Уровни логирования
-logger.debug("Детальная информация для отладки")
-logger.info("Общая информация о работе")
-logger.warning("Предупреждение о потенциальной проблеме") 
-logger.error("Ошибка, которая не прерывает работу")
-logger.critical("Критическая ошибка")
+logger.debug('Детальная информация для отладки')
+logger.info('Общая информация о работе')
+logger.warning('Предупреждение о потенциальной проблеме')
+logger.error('Ошибка, которая не прерывает работу')
+logger.critical('Критическая ошибка')
 ```
 
 ## 🔄 Работа с Git
@@ -335,7 +331,7 @@ uv run pytest tests/services/test_pricing_engine.py -q   # один файл
 проверяются на том же движке, что и в проде.
 
 ```bash
-make pg-test-up      # поднять PostgreSQL 15 на порту 55433
+make pg-test-up      # поднять PostgreSQL 18 на порту 55433
 make test-postgres   # только тесты с маркером postgres
 make test-all        # весь набор вместе с ними
 make pg-test-down    # убрать контейнер
@@ -387,6 +383,7 @@ make pg-test-down    # убрать контейнер
 # tests/services/test_pricing_engine.py
 import pytest
 from app.services.pricing_engine import PricingEngine
+
 
 def test_calculate_renewal_price():
     pricing = PricingEngine.calculate_renewal_price(

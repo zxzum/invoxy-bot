@@ -22,7 +22,7 @@ from app.database.models import Base, TabPayPayment
 
 
 VERSIONS = pathlib.Path(__file__).resolve().parents[2] / 'migrations/alembic/versions'
-MIGRATION = '0113_create_tabpay_payments.py'
+MIGRATION = '0121_create_tabpay_payments.py'
 TABLE = 'tabpay_payments'
 
 

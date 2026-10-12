@@ -10,6 +10,7 @@ from packaging import version
 
 from app.config import settings
 from app.utils.cache import cache
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -41,7 +42,7 @@ class VersionInfo:
 
     @property
     def formatted_date(self) -> str:
-        return self.published_at.strftime('%d.%m.%Y %H:%M')
+        return format_local_datetime(self.published_at, '%d.%m.%Y %H:%M')
 
     @property
     def short_description(self) -> str:

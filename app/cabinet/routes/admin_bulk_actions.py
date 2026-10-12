@@ -7,7 +7,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete as sa_delete, select
-from sqlalchemy.exc import MissingGreenlet
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -17,10 +17,12 @@ from app.database.crud.subscription import (
     extend_subscription,
     get_subscription_by_id,
     reactivate_subscription,
+    reconcile_tariff_traffic_limit,
 )
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.user import add_user_balance, get_user_by_id
 from app.database.crud.user_promo_group import sync_user_primary_promo_group
+from app.database.errors import is_missing_greenlet
 from app.database.models import (
     PaymentMethod,
     PromoGroup,
@@ -33,6 +35,7 @@ from app.database.models import (
     User,
     UserPromoGroup,
 )
+from app.utils.subscription_time import local_days_until
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.bulk_actions import (
@@ -116,7 +119,9 @@ def _known_subscriptions(user: User, fallback: Subscription | None = None) -> li
     """
     try:
         subs = getattr(user, 'subscriptions', None)
-    except MissingGreenlet:
+    except SQLAlchemyError as exc:
+        if not is_missing_greenlet(exc):
+            raise
         subs = None
     if subs is None:
         # Коллекция недоступна — отдаём хотя бы целевую подписку.
@@ -244,10 +249,16 @@ async def _do_activate_subscription(
             username=user.username,
         )
 
+    # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
+    from app.services.grace_access_echo import undo_grace_overlay_echo
+
+    await undo_grace_overlay_echo(db, sub)
     sub.status = SubscriptionStatus.ACTIVE.value
     if sub.end_date and sub.end_date <= datetime.now(UTC):
         # Extend by 30 days if expired
         sub.end_date = datetime.now(UTC) + timedelta(days=30)
+    # Условия тарифа на новый срок: база тарифа + активные докупки.
+    await reconcile_tariff_traffic_limit(db, sub)
     await db.commit()
     await db.refresh(sub)
     await _sync_subscription_to_panel(db, user, sub)
@@ -572,12 +583,14 @@ async def _do_delete_subscription(
     # runs BEFORE any irreversible panel/DB step, and the guard is
     # re-acquired immediately below — closing that window before anything
     # that can't be undone happens.
+    from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
     from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
     from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
     await cancel_platega_recurring_for_subscription_safe(db, sub.id)
 
     await cancel_lava_recurring_for_subscription_safe(db, sub.id)
+    await cancel_cashera_recurring_for_subscription_safe(db, sub.id)
     try:
         await ensure_no_open_grace_for_subscriptions(db, (sub.id,))
     except GraceAccessDeletionBlocked:
@@ -775,8 +788,7 @@ def _build_subscription_info(subs: list[Subscription]) -> list[BulkSubscriptionI
     for sub in subs:
         days_remaining = 0
         if sub.end_date:
-            delta = sub.end_date - datetime.now(UTC)
-            days_remaining = max(0, delta.days)
+            days_remaining = local_days_until(sub.end_date)
 
         tariff_name = None
         if sub.tariff:

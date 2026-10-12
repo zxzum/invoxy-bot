@@ -91,6 +91,17 @@ def mock_db() -> AsyncMock:
     return db
 
 
+@pytest.fixture(autouse=True)
+def capture_menu_render(monkeypatch):
+    monkeypatch.setattr('app.services.gift_purchase_service.is_gift_enabled', AsyncMock(return_value=True))
+    # INVOXY: menu assertions use the banner renderer's caption, independently of Telegram transport.
+    async def render(callback, text, keyboard, **kwargs):
+        await callback.message.edit_text(text, reply_markup=keyboard)
+
+    monkeypatch.setattr('app.handlers.subscription.purchase.edit_or_answer_photo', render)
+    monkeypatch.setattr('app.handlers.subscription.my_subscriptions.edit_or_answer_photo', render)
+
+
 @pytest.fixture
 def mock_callback(mock_db_user) -> AsyncMock:
     callback = AsyncMock(spec=CallbackQuery)
@@ -120,7 +131,7 @@ class TestSubscriptionGiftEntryVisibility:
     """Test gift entry button visibility in single and multi-tariff layouts."""
 
     def test_single_mode_active_sub_with_gift_enabled(self):
-        sub = SimpleNamespace(id=1, is_trial=False, actual_status='paid_active', traffic_limit_gb=100)
+        sub = SimpleNamespace(id=1, is_trial=False, actual_status='paid_active', tariff_id=1, traffic_limit_gb=100)
         kb = get_subscription_keyboard(
             language='ru', has_subscription=True, is_trial=False, subscription=sub, gift_enabled=True
         )
@@ -130,7 +141,7 @@ class TestSubscriptionGiftEntryVisibility:
         assert 'back_to_menu' in callbacks
 
     def test_single_mode_active_sub_with_gift_disabled(self):
-        sub = SimpleNamespace(id=1, is_trial=False, actual_status='paid_active', traffic_limit_gb=100)
+        sub = SimpleNamespace(id=1, is_trial=False, actual_status='paid_active', tariff_id=1, traffic_limit_gb=100)
         kb = get_subscription_keyboard(
             language='ru', has_subscription=True, is_trial=False, subscription=sub, gift_enabled=False
         )
@@ -139,7 +150,7 @@ class TestSubscriptionGiftEntryVisibility:
         assert 'subscription_extend' in callbacks
 
     def test_single_mode_trial_sub_with_gift_enabled(self):
-        sub = SimpleNamespace(id=2, is_trial=True, actual_status='trial_active', traffic_limit_gb=10)
+        sub = SimpleNamespace(id=2, is_trial=True, actual_status='trial_active', tariff_id=1, traffic_limit_gb=10)
         kb = get_subscription_keyboard(
             language='ru', has_subscription=True, is_trial=True, subscription=sub, gift_enabled=True
         )
@@ -148,7 +159,7 @@ class TestSubscriptionGiftEntryVisibility:
         assert 'subscription_upgrade' in callbacks
 
     def test_single_mode_expired_sub_with_gift_enabled(self):
-        sub = SimpleNamespace(id=3, is_trial=False, actual_status='expired', traffic_limit_gb=50)
+        sub = SimpleNamespace(id=3, is_trial=False, actual_status='expired', tariff_id=1, traffic_limit_gb=50)
         kb = get_subscription_keyboard(
             language='ru', has_subscription=True, is_trial=False, subscription=sub, gift_enabled=True
         )
@@ -183,7 +194,7 @@ class TestSubscriptionGiftEntryVisibility:
         assert 'subscription_gift' in _callbacks(reply_markup)
 
     def test_multi_mode_build_subscriptions_keyboard_gift_enabled(self):
-        subs = [SimpleNamespace(id=10, tariff=SimpleNamespace(name='Basic'))]
+        subs = [SimpleNamespace(id=10, tariff=SimpleNamespace(name='Basic'), tariff_id=10, is_trial=False)]
         kb = _build_subscriptions_keyboard(subs, language='ru', gift_enabled=True)
         callbacks = _callbacks(kb)
         assert 'subscription_gift' in callbacks
@@ -192,7 +203,7 @@ class TestSubscriptionGiftEntryVisibility:
         assert 'back_to_menu' in callbacks
 
     def test_multi_mode_build_subscriptions_keyboard_gift_disabled(self):
-        subs = [SimpleNamespace(id=10, tariff=SimpleNamespace(name='Basic'))]
+        subs = [SimpleNamespace(id=10, tariff=SimpleNamespace(name='Basic'), tariff_id=10, is_trial=False)]
         kb = _build_subscriptions_keyboard(subs, language='ru', gift_enabled=False)
         callbacks = _callbacks(kb)
         assert 'subscription_gift' not in callbacks
