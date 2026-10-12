@@ -1,0 +1,7 @@
+{
+  "tag": "v5.0.0",
+  "sha": "5bda3c56f0afd9f4813e9c6fa48934948b05ebae",
+  "upstream_before": "cd903b7cfd3bac6e08e571904662c88e8c151d1d",
+  "source_head": "beed041c752ed93bd6a48ef94770def1fab11149",
+  "merge_commit": "384c8ba138fc4994f2bd6ea6407562cb3c583064"
+}
