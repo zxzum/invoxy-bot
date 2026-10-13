@@ -58,6 +58,7 @@ from app.services.trial_activation_service import (
 )
 from app.services.user_cart_service import user_cart_service
 from app.utils.decorators import error_handler
+from app.utils.formatters import format_days_declension
 from app.utils.legacy_subscription import is_legacy_subscription as _legacy_subscription
 from app.utils.photo_message import edit_or_answer_photo
 from app.utils.screen_banners import get_screen_banner
@@ -156,7 +157,6 @@ from .devices import (
     confirm_reset_devices,
     execute_change_devices,
     get_current_devices_count,
-    get_servers_display_names,
     handle_all_devices_reset_from_management,
     handle_app_selection,
     handle_change_devices,
@@ -194,12 +194,14 @@ from .traffic import (
 )
 
 
-async def show_subscription_info(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def show_subscription_info(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext | None = None
+):
     # Multi-tariff: redirect to "My subscriptions" list
     if settings.is_multi_tariff_enabled():
         from app.handlers.subscription.my_subscriptions import show_my_subscriptions
 
-        await show_my_subscriptions(callback, db_user, db)
+        await show_my_subscriptions(callback, db_user, db, state)
         return
 
     # Проверяем, доступно ли сообщение для редактирования
@@ -277,12 +279,6 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
     time_left_text = format_time_left(texts, subscription.end_date, current_time)
     warning_text = format_expiry_warning(texts, subscription.end_date, current_time)
 
-    subscription_type = (
-        texts.t('SUBSCRIPTION_TYPE_TRIAL', 'Триал')
-        if subscription.is_trial
-        else texts.t('SUBSCRIPTION_TYPE_PAID', 'Платная')
-    )
-
     used_traffic = f'{subscription.traffic_used_gb:.1f}'
     if subscription.traffic_limit_gb == 0:
         traffic_used_display = texts.t(
@@ -296,12 +292,10 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
         ).format(used=used_traffic, limit=subscription.traffic_limit_gb)
 
     devices_used_str = '—'
-    devices_list = []
     devices_count = 0
 
     show_devices = settings.is_devices_selection_enabled()
     devices_used_str = ''
-    devices_list: list[dict[str, Any]] = []
 
     if show_devices:
         try:
@@ -320,7 +314,6 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
                     if isinstance(devices_info, dict):
                         devices_count = devices_info.get('total', 0)
-                        devices_list = devices_info.get('devices', [])
                         devices_used_str = str(devices_count)
                         logger.info(
                             'Найдено устройств для пользователя',
@@ -337,9 +330,6 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             devices_used = await get_current_devices_count(db_user)
             devices_used_str = str(devices_used)
 
-    servers_names = await get_servers_display_names(subscription.connected_squads)
-    servers_display = servers_names or texts.t('SUBSCRIPTION_NO_SERVERS', 'Нет серверов')
-
     # Получаем информацию о тарифе для режима тарифов
     tariff_info_block = ''
     tariff = None
@@ -354,14 +344,7 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
                 # Формируем блок информации о тарифе
                 is_daily = getattr(tariff, 'is_daily', False)
-                tariff_type_str = '🔄 Суточный' if is_daily else '📅 Периодный'
-
-                tariff_info_lines = [
-                    f'<b>📦 {html.escape(tariff.name)}</b>',
-                    f'Тип: {tariff_type_str}',
-                    f'Трафик: {tariff.traffic_limit_gb} ГБ' if tariff.traffic_limit_gb > 0 else 'Трафик: ∞ Безлимит',
-                    f'Устройства: {Texts.format_device_limit(tariff.device_limit)}',
-                ]
+                tariff_info_lines = []
 
                 if is_daily:
                     # Для суточного тарифа показываем цену с учётом скидки промогруппы + promo-offer
@@ -427,7 +410,8 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
                         tariff_info_lines.append('')
                         tariff_info_lines.append('⏳ Первое списание скоро')
 
-                tariff_info_block = '\n<blockquote expandable>' + '\n'.join(tariff_info_lines) + '</blockquote>'
+                if tariff_info_lines:
+                    tariff_info_block = '\n<blockquote>' + '\n'.join(tariff_info_lines) + '</blockquote>'
 
         except Exception as e:
             logger.warning('Ошибка получения тарифа', error=e, exc_info=True)
@@ -435,74 +419,31 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
     # Определяем, суточный ли тариф для выбора шаблона
     is_daily_tariff = tariff and getattr(tariff, 'is_daily', False)
 
-    if is_daily_tariff:
-        # Для суточных тарифов другой шаблон без "Действует до" и "Осталось"
-        message_template = texts.t(
-            'SUBSCRIPTION_DAILY_OVERVIEW_TEMPLATE',
-            """👤 {full_name}
-💰 Баланс: {balance}
-📱 Подписка: {status_emoji} {status_display}{warning}{tariff_info_block}
-
-📱 Информация о подписке
-🎭 Тип: {subscription_type}
-📈 Трафик: {traffic}
-🌍 Серверы: {servers}
-📱 Устройства: {devices_used} / {device_limit}""",
-        )
-    else:
-        message_template = texts.t(
-            'SUBSCRIPTION_OVERVIEW_TEMPLATE',
-            """👤 {full_name}
-💰 Баланс: {balance}
-📱 Подписка: {status_emoji} {status_display}{warning}{tariff_info_block}
-
-📱 Информация о подписке
-🎭 Тип: {subscription_type}
-📅 Действует до: {end_date}
-⏰ Осталось: {time_left}
-📈 Трафик: {traffic}
-🌍 Серверы: {servers}
-📱 Устройства: {devices_used} / {device_limit}""",
-        )
-
-    if not show_devices:
-        message_template = message_template.replace(
-            '\n📱 Устройства: {devices_used} / {device_limit}',
-            '',
-        )
-
-    device_limit_display = Texts.format_device_limit(subscription.device_limit)
-
-    message = message_template.format(
-        full_name=html.escape(db_user.full_name or ''),
-        balance=settings.format_price(db_user.balance_kopeks),
-        status_emoji=status_emoji,
-        status_display=status_display,
-        warning=warning_text,
-        tariff_info_block=tariff_info_block,
-        subscription_type=subscription_type,
-        end_date=format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M'),
-        time_left=time_left_text,
-        traffic=traffic_used_display,
-        servers=servers_display,
-        devices_used=devices_used_str,
-        device_limit=device_limit_display,
+    title = texts.t('INVOXY_SUBSCRIPTION_TRIAL_TITLE', '🎁 Пробный период') if subscription.is_trial else (
+        f'📦 {html.escape(tariff.name)}' if tariff else texts.t('INVOXY_SUBSCRIPTION_TITLE', '📱 Подписка')
     )
+    if actual_status == 'trial_active':
+        status_display = texts.t('SUBSCRIPTION_STATUS_ACTIVE', 'Активна')
+        status_emoji = '🟢'
+    lines = [f'<b>{title}</b>', f'{status_emoji} {status_display}{warning_text}']
+    if not is_daily_tariff:
+        lines.append(texts.t('INVOXY_SUBSCRIPTION_END_LINE', '📅 До {date} · {time_left}').format(
+            date=format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M'), time_left=time_left_text,
+        ))
+    lines.append(texts.t('INVOXY_SUBSCRIPTION_TRAFFIC_LINE', '📊 Трафик: {value}').format(value=traffic_used_display))
+    from app.utils.formatters import format_whitelist_traffic
 
-    if show_devices and devices_list:
-        message += '\n\n' + texts.t(
-            'SUBSCRIPTION_CONNECTED_DEVICES_TITLE',
-            '<blockquote>📱 <b>Подключенные устройства:</b>\n',
-        )
-        for device in devices_list:
-            platform = device.get('platform', 'Unknown')
-            device_model = device.get('deviceModel', 'Unknown')
-            device_info = f'{platform} - {device_model}'
-
-            if len(device_info) > 35:
-                device_info = device_info[:32] + '...'
-            message += f'• {device_info}\n'
-        message += texts.t('SUBSCRIPTION_CONNECTED_DEVICES_FOOTER', '</blockquote>')
+    whitelist_traffic = format_whitelist_traffic(
+        subscription.whitelist_traffic_used_bytes,
+        subscription.whitelist_traffic_limit_gb,
+    )
+    if whitelist_traffic:
+        lines.append(texts.t('INVOXY_SUBSCRIPTION_WHITELIST_LINE', '🔐 Белые списки: {value}').format(value=whitelist_traffic))
+    if show_devices:
+        lines.append(texts.t('INVOXY_SUBSCRIPTION_DEVICES_LINE', '📱 Устройства: {value}').format(
+            value=f'{devices_used_str or "—"} / {Texts.format_device_limit(subscription.device_limit)}',
+        ))
+    message = '\n'.join(lines) + tariff_info_block
 
     # Отображаем докупленный трафик
     if subscription.traffic_limit_gb > 0:  # Только для лимитированных тарифов
@@ -560,25 +501,9 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
             message += texts.t('SUBSCRIPTION_PURCHASED_TRAFFIC_FOOTER', '</blockquote>')
 
-    subscription_link = get_display_subscription_link(subscription)
-    hide_subscription_link = settings.should_hide_subscription_link()
+    from app.handlers.migration import can_offer_lazeika_migration
 
-    if subscription_link and actual_status in ['trial_active', 'paid_active'] and not hide_subscription_link:
-        subscription_link_display = subscription_link
-
-        if settings.is_happ_cryptolink_mode():
-            subscription_link_display = f'<blockquote expandable><code>{subscription_link}</code></blockquote>'
-        else:
-            subscription_link_display = f'<code>{subscription_link}</code>'
-
-        message += '\n\n' + texts.t(
-            'SUBSCRIPTION_CONNECT_LINK_SECTION',
-            '🔗 <b>Ссылка для подключения:</b>\n{subscription_url}',
-        ).format(subscription_url=subscription_link_display)
-        message += '\n\n' + texts.t(
-            'SUBSCRIPTION_CONNECT_LINK_PROMPT',
-            '📱 Скопируйте ссылку и добавьте в ваше VPN приложение',
-        )
+    can_migrate = subscription.is_trial and await can_offer_lazeika_migration(db, db_user)
 
     await edit_or_answer_photo(
         callback,
@@ -589,6 +514,7 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             is_trial=subscription.is_trial,
             subscription=subscription,
             gift_enabled=gift_enabled,
+            can_migrate=can_migrate,
         ),
         media=get_screen_banner('subscription'),
         media_kind='subscription',
@@ -630,7 +556,6 @@ async def show_trial_offer(callback: types.CallbackQuery, db_user: User, db: Asy
     trial_traffic = settings.TRIAL_TRAFFIC_LIMIT_GB
     trial_device_limit = settings.TRIAL_DEVICE_LIMIT
     trial_tariff = None
-    trial_server_name = texts.t('TRIAL_SERVER_DEFAULT_NAME', '🎯 Тестовый сервер')
 
     # Проверяем триальный тариф
     if settings.is_tariffs_mode():
@@ -652,38 +577,6 @@ async def show_trial_offer(callback: types.CallbackQuery, db_user: User, db: Asy
                 logger.info('Показываем триал с тарифом', trial_tariff_name=trial_tariff.name)
         except Exception as e:
             logger.error('Ошибка получения триального тарифа', error=e)
-
-    try:
-        from app.database.crud.server_squad import get_trial_eligible_server_squads
-
-        # Для тарифа используем его сервера
-        if trial_tariff and trial_tariff.allowed_squads:
-            from app.database.crud.server_squad import get_server_squads_by_uuids
-
-            tariff_squads = await get_server_squads_by_uuids(db, trial_tariff.allowed_squads)
-            if tariff_squads:
-                if len(tariff_squads) == 1:
-                    trial_server_name = html.escape(tariff_squads[0].display_name)
-                else:
-                    trial_server_name = texts.t(
-                        'TRIAL_SERVER_RANDOM_POOL',
-                        '🎲 Случайный из {count} серверов',
-                    ).format(count=len(tariff_squads))
-        else:
-            trial_squads = await get_trial_eligible_server_squads(db, include_unavailable=True)
-            if trial_squads:
-                if len(trial_squads) == 1:
-                    trial_server_name = html.escape(trial_squads[0].display_name)
-                else:
-                    trial_server_name = texts.t(
-                        'TRIAL_SERVER_RANDOM_POOL',
-                        '🎲 Случайный из {count} серверов',
-                    ).format(count=len(trial_squads))
-            else:
-                logger.warning('Не настроены сквады для выдачи триалов')
-
-    except Exception as e:
-        logger.error('Ошибка получения триального сервера', error=e)
 
     if not settings.is_devices_selection_enabled():
         forced_limit = settings.get_disabled_mode_device_limit()
@@ -709,12 +602,23 @@ async def show_trial_offer(callback: types.CallbackQuery, db_user: User, db: Asy
                 '\n💳 <b>Стоимость активации:</b> {price}',
             ).format(price=settings.format_price(trial_price))
 
-    trial_text = texts.TRIAL_AVAILABLE.format(
+    whitelist_limit = trial_tariff.whitelist_traffic_limit_gb if trial_tariff else 0
+    access_line = ''
+    if whitelist_limit:
+        access_line = texts.t(
+            'INVOXY_TRIAL_WHITELIST_QUOTA', '\n🔐 <b>Из них белые списки:</b> до {limit} ГБ'
+        ).format(limit=whitelist_limit)
+    trial_text = texts.t(
+        'INVOXY_TRIAL_AVAILABLE_COMPACT',
+        '🎁 <b>Пробный период</b>\n\n⏰ <b>Срок:</b> {duration}\n'
+        '📊 <b>Трафик всего:</b> {traffic}{devices_line}{access_line}{price_line}\n\nАктивировать доступ?',
+    ).format(
         days=trial_days,
         traffic=texts.format_traffic(trial_traffic),
         devices=trial_device_limit if trial_device_limit is not None else '',
         devices_line=devices_line,
-        server_name=trial_server_name,
+        duration=format_days_declension(trial_days, db_user.language),
+        access_line=access_line,
         price_line=price_line,
     )
 

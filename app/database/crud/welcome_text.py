@@ -242,7 +242,7 @@ def replace_placeholders(text: str, user) -> str:
     return result
 
 
-async def get_welcome_text_for_user(db: AsyncSession, user) -> str:
+async def get_welcome_text_for_user(db: AsyncSession, user, db_user: User | None = None) -> str | None:
     welcome_text = await get_active_welcome_text(db)
 
     if not welcome_text:
@@ -257,11 +257,61 @@ async def get_welcome_text_for_user(db: AsyncSession, user) -> str:
 
         user = SimpleUser(user)
 
+    # INVOXY: prices and quotas must follow admin edits, never a static welcome caption.
+    if '{tariffs}' in welcome_text or '{trial}' in welcome_text:
+        from app.config import settings
+        from app.database.crud.tariff import get_tariffs_for_user, get_trial_tariff
+        from app.localization.texts import Texts
+        from app.utils.formatters import format_days_declension
+
+        tariffs = await get_tariffs_for_user(db, db_user.promo_group_id if db_user else None)
+        lines = []
+        for tariff in tariffs:
+            prices = tariff.period_prices or {}
+            if not tariff.is_daily and not prices:
+                continue
+            if tariff.is_daily:
+                price = f'{settings.format_price(tariff.daily_price_kopeks)}/день'
+            else:
+                period = min(prices, key=int)
+                price = f'{settings.format_price(prices[period])} / {format_days_declension(int(period))}'
+            traffic = Texts.format_traffic(tariff.traffic_limit_gb)
+            line = (
+                f'<b>{html.escape(tariff.name)}</b> — {traffic}, '
+                f'{Texts.format_device_limit(tariff.device_limit)} устр., {price}'
+            )
+            if tariff.whitelist_traffic_limit_gb:
+                line += f' · LTE {tariff.whitelist_traffic_limit_gb} ГБ'
+            lines.append(line)
+        welcome_text = welcome_text.replace('{tariffs}', '\n'.join(lines) or 'Тарифы скоро появятся.')
+        trial_text = ''
+        if settings.TRIAL_DURATION_DAYS > 0 and not settings.is_trial_disabled_for_user(
+            getattr(db_user, 'auth_type', 'telegram')
+        ):
+            trial = await get_trial_tariff(db)
+            days = (trial.trial_duration_days or settings.TRIAL_DURATION_DAYS) if trial else settings.TRIAL_DURATION_DAYS
+            traffic = trial.traffic_limit_gb if trial else settings.TRIAL_TRAFFIC_LIMIT_GB
+            devices = trial.device_limit if trial else settings.TRIAL_DEVICE_LIMIT
+            forced = settings.get_disabled_mode_device_limit() if not settings.is_devices_selection_enabled() else None
+            if forced is not None:
+                devices = forced
+            trial_text = (
+                f'🎁 Пробный период: {format_days_declension(days)}, '
+                f'{Texts.format_traffic(traffic)}, {Texts.format_device_limit(devices)} устр.'
+            )
+            if trial and trial.whitelist_traffic_limit_gb:
+                trial_text += f' · из них до {trial.whitelist_traffic_limit_gb} ГБ LTE'
+            if settings.is_trial_paid_activation_enabled():
+                trial_text += f' · Активация: {settings.format_price(settings.get_trial_activation_price())}'
+        welcome_text = welcome_text.replace('{trial}', trial_text)
+
     return replace_placeholders(welcome_text, user)
 
 
 def get_available_placeholders() -> dict:
     return {
+        '{tariffs}': 'Актуальные тарифы, цены и лимиты из базы',
+        '{trial}': 'Актуальные условия пробного периода из базы',
         '{user_name}': 'Имя или username пользователя (приоритет: имя → username → "друг")',
         '{first_name}': 'Только имя пользователя (или "друг" если не указано)',
         '{username}': 'Username с символом @ (или имя если username не указан)',

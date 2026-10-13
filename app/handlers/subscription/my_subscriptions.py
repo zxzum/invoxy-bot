@@ -136,7 +136,9 @@ def _build_subscriptions_keyboard(
     return types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKeyboardMarkup:
+def _build_subscription_detail_keyboard(
+    sub_id: int, sub=None, *, can_migrate: bool = False, single_view: bool = False
+) -> types.InlineKeyboardMarkup:
     """Build keyboard for single subscription management.
 
     For expired/disabled subscriptions, only 'Renew' and 'Back' are shown —
@@ -150,7 +152,7 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
         buttons.append([types.InlineKeyboardButton(text='🔗 Ссылка подключения', callback_data=f'sl:{sub_id}')])
 
     buttons.append([types.InlineKeyboardButton(text='🔄 Продлить', callback_data=f'se:{sub_id}')])
-    if sub is not None and getattr(sub, 'is_trial', False) and getattr(settings, 'LAZEIKA_MIGRATION_ENABLED', True):
+    if can_migrate and sub is not None and getattr(sub, 'is_trial', False) and getattr(settings, 'LAZEIKA_MIGRATION_ENABLED', True):
         buttons.append([types.InlineKeyboardButton(text='🚀 Перенести из Лазейки (+5 дней)', callback_data='lazeika_migrate:check')])
 
     if not is_inactive:
@@ -183,7 +185,10 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
             ]
         )
 
-    buttons.append([types.InlineKeyboardButton(text='◀️ К списку подписок', callback_data='my_subscriptions')])
+    buttons.append([types.InlineKeyboardButton(
+        text='🏠 Главное меню' if single_view else '◀️ К списку подписок',
+        callback_data='back_to_menu' if single_view else 'my_subscriptions',
+    )])
 
     return types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -204,6 +209,10 @@ async def show_my_subscriptions(
     texts = get_texts(db_user.language)
     gift_enabled = await is_gift_enabled(db)
     subscriptions = await get_all_subscriptions_by_user_id(db, db_user.id)
+
+    if len(subscriptions) == 1:
+        await show_subscription_detail(callback, db_user, db, state, sub_id=subscriptions[0].id, single_view=True)
+        return
 
     if not subscriptions:
         text = '📋 <b>Мои подписки</b>\n\nУ вас нет подписок.'
@@ -240,15 +249,18 @@ async def show_subscription_detail(
     callback: types.CallbackQuery,
     db_user: User,
     db: AsyncSession,
-    state: FSMContext,
+    state: FSMContext | None = None,
+    *,
+    sub_id: int | None = None,
+    single_view: bool | None = None,
 ) -> None:
     """Show detail view for a single subscription (IDOR protected)."""
-    parts = callback.data.split(':')
-    if len(parts) < 2:
-        await callback.answer('Неверный формат', show_alert=True)
-        return
+    if sub_id is None:
+        sub_id = _extract_sub_id(callback)
+        if sub_id is None:
+            await callback.answer('Неверный формат', show_alert=True)
+            return
 
-    sub_id = int(parts[1])
     subscription = await get_subscription_by_id_for_user(db, sub_id, db_user.id)
 
     if not subscription:
@@ -257,9 +269,16 @@ async def show_subscription_detail(
 
     # Persist active sub_id so downstream handlers without sub_id in callback_data
     # (e.g. 'subscription_autopay') can resolve the right subscription via FSM.
-    await state.update_data(active_subscription_id=sub_id)
+    if state is not None:
+        await state.update_data(active_subscription_id=sub_id)
+    if single_view is None:
+        subscriptions = await get_all_subscriptions_by_user_id(db, db_user.id)
+        single_view = len(subscriptions) == 1
 
-    tariff_name = subscription.tariff.name if subscription.tariff else 'Подписка'
+    tariff_name = (
+        'Пробный период' if subscription.is_trial
+        else (subscription.tariff.name if subscription.tariff else 'Подписка')
+    )
 
     # Traffic
     if subscription.traffic_limit_gb == 0:
@@ -277,22 +296,26 @@ async def show_subscription_detail(
     )
 
     end_date = format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M') if subscription.end_date else '—'
-    status = subscription.status_display
+    status = 'Активна' if subscription.is_trial and subscription.is_active else subscription.status_display
+    from .devices import get_current_devices_count
+
+    devices_used = await get_current_devices_count(db_user, subscription)
 
     text = (
-        f'📋 <b>{tariff_name}</b>\n\n'
+        f'📋 <b>{html.escape(tariff_name)}</b>\n\n'
         f'Статус: {status}\n'
         f'📊 Трафик: {traffic}\n'
         f'{whitelist_line}'
-        f'📱 Устройства: {Texts.format_device_limit(subscription.device_limit)}\n'
+        f'📱 Устройства: {devices_used} / {Texts.format_device_limit(subscription.device_limit)}\n'
         f'📅 До: {end_date}\n'
     )
 
-    subscription_link = settings.normalize_subscription_url(subscription.subscription_url)
-    if subscription_link and not settings.should_hide_subscription_link():
-        text += f'\n🔗 <code>{subscription_link}</code>'
+    from app.handlers.migration import can_offer_lazeika_migration
 
-    keyboard = _build_subscription_detail_keyboard(sub_id, sub=subscription)
+    can_migrate = subscription.is_trial and await can_offer_lazeika_migration(db, db_user)
+    keyboard = _build_subscription_detail_keyboard(
+        sub_id, sub=subscription, can_migrate=can_migrate, single_view=single_view
+    )
 
     if callback.message:
         await edit_or_answer_photo(

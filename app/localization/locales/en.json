@@ -2393,5 +2393,14 @@
   "PAYMENT_METHOD_UNAVAILABLE": "This payment method is unavailable.",
   "ROLLYPAY_SELECT_PAYMENT_METHOD": "Choose a payment method in Payment system #1:",
   "ROLLYPAY_UNAVAILABLE": "Payment system #1 is temporarily unavailable.",
-  "TOPUP_RESTRICTED": "Top-ups are restricted by the administrator."
+  "TOPUP_RESTRICTED": "Top-ups are restricted by the administrator.",
+  "INVOXY_SUBSCRIPTION_TITLE": "📱 Subscription",
+  "INVOXY_SUBSCRIPTION_TRIAL_TITLE": "🎁 Trial",
+  "INVOXY_TARIFF_BUY_SELECTED_BUTTON": "🛒 Buy selected plan",
+  "INVOXY_TRIAL_AVAILABLE_COMPACT": "🎁 <b>Trial</b>\n\n⏰ <b>Duration:</b> {duration}\n📊 <b>Total traffic:</b> {traffic}{devices_line}{access_line}{price_line}\n\nActivate access?",
+  "INVOXY_TRIAL_WHITELIST_QUOTA": "\n🔐 <b>Includes allowlist access:</b> up to {limit} GB",
+  "INVOXY_SUBSCRIPTION_END_LINE": "📅 Until {date} · {time_left}",
+  "INVOXY_SUBSCRIPTION_TRAFFIC_LINE": "📊 Traffic: {value}",
+  "INVOXY_SUBSCRIPTION_WHITELIST_LINE": "🔐 Allowlist: {value}",
+  "INVOXY_SUBSCRIPTION_DEVICES_LINE": "📱 Devices: {value}"
 }

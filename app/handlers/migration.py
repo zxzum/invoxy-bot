@@ -1,5 +1,7 @@
 """Telegram bot handlers for migrating users from Lazeika VPN (temporary)."""
 
+import asyncio
+
 import structlog
 from aiogram import F, Router, types
 from aiogram.filters import Command
@@ -32,6 +34,20 @@ def get_migration_success_keyboard() -> types.InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+async def can_offer_lazeika_migration(db: AsyncSession, user: User) -> bool:
+    """Show transfer only after a read-only eligibility check succeeds."""
+    from app.config import settings
+
+    if not settings.LAZEIKA_MIGRATION_ENABLED or not user.telegram_id:
+        return False
+    try:
+        async with asyncio.timeout(3):
+            return bool(await check_migration_eligibility(db, telegram_id=user.telegram_id, user=user))
+    except Exception as error:
+        logger.warning('Не удалось проверить доступность переноса', error=str(error))
+        return False
 
 
 async def check_and_prompt_lazeika_migration(
@@ -284,8 +300,7 @@ async def handle_migration_check_callback(
     candidate = await check_migration_eligibility(db, telegram_id=telegram_id, user=user)
     if not candidate:
         await callback.answer(
-            'Оплаченная подписка не найдена или уже перенесена. Триал не переносится. '
-            'Оформите платную подписку в Лазейке и перенесите её с бонусом +5 дней.',
+            'Доступной для переноса подписки нет. Если вы ожидали её увидеть, обратитесь в поддержку.',
             show_alert=True,
         )
         return

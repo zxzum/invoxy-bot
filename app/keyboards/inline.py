@@ -1164,6 +1164,7 @@ def get_subscription_keyboard(
     is_trial: bool = False,
     subscription=None,
     gift_enabled: bool = False,
+    can_migrate: bool = False,
 ) -> InlineKeyboardMarkup:
     from app.config import settings
 
@@ -1259,7 +1260,7 @@ def get_subscription_keyboard(
             keyboard.append(
                 [InlineKeyboardButton(text=texts.MENU_BUY_SUBSCRIPTION, callback_data='subscription_upgrade')]
             )
-            if getattr(settings, 'LAZEIKA_MIGRATION_ENABLED', True):
+            if can_migrate and getattr(settings, 'LAZEIKA_MIGRATION_ENABLED', True):
                 keyboard.append(
                     [
                         InlineKeyboardButton(

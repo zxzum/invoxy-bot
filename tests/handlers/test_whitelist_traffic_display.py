@@ -11,6 +11,7 @@ from app.utils.formatters import format_whitelist_traffic
 def _subscription(**overrides):
     values = {
         'id': 7,
+        'is_trial': False,
         'actual_status': 'active',
         'status_display': 'Активна',
         'tariff': SimpleNamespace(name='Стандарт'),
@@ -46,6 +47,9 @@ async def test_single_subscription_detail_displays_whitelist_quota(monkeypatch: 
     monkeypatch.setattr(my_subscriptions, 'edit_or_answer_photo', render)
     subscription = _subscription()
     monkeypatch.setattr(my_subscriptions, 'get_subscription_by_id_for_user', AsyncMock(return_value=subscription))
+    monkeypatch.setattr(my_subscriptions, 'get_all_subscriptions_by_user_id', AsyncMock(return_value=[subscription]))
+    from app.handlers.subscription import devices
+    monkeypatch.setattr(devices, 'get_current_devices_count', AsyncMock(return_value='2'))
 
     callback = SimpleNamespace(
         data='sm:7',

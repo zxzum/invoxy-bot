@@ -2393,5 +2393,14 @@
   "PAYMENT_METHOD_UNAVAILABLE": "Этот способ оплаты недоступен.",
   "ROLLYPAY_SELECT_PAYMENT_METHOD": "Выберите способ оплаты в платёжной системе №1:",
   "ROLLYPAY_UNAVAILABLE": "Платёжная система №1 временно недоступна.",
-  "TOPUP_RESTRICTED": "Пополнение ограничено администратором."
+  "TOPUP_RESTRICTED": "Пополнение ограничено администратором.",
+  "INVOXY_SUBSCRIPTION_TITLE": "📱 Подписка",
+  "INVOXY_SUBSCRIPTION_TRIAL_TITLE": "🎁 Пробный период",
+  "INVOXY_TARIFF_BUY_SELECTED_BUTTON": "🛒 Купить выбранный тариф",
+  "INVOXY_TRIAL_AVAILABLE_COMPACT": "🎁 <b>Пробный период</b>\n\n⏰ <b>Срок:</b> {duration}\n📊 <b>Трафик всего:</b> {traffic}{devices_line}{access_line}{price_line}\n\nАктивировать доступ?",
+  "INVOXY_TRIAL_WHITELIST_QUOTA": "\n🔐 <b>Из них белые списки:</b> до {limit} ГБ",
+  "INVOXY_SUBSCRIPTION_END_LINE": "📅 До {date} · {time_left}",
+  "INVOXY_SUBSCRIPTION_TRAFFIC_LINE": "📊 Трафик: {value}",
+  "INVOXY_SUBSCRIPTION_WHITELIST_LINE": "🔐 Белые списки: {value}",
+  "INVOXY_SUBSCRIPTION_DEVICES_LINE": "📱 Устройства: {value}"
 }

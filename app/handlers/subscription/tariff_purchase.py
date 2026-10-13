@@ -215,15 +215,25 @@ def format_tariffs_list_text(
                     price=format_price_kopeks(min_price, compact=True), icon=discount_icon
                 )
 
-        # Компактный формат: Название — 250 ГБ / 10 📱 от 179₽🔥
+        # Параметры берём из тарифа; описание содержит только пояснение.
         purchased_mark = ' ✅' if tariff.id in purchased_tariff_ids else ''
         lines.append(
-            f'<b>{html.escape(tariff.name)}</b>{purchased_mark} — {traffic} / {tariff.device_limit} 📱 {price_text}'
+            f'<b>{html.escape(tariff.name)}</b>{purchased_mark}\n'
+            + texts.t('INVOXY_SUBSCRIPTION_TRAFFIC_LINE', '📊 Трафик: {value}').format(value=traffic) + '\n'
+            + texts.t('INVOXY_SUBSCRIPTION_DEVICES_LINE', '📱 Устройства: {value}').format(
+                value=Texts.format_device_limit(tariff.device_limit)
+            ) + f'\n💳 {price_text}'
         )
+
+        whitelist_limit = getattr(tariff, 'whitelist_traffic_limit_gb', 0) or 0
+        if whitelist_limit > 0:
+            lines.append(texts.t('INVOXY_SUBSCRIPTION_WHITELIST_LINE', '🔐 Белые списки: {value}').format(
+                value=texts.format_traffic(whitelist_limit),
+            ))
 
         # Описание тарифа если есть
         if tariff.description:
-            lines.append(f'<i>{html.escape(tariff.description)}</i>')
+            lines.append(f'<blockquote>{html.escape(tariff.description)}</blockquote>')
 
         lines.append('')
 
@@ -234,6 +244,7 @@ def get_tariffs_keyboard(
     tariffs: list[Tariff],
     language: str,
     purchased_tariff_ids: set[int] | None = None,
+    selected_tariff_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     """Создает компактную клавиатуру выбора тарифов (только названия)."""
     texts = get_texts(language)
@@ -251,7 +262,18 @@ def get_tariffs_keyboard(
             title = f'{badge} · {tariff.name}'
         else:
             title = tariff.name
-        buttons.append([InlineKeyboardButton(text=title, callback_data=f'tariff_select:{tariff.id}')])
+        selected = tariff.id == selected_tariff_id
+        buttons.append([InlineKeyboardButton(
+            text=f'● {title}' if selected else title,
+            callback_data=f'tariff_preview:{tariff.id}' if selected_tariff_id is not None else f'tariff_select:{tariff.id}',
+            style='success' if selected else None,
+        )])
+
+    if selected_tariff_id is not None:
+        buttons.append([InlineKeyboardButton(
+            text=texts.t('INVOXY_TARIFF_BUY_SELECTED_BUTTON', '🛒 Купить выбранный тариф'),
+            callback_data=f'tariff_select:{selected_tariff_id}', style='primary',
+        )])
 
     buttons.append([InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu')])
 
@@ -847,11 +869,13 @@ async def show_tariffs_list(
 ):
     """Показывает список тарифов для покупки."""
     texts = get_texts(db_user.language)
+    previous_data = await state.get_data()
     await state.clear()
 
     # Получаем доступные тарифы
     promo_group_id = getattr(db_user, 'promo_group_id', None)
     tariffs = await get_tariffs_for_user(db, promo_group_id)
+    tariffs = [tariff for tariff in tariffs if tariff.is_daily or tariff.period_prices]
 
     if not tariffs:
         await callback.message.edit_text(
@@ -871,7 +895,7 @@ async def show_tariffs_list(
     # на уже активном тарифе только показывает всплывающее уведомление и выходит,
     # ничего не перерисовывая, — кнопка «Купить подписку» выглядела бы мёртвой.
     # Тогда показываем список: там тариф помечен галочкой и понятно, почему.
-    if len(tariffs) == 1:
+    if len(tariffs) == 1 and not callback.data.startswith('tariff_preview:'):
         _already_owned = False
         if settings.is_multi_tariff_enabled():
             from app.database.crud.subscription import get_active_subscriptions_by_user_id
@@ -901,11 +925,30 @@ async def show_tariffs_list(
             has_period_discounts = True
 
     # Формируем текст со списком тарифов и их характеристиками
-    tariffs_text = format_tariffs_list_text(tariffs, db_user, has_period_discounts, purchased_tariff_ids)
+    selected = next(
+        (tariff for tariff in tariffs if tariff.id == previous_data.get('selected_catalog_tariff_id')), tariffs[0]
+    )
+    if callback.data.startswith('tariff_preview:'):
+        try:
+            requested_id = int(callback.data.split(':', 1)[1])
+        except ValueError:
+            await callback.answer('Тариф не найден', show_alert=True)
+            return
+        selected = next((tariff for tariff in tariffs if tariff.id == requested_id), None)
+        if selected is None:
+            await callback.answer('Тариф недоступен', show_alert=True)
+            return
+
+    await state.update_data(selected_catalog_tariff_id=selected.id)
+    if callback.data.startswith('tariff_preview:') and previous_data.get('selected_catalog_tariff_id') == selected.id:
+        await callback.answer()
+        return
+
+    tariffs_text = format_tariffs_list_text([selected], db_user, has_period_discounts, purchased_tariff_ids)
 
     await callback.message.edit_text(
         tariffs_text,
-        reply_markup=get_tariffs_keyboard(tariffs, db_user.language, purchased_tariff_ids),
+        reply_markup=get_tariffs_keyboard(tariffs, db_user.language, purchased_tariff_ids, selected.id),
     )
 
     await callback.answer()
@@ -945,7 +988,7 @@ async def _proceed_with_selected_tariff(
     texts = get_texts(db_user.language)
     back_callback = 'back_to_menu' if skip_selection else 'menu_buy'
     # Признак нужен последующим перерисовкам в других хендлерах.
-    await state.update_data(tariff_selection_skipped=skip_selection)
+    await state.update_data(tariff_selection_skipped=skip_selection, selected_catalog_tariff_id=tariff_id)
     tariff = await get_tariff_by_id(db, tariff_id)
 
     if not tariff or not tariff.is_active:
@@ -5700,6 +5743,7 @@ async def purchase_tariff_with_sbp(
 def register_tariff_purchase_handlers(dp: Dispatcher):
     """Регистрирует обработчики покупки по тарифам."""
     # Список тарифов (для режима tariffs)
+    dp.callback_query.register(show_tariffs_list, F.data.startswith('tariff_preview:'))
     dp.callback_query.register(show_tariffs_list, F.data == 'tariff_list')
     dp.callback_query.register(show_tariffs_list, F.data == 'buy_subscription_tariffs')
 

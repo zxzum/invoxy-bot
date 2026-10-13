@@ -50,7 +50,7 @@ def _period_tariff(tariff_id: int = 42):
 
 async def test_show_tariffs_list_single_tariff_skips_list_and_proceeds(monkeypatch):
     """Один тариф из get_tariffs_for_user → не рисуем список, сразу _proceed с skip_selection."""
-    tariff = SimpleNamespace(id=42, name='Единственный')
+    tariff = SimpleNamespace(id=42, name='Единственный', is_daily=False, period_prices={'30': 10000})
     proceed = AsyncMock()
 
     monkeypatch.setattr(m, 'get_tariffs_for_user', AsyncMock(return_value=[tariff]))
@@ -70,8 +70,8 @@ async def test_show_tariffs_list_single_tariff_skips_list_and_proceeds(monkeypat
 async def test_show_tariffs_list_multiple_tariffs_shows_list(monkeypatch):
     """Два и больше тарифов → список как раньше, без авто-перехода."""
     tariffs = [
-        SimpleNamespace(id=1, name='A'),
-        SimpleNamespace(id=2, name='B'),
+        SimpleNamespace(id=1, name='A', is_daily=False, period_prices={'30': 10000}),
+        SimpleNamespace(id=2, name='B', is_daily=False, period_prices={'30': 10000}),
     ]
     proceed = AsyncMock()
 
@@ -189,7 +189,7 @@ async def test_single_owned_tariff_shows_the_list_instead_of_a_dead_button(monke
     пропуске списка пользователь жмёт «Купить подписку» и остаётся на прежнем
     экране без объяснений. Список в этом случае нужен: тариф в нём помечен.
     """
-    tariff = SimpleNamespace(id=42, name='Единственный')
+    tariff = SimpleNamespace(id=42, name='Единственный', is_daily=False, period_prices={'30': 10000})
     proceed = AsyncMock()
 
     monkeypatch.setattr(m, 'get_tariffs_for_user', AsyncMock(return_value=[tariff]))

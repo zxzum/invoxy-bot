@@ -990,7 +990,7 @@
   Функции: `build_main_menu_keyboard` — Клавиатура главного меню: show_main_menu, handle_back_to_menu и живое меню (live_menu_service)., `show_main_menu`, `handle_profile_unavailable`, `show_service_rules`, `show_info_menu`, `show_promo_groups_info`, `show_faq_pages`, `show_faq_page`, `show_privacy_policy`, `show_public_offer`, `show_info_page`, `show_language_menu`, `process_language_change`, `handle_back_to_menu`, `get_main_menu_text`, `handle_activate_button` — Умная кнопка активации — система сама решает что делать:, `handle_app_connect_callback`, `handle_app_connect_command`, `register_handlers`
 - `app/handlers/migration.py` — Python-модуль
   Классы: нет
-  Функции: `get_migration_success_keyboard`, `check_and_prompt_lazeika_migration` — Checks if the user has an active subscription in Lazeika VPN and offers transfer., `handle_migration_execute` — Executes the migration when the user confirms transfer., `handle_migration_skip` — User skipped the migration offer., `handle_migration_check_callback` — User manually requested migration check via button., `handle_migration_command` — Command /migrate or /lazeika to check and initiate migration., `register_handlers`
+  Функции: `get_migration_success_keyboard`, `can_offer_lazeika_migration` — Show transfer only after a read-only eligibility check succeeds., `check_and_prompt_lazeika_migration` — Checks if the user has an active subscription in Lazeika VPN and offers transfer., `handle_migration_execute` — Executes the migration when the user confirms transfer., `handle_migration_skip` — User skipped the migration offer., `handle_migration_check_callback` — User manually requested migration check via button., `handle_migration_command` — Command /migrate or /lazeika to check and initiate migration., `register_handlers`
 - `app/handlers/polls.py` — Python-модуль
   Классы: нет
   Функции: `handle_poll_start`, `handle_poll_answer`, `register_handlers`
@@ -4376,6 +4376,12 @@
 - `tests/handlers/test_balance_topup_retry_hint.py` — Python-модуль
   Классы: нет
   Функции: `payment_environment`, `state`, `user`, `test_rejected_purchase_topup_keeps_input_open_until_user_retries`, `test_minimum_hint_only_suggests_an_accepted_whole_ruble_amount`
+- `tests/handlers/test_bot_screen_copy_update.py` — Python-модуль
+  Классы: нет
+  Функции: `records`, `database`, `test_dry_run_changes_nothing`, `test_apply_snapshots_before_commit_and_changes_only_copy`, `test_backup_failure_prevents_writes`, `test_dynamic_welcome_refuses_old_bot`
+- `tests/handlers/test_bot_subscription_screen_ux.py` — Python-модуль
+  Классы: нет
+  Функции: `tariff`, `callback`, `user`, `test_welcome_reads_changed_db_values_and_preserves_custom_copy`, `test_custom_welcome_without_tokens_does_not_query_tariffs`, `test_preview_shows_only_selected_tariff_without_purchase`, `test_preview_rejects_inaccessible_or_invalid_tariff`, `test_trial_shows_actual_quota_without_random_server_claim`, `test_migration_button_requires_confirmed_eligibility`, `test_migration_outage_hides_offer`, `test_one_subscription_goes_directly_to_card_multiple_keep_list`, `test_single_overview_has_no_balance_or_duplicate_limits`
 - `tests/handlers/test_broadcast_custom_buttons.py` — Python-модуль
   Классы: нет
   Функции: `test_keyboard_passes_icon_custom_emoji_id`, `test_schema_roundtrips_icon_custom_emoji_id`, `test_schema_defaults_to_none_and_rejects_garbage`

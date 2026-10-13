@@ -2639,7 +2639,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
 
     from app.database.crud.welcome_text import get_welcome_text_for_user
 
-    offer_text = await get_welcome_text_for_user(db, callback.from_user)
+    offer_text = await get_welcome_text_for_user(db, callback.from_user, db_user=user)
     pinned_message = await get_active_pinned_message(db)
 
     if offer_text:
@@ -3036,7 +3036,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
     from app.database.crud.welcome_text import get_welcome_text_for_user
 
-    offer_text = await get_welcome_text_for_user(db, message.from_user)
+    offer_text = await get_welcome_text_for_user(db, message.from_user, db_user=user)
     pinned_message = await get_active_pinned_message(db)
 
     if offer_text:
