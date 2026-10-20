@@ -18,6 +18,7 @@ from app.services.referral_reward_service import (
     describe_active_levels,
     describe_referee_bonus,
 )
+from app.utils.notification_prefs import is_promo_offers_enabled
 from app.utils.screen_banners import cache_screen_banner_file_id, get_screen_banner
 from app.utils.user_utils import get_effective_referral_commission_percent
 
@@ -113,7 +114,7 @@ async def build_referral_broadcast_message(
     if is_en:
         parts = [
             '🎁 <b>Invoxy VPN Referral Program</b>\n',
-            'Invite friends and earn recurring rewards and bonuses!\n',
+            'Invite a friend — share secure access and receive a referral reward.\n',
         ]
         if conditions_block:
             parts.extend(['<b>Program conditions:</b>', conditions_block, ''])
@@ -125,7 +126,7 @@ async def build_referral_broadcast_message(
     else:
         parts = [
             '🎁 <b>Партнёрская программа Invoxy VPN</b>\n',
-            'Приглашайте друзей и получайте бонусы и пассивный доход от каждого пополнения!\n',
+            'Пригласите друга — подарите ему защищённый доступ и получите бонус.\n',
         ]
         if conditions_block:
             parts.extend(['<b>Условия программы:</b>', conditions_block, ''])
@@ -157,6 +158,9 @@ async def send_user_referral_broadcast(
     """Send referral broadcast with ref.png banner if Telegram, fallback to notification delivery."""
     from app.services.notification_delivery_service import notification_delivery_service
     from app.services.notification_types import NotificationType
+
+    if not settings.is_notifications_enabled() or not is_promo_offers_enabled(user):
+        return False
 
     if user.telegram_id:
         banner = get_screen_banner('referral')

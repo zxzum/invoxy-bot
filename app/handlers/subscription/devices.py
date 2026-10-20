@@ -43,6 +43,7 @@ from app.utils.pricing_utils import (
     apply_percentage_discount,
     calculate_prorated_price,
 )
+from app.utils.screen_banners import get_screen_banner
 from app.utils.subscription_utils import (
     get_display_subscription_link,
 )
@@ -274,6 +275,8 @@ async def handle_change_devices(
             tariff=tariff,
             back_callback=back_cb,
         ),
+        media=get_screen_banner('devices'),
+        media_kind='devices',
     )
 
     await callback.answer()
@@ -444,6 +447,8 @@ async def confirm_change_devices(
                     has_saved_cart=True,
                 ),
                 parse_mode='HTML',
+                media=get_screen_banner('devices'),
+                media_kind='devices',
             )
             await callback.answer()
             return
@@ -531,6 +536,8 @@ async def confirm_change_devices(
             db_user.language,
             back_callback=f'sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'subscription_settings',
         ),
+        media=get_screen_banner('devices'),
+        media_kind='devices',
     )
 
     await callback.answer()
@@ -805,7 +812,12 @@ async def execute_change_devices(
                 'ℹ️ Возврат средств не производится',
             )
 
-        await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            success_text,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('devices'),
+            media_kind='devices',
+        )
 
         logger.info(
             '✅ Пользователь изменил количество устройств с на доплата: ₽',
@@ -817,7 +829,12 @@ async def execute_change_devices(
 
     except Exception as e:
         logger.error('Ошибка изменения количества устройств', error=e)
-        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            texts.ERROR,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('devices'),
+            media_kind='devices',
+        )
 
     await callback.answer()
 
@@ -861,6 +878,8 @@ async def handle_device_management(
                     await callback.message.edit_text(
                         texts.t('DEVICE_NONE_CONNECTED', 'ℹ️ У вас нет подключенных устройств'),
                         reply_markup=get_back_keyboard(db_user.language),
+                        media=get_screen_banner('devices'),
+                        media_kind='devices',
                     )
                     await callback.answer()
                     return
@@ -968,6 +987,8 @@ async def show_devices_page(
             db_user.language,
             back_callback=f'sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'subscription_settings',
         ),
+        media=get_screen_banner('devices'),
+        media_kind='devices',
     )
 
 
@@ -1098,7 +1119,9 @@ async def start_device_rename(callback: types.CallbackQuery, db_user: User, db: 
             ]
         ]
     )
-    await callback.message.edit_text(prompt, reply_markup=cancel_keyboard)
+    await callback.message.edit_text(
+        prompt, reply_markup=cancel_keyboard, media=get_screen_banner('devices'), media_kind='devices'
+    )
     await callback.answer()
 
 
@@ -1114,24 +1137,38 @@ async def process_device_rename(message: types.Message, db_user: User, db: Async
     sub_id = data.get('rename_sub_id')
 
     if not hwid:
-        await message.answer(texts.t('DEVICE_RENAME_STATE_LOST', '❌ Сессия истекла, повторите.'))
+        await message.answer(
+            texts.t('DEVICE_RENAME_STATE_LOST', '❌ Сессия истекла, повторите.'),
+            media=get_screen_banner('devices'),
+            media_kind='devices',
+        )
         if state is not None:
             await state.clear()
         return
 
     raw = (message.text or '').strip()
     if raw.lower() in {'/cancel', 'cancel', 'отмена'}:
-        await message.answer(texts.t('DEVICE_RENAME_CANCELLED', '✖️ Переименование отменено'))
+        await message.answer(
+            texts.t('DEVICE_RENAME_CANCELLED', '✖️ Переименование отменено'),
+            media=get_screen_banner('devices'),
+            media_kind='devices',
+        )
         # NB: НЕ выходим здесь — проваливаемся ниже, чтобы перерисовать список
         # устройств. Иначе пользователь остаётся без списка и без кнопки «назад».
     elif raw in {'-', '—', '/clear', 'clear'} or not raw:
         await delete_alias(db, db_user.id, hwid)
-        await message.answer(texts.t('DEVICE_RENAME_CLEARED', '✅ Имя устройства сброшено к стандартному'))
+        await message.answer(
+            texts.t('DEVICE_RENAME_CLEARED', '✅ Имя устройства сброшено к стандартному'),
+            media=get_screen_banner('devices'),
+            media_kind='devices',
+        )
     else:
         new_alias = normalize_alias(raw)
         if not new_alias:
             await message.answer(
-                texts.t('DEVICE_RENAME_EMPTY', '❌ Имя не может быть пустым (или используйте «-» для сброса)')
+                texts.t('DEVICE_RENAME_EMPTY', '❌ Имя не может быть пустым (или используйте «-» для сброса)'),
+                media=get_screen_banner('devices'),
+                media_kind='devices',
             )
             return  # оставляем FSM-состояние, чтобы юзер мог повторить ввод
         if len(new_alias) > ALIAS_MAX_LENGTH:
@@ -1140,7 +1177,9 @@ async def process_device_rename(message: types.Message, db_user: User, db: Async
                 texts.t(
                     'DEVICE_RENAME_TOO_LONG',
                     '⚠️ Имя слишком длинное, сократили до {max_len} символов.',
-                ).format(max_len=ALIAS_MAX_LENGTH)
+                ).format(max_len=ALIAS_MAX_LENGTH),
+                media=get_screen_banner('devices'),
+                media_kind='devices',
             )
         saved = await upsert_alias(db, db_user.id, hwid, new_alias)
         await message.answer(
@@ -1148,6 +1187,8 @@ async def process_device_rename(message: types.Message, db_user: User, db: Async
                 name=html_mod.escape(saved)
             ),
             parse_mode='HTML',
+            media=get_screen_banner('devices'),
+            media_kind='devices',
         )
 
     if state is not None:
@@ -1181,6 +1222,8 @@ async def process_device_rename(message: types.Message, db_user: User, db: Async
             reply_markup=get_devices_management_keyboard(
                 pagination.items, pagination, db_user.language, back_callback=back_cb
             ),
+            media=get_screen_banner('devices'),
+            media_kind='devices',
         )
     except Exception as exc:
         logger.warning('Failed to re-render devices list after rename', error=str(exc)[:200])
@@ -1223,6 +1266,8 @@ async def cancel_device_rename(
     await callback.message.edit_text(
         texts.t('DEVICE_RENAME_CANCELLED', '✖️ Переименование отменено'),
         reply_markup=get_back_keyboard(db_user.language),
+        media=get_screen_banner('devices'),
+        media_kind='devices',
     )
     await callback.answer()
 
@@ -1314,6 +1359,8 @@ async def handle_single_device_reset(
                                         'ℹ️ Все устройства сброшены',
                                     ),
                                     reply_markup=get_back_keyboard(db_user.language),
+                                    media=get_screen_banner('devices'),
+                                    media_kind='devices',
                                 )
 
                         logger.info(
@@ -1422,6 +1469,8 @@ async def handle_all_devices_reset_from_management(
                         ).format(count=success_count),
                         reply_markup=get_back_keyboard(db_user.language),
                         parse_mode='HTML',
+                        media=get_screen_banner('devices'),
+                        media_kind='devices',
                     )
                     logger.info(
                         '✅ Пользователь успешно сбросил устройств',
@@ -1441,6 +1490,8 @@ async def handle_all_devices_reset_from_management(
                         ).format(success=success_count, failed=failed_count),
                         reply_markup=get_back_keyboard(db_user.language),
                         parse_mode='HTML',
+                        media=get_screen_banner('devices'),
+                        media_kind='devices',
                     )
                     logger.warning(
                         '⚠️ Частичный сброс у пользователя /',
@@ -1460,6 +1511,8 @@ async def handle_all_devices_reset_from_management(
                     ).format(total=len(devices_list)),
                     reply_markup=get_back_keyboard(db_user.language),
                     parse_mode='HTML',
+                    media=get_screen_banner('devices'),
+                    media_kind='devices',
                 )
                 logger.error(
                     '❌ Не удалось сбросить ни одного устройства у пользователя', telegram_id=db_user.telegram_id
@@ -1467,7 +1520,12 @@ async def handle_all_devices_reset_from_management(
 
     except Exception as e:
         logger.error('Ошибка сброса всех устройств', error=e)
-        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            texts.ERROR,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('devices'),
+            media_kind='devices',
+        )
 
     await callback.answer()
 
@@ -1639,6 +1697,8 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
                 has_saved_cart=True,
             ),
             parse_mode='HTML',
+            media=get_screen_banner('devices'),
+            media_kind='devices',
         )
         await callback.answer()
         return
@@ -1729,7 +1789,12 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         if total_discount > 0:
             success_text += f' (скидка {devices_discount_percent}%: -{texts.format_price(total_discount)})'
 
-        await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            success_text,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('devices'),
+            media_kind='devices',
+        )
 
         logger.info(
             '✅ Пользователь добавил устройств за ₽',
@@ -1740,7 +1805,12 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
 
     except Exception as e:
         logger.error('Ошибка добавления устройств', error=e)
-        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            texts.ERROR,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('devices'),
+            media_kind='devices',
+        )
 
     await callback.answer()
 
@@ -1869,6 +1939,8 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
             sub_id=sub_id,
         ),
         parse_mode='HTML',
+        media=get_screen_banner('devices'),
+        media_kind='devices',
     )
     await callback.answer()
 
@@ -1896,7 +1968,11 @@ async def handle_app_selection(callback: types.CallbackQuery, db_user: User, db:
     )
 
     await callback.message.edit_text(
-        app_text, reply_markup=get_app_selection_keyboard(device_type, apps, db_user.language), parse_mode='HTML'
+        app_text,
+        reply_markup=get_app_selection_keyboard(device_type, apps, db_user.language),
+        parse_mode='HTML',
+        media=get_screen_banner('devices'),
+        media_kind='devices',
     )
     await callback.answer()
 
@@ -1977,6 +2053,8 @@ async def handle_specific_app_guide(
             sub_id=sub_id,
         ),
         parse_mode='HTML',
+        media=get_screen_banner('devices'),
+        media_kind='devices',
     )
     await callback.answer()
 
@@ -2017,6 +2095,10 @@ async def show_device_connection_help(
 """
 
     await callback.message.edit_text(
-        help_text, reply_markup=get_device_management_help_keyboard(db_user.language), parse_mode='HTML'
+        help_text,
+        reply_markup=get_device_management_help_keyboard(db_user.language),
+        parse_mode='HTML',
+        media=get_screen_banner('devices'),
+        media_kind='devices',
     )
     await callback.answer()

@@ -15,6 +15,7 @@ from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
+from app.utils.screen_banners import get_screen_banner
 
 
 logger = structlog.get_logger(__name__)
@@ -76,6 +77,8 @@ async def _prompt_amount(message: types.Message, db_user: User, state: FSMContex
         ),
         reply_markup=keyboard,
         parse_mode='HTML',
+        media=get_screen_banner('balance'),
+        media_kind='balance',
     )
 
     await state.set_state(BalanceStates.waiting_for_amount)
@@ -132,6 +135,8 @@ async def start_cashera_payment(callback: types.CallbackQuery, db_user: User, st
         ),
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode='HTML',
+        media=get_screen_banner('balance'),
+        media_kind='balance',
     )
     if not has_pending_amount:
         await state.set_state(BalanceStates.waiting_for_cashera_method)
@@ -310,6 +315,8 @@ async def process_cashera_payment_amount(
         ),
         reply_markup=keyboard,
         parse_mode='HTML',
+        media=get_screen_banner('payment_pending'),
+        media_kind='payment_pending',
     )
     await state.clear()
 

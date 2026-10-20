@@ -69,7 +69,7 @@ def bot_delivery(delivery_service) -> Deliver:
         return await delivery_service.send_notification(
             user,
             NotificationType.USER_REMINDER,
-            {'reminder_id': reminder.id},
+            {'reminder_id': reminder.id, 'builtin_key': getattr(reminder, 'builtin_key', None)},
             bot=bot,
             telegram_message=text,
             telegram_markup=markup,
@@ -87,6 +87,7 @@ def _candidates_query(
         UserReminderState.reminder_id == reminder.id,
         UserReminderState.user_id == User.id,
         or_(
+            UserReminderState.dismissed_at.is_not(None),
             UserReminderState.sends_count >= reminder.max_sends,
             and_(UserReminderState.last_sent_at.is_not(None), UserReminderState.last_sent_at > repeat_cutoff),
         ),

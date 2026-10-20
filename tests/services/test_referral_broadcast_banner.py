@@ -111,3 +111,13 @@ async def test_send_user_referral_broadcast_with_banner(monkeypatch):
         parse_mode='HTML',
     )
     assert cached_id.get('referral') == 'test_ref_file_id'
+
+
+@pytest.mark.asyncio
+async def test_banner_respects_marketing_opt_out(monkeypatch):
+    user = User(id=42, telegram_id=12345678, notification_settings={'promo_offers_enabled': False})
+    monkeypatch.setattr('app.services.referral_broadcast_service.get_screen_banner', lambda kind: FSInputFile('ref.png'))
+    bot = AsyncMock()
+    assert not await send_user_referral_broadcast(bot, user, 'Offer', MagicMock())
+    bot.send_photo.assert_not_awaited()
+    bot.send_message.assert_not_awaited()

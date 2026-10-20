@@ -13,6 +13,7 @@ from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
 from app.services.kassa_ai_service import kassa_ai_service
 from app.utils.payment_logger import payment_logger as logger
+from app.utils.photo_message import send_screen_message
 from app.utils.user_utils import format_referrer_info
 
 
@@ -392,11 +393,13 @@ class KassaAiPaymentMixin:
                     'Баланс пополнен автоматически!'
                 )
 
-                await self.bot.send_message(
+                await send_screen_message(
+                    self.bot,
                     user.telegram_id,
                     message,
                     parse_mode='HTML',
                     reply_markup=keyboard,
+                    banner='paid_successful',
                 )
             except Exception as error:
                 logger.error('Ошибка отправки уведомления пользователю KassaAI', error=error)

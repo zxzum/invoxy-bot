@@ -34,6 +34,7 @@ from app.utils.legacy_subscription import is_legacy_subscription
 from app.utils.pricing_utils import (
     calculate_prorated_price,
 )
+from app.utils.screen_banners import get_screen_banner
 from app.utils.subscription_time import local_days_until
 from app.utils.traffic_topup_limits import (
     count_monthly_traffic_purchases,
@@ -98,6 +99,8 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
             await callback.message.edit_text(
                 '📊 <b>Докупить трафик</b>\n\nВыберите подписку:',
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+                media=get_screen_banner('traffic'),
+                media_kind='traffic',
             )
             await callback.answer()
             return
@@ -187,6 +190,8 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                     text,
                     reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
                     parse_mode='HTML',
+                    media=get_screen_banner('traffic'),
+                    media_kind='traffic',
                 )
                 await callback.answer()
                 return
@@ -202,6 +207,8 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                     text,
                     reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
                     parse_mode='HTML',
+                    media=get_screen_banner('traffic'),
+                    media_kind='traffic',
                 )
                 await callback.answer()
                 return
@@ -236,10 +243,12 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                 [types.InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)],
             ]
             await callback.message.edit_text(
-                text,
-                reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
-                parse_mode='HTML',
-            )
+                    text,
+                    reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+                    parse_mode='HTML',
+                    media=get_screen_banner('traffic'),
+                    media_kind='traffic',
+                )
             await callback.answer()
             return
 
@@ -265,10 +274,12 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
             )
             buttons = [[types.InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)]]
             await callback.message.edit_text(
-                text,
-                reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
-                parse_mode='HTML',
-            )
+                    text,
+                    reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+                    parse_mode='HTML',
+                    media=get_screen_banner('traffic'),
+                    media_kind='traffic',
+                )
             await callback.answer()
             return
 
@@ -309,6 +320,8 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                 sub_id=sub_id,
             ),
             parse_mode='HTML',
+            media=get_screen_banner('traffic'),
+            media_kind='traffic',
         )
 
         await callback.answer()
@@ -357,6 +370,8 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
             sub_id=sub_id,
         ),
         parse_mode='HTML',
+        media=get_screen_banner('traffic'),
+        media_kind='traffic',
     )
 
     await callback.answer()
@@ -455,6 +470,8 @@ async def handle_reset_traffic(
             has_enough_balance=has_enough_balance,
             missing_kopeks=missing_kopeks,
         ),
+        media=get_screen_banner('traffic'),
+        media_kind='traffic',
     )
 
     await callback.answer()
@@ -505,13 +522,15 @@ async def confirm_reset_traffic(
         )
 
         await callback.message.edit_text(
-            message_text,
-            reply_markup=get_insufficient_balance_keyboard(
-                db_user.language,
-                amount_kopeks=missing_kopeks,
-            ),
-            parse_mode='HTML',
-        )
+                message_text,
+                reply_markup=get_insufficient_balance_keyboard(
+                    db_user.language,
+                    amount_kopeks=missing_kopeks,
+                ),
+                parse_mode='HTML',
+                media=get_screen_banner('traffic'),
+                media_kind='traffic',
+            )
         await callback.answer()
         return
 
@@ -597,13 +616,20 @@ async def confirm_reset_traffic(
             f'🔄 Использованный трафик обнулен\n'
             f'📊 Лимит: {texts.format_traffic(subscription.traffic_limit_gb)}',
             reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('traffic'),
+            media_kind='traffic',
         )
 
         logger.info('✅ Пользователь сбросил трафик', telegram_id=db_user.telegram_id)
 
     except Exception as e:
         logger.error('Ошибка сброса трафика', error=e)
-        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            texts.ERROR,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('traffic'),
+            media_kind='traffic',
+        )
 
     await callback.answer()
 
@@ -698,13 +724,15 @@ async def handle_confirm_lte_reset(
         )
 
         await callback.message.edit_text(
-            message_text,
-            reply_markup=get_insufficient_balance_keyboard(
-                db_user.language,
-                amount_kopeks=missing_kopeks,
-            ),
-            parse_mode='HTML',
-        )
+                message_text,
+                reply_markup=get_insufficient_balance_keyboard(
+                    db_user.language,
+                    amount_kopeks=missing_kopeks,
+                ),
+                parse_mode='HTML',
+                media=get_screen_banner('traffic'),
+                media_kind='traffic',
+            )
         await callback.answer()
         return
 
@@ -769,11 +797,18 @@ async def handle_confirm_lte_reset(
             f'💰 Списано с баланса: <b>{price // 100} ₽</b>',
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
             parse_mode='HTML',
+            media=get_screen_banner('traffic'),
+            media_kind='traffic',
         )
         logger.info('✅ Пользователь сбросил расход LTE', telegram_id=db_user.telegram_id, cleared_gb=res['cleared_gb'])
     except Exception as e:
         logger.error('Ошибка сброса расхода LTE', error=e)
-        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            texts.ERROR,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('traffic'),
+            media_kind='traffic',
+        )
 
     await callback.answer()
 
@@ -855,6 +890,8 @@ async def select_traffic(callback: types.CallbackQuery, state: FSMContext, db_us
             selection_text,
             reply_markup=get_countries_keyboard(countries, preselected, db_user.language),
             parse_mode='HTML',
+            media=get_screen_banner('traffic'),
+            media_kind='traffic',
         )
         await state.set_state(SubscriptionStates.selecting_countries)
         await callback.answer()
@@ -869,7 +906,10 @@ async def select_traffic(callback: types.CallbackQuery, state: FSMContext, db_us
         selected_devices = data.get('devices', settings.DEFAULT_DEVICE_LIMIT)
 
         await callback.message.edit_text(
-            texts.SELECT_DEVICES, reply_markup=get_devices_keyboard(selected_devices, db_user.language)
+            texts.SELECT_DEVICES,
+            reply_markup=get_devices_keyboard(selected_devices, db_user.language),
+            media=get_screen_banner('traffic'),
+            media_kind='traffic',
         )
         await state.set_state(SubscriptionStates.selecting_devices)
         await callback.answer()
@@ -997,13 +1037,15 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         )
 
         await callback.message.edit_text(
-            message_text,
-            reply_markup=get_insufficient_balance_keyboard(
-                db_user.language,
-                amount_kopeks=missing_kopeks,
-            ),
-            parse_mode='HTML',
-        )
+                message_text,
+                reply_markup=get_insufficient_balance_keyboard(
+                    db_user.language,
+                    amount_kopeks=missing_kopeks,
+                ),
+                parse_mode='HTML',
+                media=get_screen_banner('traffic'),
+                media_kind='traffic',
+            )
         await callback.answer()
         return
 
@@ -1085,13 +1127,23 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             if total_discount_value > 0:
                 success_text += f' (скидка {traffic_discount_pct}%: -{texts.format_price(total_discount_value)})'
 
-        await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            success_text,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('traffic'),
+            media_kind='traffic',
+        )
 
         logger.info('✅ Пользователь добавил ГБ трафика', telegram_id=db_user.telegram_id, traffic_gb=traffic_gb)
 
     except Exception as e:
         logger.error('Ошибка добавления трафика', error=e)
-        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            texts.ERROR,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('traffic'),
+            media_kind='traffic',
+        )
 
     await callback.answer()
 
@@ -1163,6 +1215,8 @@ async def handle_switch_traffic(
             base_traffic_gb=base_traffic,
             back_callback=f'sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'subscription_settings',
         ),
+        media=get_screen_banner('traffic'),
+        media_kind='traffic',
     )
 
     await callback.answer()
@@ -1239,6 +1293,8 @@ async def confirm_switch_traffic(
                     amount_kopeks=missing_kopeks,
                 ),
                 parse_mode='HTML',
+                media=get_screen_banner('traffic'),
+                media_kind='traffic',
             )
             await callback.answer()
             return
@@ -1269,6 +1325,8 @@ async def confirm_switch_traffic(
             back_callback=f'sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'subscription_settings',
         ),
         parse_mode='HTML',
+        media=get_screen_banner('traffic'),
+        media_kind='traffic',
     )
 
     await callback.answer()
@@ -1383,7 +1441,12 @@ async def execute_switch_traffic(
             success_text += f'Стало: {texts.format_traffic(new_traffic_gb)}\n'
             success_text += 'ℹ️ Возврат средств не производится'
 
-        await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            success_text,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('traffic'),
+            media_kind='traffic',
+        )
 
         logger.info(
             '✅ Пользователь переключил трафик с на доплата: ₽',
@@ -1395,6 +1458,11 @@ async def execute_switch_traffic(
 
     except Exception as e:
         logger.error('Ошибка переключения трафика', error=e)
-        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            texts.ERROR,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('traffic'),
+            media_kind='traffic',
+        )
 
     await callback.answer()

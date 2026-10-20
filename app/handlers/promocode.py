@@ -12,6 +12,7 @@ from app.services.admin_notification_service import AdminNotificationService
 from app.services.promocode_service import PromoCodeService
 from app.states import PromoCodeStates
 from app.utils.decorators import error_handler
+from app.utils.screen_banners import get_screen_banner
 
 
 logger = structlog.get_logger(__name__)
@@ -23,14 +24,29 @@ async def show_promocode_menu(callback: types.CallbackQuery, db_user: User, stat
 
     # Если сообщение недоступно, отправляем новое
     if isinstance(callback.message, InaccessibleMessage):
-        await callback.message.answer(texts.PROMOCODE_ENTER, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.answer(
+                    texts.PROMOCODE_ENTER,
+                    reply_markup=get_back_keyboard(db_user.language),
+                    media=get_screen_banner('bonus'),
+                    media_kind='bonus',
+                )
     else:
         try:
-            await callback.message.edit_text(texts.PROMOCODE_ENTER, reply_markup=get_back_keyboard(db_user.language))
+            await callback.message.edit_text(
+                texts.PROMOCODE_ENTER,
+                reply_markup=get_back_keyboard(db_user.language),
+                media=get_screen_banner('bonus'),
+                media_kind='bonus',
+            )
         except TelegramBadRequest as error:
             error_message = str(error).lower()
             if 'there is no text in the message to edit' in error_message:
-                await callback.message.answer(texts.PROMOCODE_ENTER, reply_markup=get_back_keyboard(db_user.language))
+                await callback.message.answer(
+                    texts.PROMOCODE_ENTER,
+                    reply_markup=get_back_keyboard(db_user.language),
+                    media=get_screen_banner('bonus'),
+                    media_kind='bonus',
+                )
             else:
                 raise
 
@@ -119,6 +135,8 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
                 '❌ Введите корректный промокод',
             ),
             reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('bonus'),
+            media_kind='bonus',
         )
         return
 
@@ -126,7 +144,12 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
 
     # Валидация формата
     if not validate_promo_format(code):
-        await message.answer(texts.PROMOCODE_INVALID, reply_markup=get_back_keyboard(db_user.language))
+        await message.answer(
+            texts.PROMOCODE_INVALID,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('bonus'),
+            media_kind='bonus',
+        )
         return
 
     # Rate-limit на перебор
@@ -138,6 +161,8 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
                 '⏳ Слишком много попыток. Попробуйте через {cooldown} сек.',
             ).format(cooldown=cooldown),
             reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('bonus'),
+            media_kind='bonus',
         )
         await _restore_previous_state(state)
         return
@@ -150,6 +175,8 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
                 '❌ Достигнут лимит активаций промокодов на сегодня. Попробуйте завтра.',
             ),
             reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('bonus'),
+            media_kind='bonus',
         )
         await _restore_previous_state(state)
         return
@@ -161,6 +188,8 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
         await message.answer(
             texts.PROMOCODE_SUCCESS.format(description=result['description']),
             reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('bonus'),
+            media_kind='bonus',
         )
         await _restore_previous_state(state)
     elif result.get('error') == 'select_subscription':
@@ -186,6 +215,8 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
                 '🎟️ К какой подписке применить промокод?',
             ),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+            media=get_screen_banner('bonus'),
+            media_kind='bonus',
         )
         await _restore_previous_state(state)
     else:
@@ -234,7 +265,12 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
         }
 
         error_text = error_messages.get(result['error'], texts.PROMOCODE_INVALID)
-        await message.answer(error_text, reply_markup=get_back_keyboard(db_user.language))
+        await message.answer(
+            error_text,
+            reply_markup=get_back_keyboard(db_user.language),
+            media=get_screen_banner('bonus'),
+            media_kind='bonus',
+        )
         await _restore_previous_state(state)
 
 
@@ -265,13 +301,20 @@ async def handle_promo_subscription_select(
             await callback.message.edit_text(
                 texts.PROMOCODE_SUCCESS.format(description=result['description']),
                 reply_markup=get_back_keyboard(db_user.language),
+                media=get_screen_banner('bonus'),
+                media_kind='bonus',
             )
     else:
         error_text = texts.PROMOCODE_INVALID
         if result.get('error') == 'subscription_not_found':
             error_text = texts.t('PROMOCODE_SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена')
         if callback.message:
-            await callback.message.edit_text(error_text, reply_markup=get_back_keyboard(db_user.language))
+            await callback.message.edit_text(
+                error_text,
+                reply_markup=get_back_keyboard(db_user.language),
+                media=get_screen_banner('bonus'),
+                media_kind='bonus',
+            )
     await callback.answer()
 
 

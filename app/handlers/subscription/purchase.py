@@ -622,7 +622,12 @@ async def show_trial_offer(callback: types.CallbackQuery, db_user: User, db: Asy
         price_line=price_line,
     )
 
-    await callback.message.edit_text(trial_text, reply_markup=get_trial_keyboard(db_user.language))
+    await callback.message.edit_text(
+        trial_text,
+        reply_markup=get_trial_keyboard(db_user.language),
+        media=get_screen_banner('trial'),
+        media_kind='trial',
+    )
     await callback.answer()
 
 
@@ -780,7 +785,9 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
         message_text = '\n'.join(message_lines)
         keyboard = _get_trial_payment_keyboard(db_user.language, can_pay_from_balance)
 
-        await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
+        await callback.message.edit_text(
+            message_text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('trial'), media_kind='trial'
+        )
         await callback.answer()
         return
 
@@ -1168,6 +1175,8 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                 trial_success_text,
                 reply_markup=connect_keyboard,
                 parse_mode='HTML',
+                media=get_screen_banner('trial'),
+                media_kind='trial',
             )
         else:
             trial_success_text = f"{texts.TRIAL_ACTIVATED}\n\n⚠️ Ссылка генерируется, попробуйте перейти в раздел 'Моя подписка' через несколько секунд."
@@ -1175,6 +1184,8 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
             await callback.message.edit_text(
                 trial_success_text,
                 reply_markup=get_back_keyboard(db_user.language),
+                media=get_screen_banner('trial'),
+                media_kind='trial',
             )
 
         logger.info('✅ Активирована тестовая подписка для пользователя', telegram_id=db_user.telegram_id)
@@ -3438,6 +3449,8 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
                 trial_success_text,
                 reply_markup=connect_keyboard,
                 parse_mode='HTML',
+                media=get_screen_banner('trial'),
+                media_kind='trial',
             )
         else:
             trial_success_text = f"{texts.TRIAL_ACTIVATED}\n\n⚠️ Ссылка генерируется, попробуйте перейти в раздел 'Моя подписка' через несколько секунд."
@@ -3447,6 +3460,8 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
                 trial_success_text,
                 reply_markup=get_back_keyboard(db_user.language),
                 parse_mode='HTML',
+                media=get_screen_banner('trial'),
+                media_kind='trial',
             )
 
         await callback.answer()

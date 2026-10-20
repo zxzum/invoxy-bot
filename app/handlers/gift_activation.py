@@ -17,6 +17,7 @@ from app.services.gift_claim_service import (
     claim_bound_gift_for_user,
 )
 from app.services.guest_purchase_service import GuestPurchaseError
+from app.utils.screen_banners import get_screen_banner
 
 
 logger = structlog.get_logger(__name__)
@@ -45,12 +46,16 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
         return
 
     await callback.answer()
-    await callback.message.edit_text('⏳ Активируем подарок...', parse_mode=None)
+    await callback.message.edit_text(
+        '⏳ Активируем подарок...', parse_mode=None, media=get_screen_banner('gift'), media_kind='gift'
+    )
 
     async with AsyncSessionLocal() as db:
         user = await get_user_by_telegram_id(db, callback.from_user.id)
         if not user:
-            await callback.message.edit_text(_GIFT_NOT_FOUND, parse_mode=None)
+            await callback.message.edit_text(
+                _GIFT_NOT_FOUND, parse_mode=None, media=get_screen_banner('gift'), media_kind='gift'
+            )
             return
 
         texts = get_texts(user.language)
@@ -65,6 +70,8 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
             await callback.message.edit_text(
                 texts.t('GIFT_ACTIVATION_NOT_FOUND', _GIFT_NOT_FOUND),
                 parse_mode=None,
+                media=get_screen_banner('gift'),
+                media_kind='gift',
             )
             return
         except GiftClaimSelfActivationError:
@@ -74,12 +81,16 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
                     '⚠️ Нельзя активировать свой собственный подарок.\nОтправьте код другу!',
                 ),
                 parse_mode=None,
+                media=get_screen_banner('gift'),
+                media_kind='gift',
             )
             return
         except GiftClaimNotActivatableError:
             await callback.message.edit_text(
                 texts.t('GIFT_ACTIVATION_NOT_ACTIVATABLE_ERROR', '❌ Этот подарок невозможно активировать.'),
                 parse_mode=None,
+                media=get_screen_banner('gift'),
+                media_kind='gift',
             )
             return
         except GuestPurchaseError as exc:
@@ -96,6 +107,8 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
                         'Произошла ошибка при активации. Попробуйте позже.',
                     ),
                     parse_mode=None,
+                    media=get_screen_banner('gift'),
+                    media_kind='gift',
                 )
             else:
                 await callback.message.edit_text(
@@ -104,6 +117,8 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
                         'Не удалось активировать подарок: {error}',
                     ).format(error=html_mod.escape(exc.message)),
                     parse_mode=None,
+                    media=get_screen_banner('gift'),
+                    media_kind='gift',
                 )
             return
         except Exception:
@@ -113,12 +128,14 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
                 telegram_id=callback.from_user.id,
             )
             await callback.message.edit_text(
-                texts.t(
-                    'GIFT_ACTIVATION_GENERIC_ERROR',
-                    'Произошла ошибка при активации. Попробуйте позже.',
-                ),
-                parse_mode=None,
-            )
+                    texts.t(
+                        'GIFT_ACTIVATION_GENERIC_ERROR',
+                        'Произошла ошибка при активации. Попробуйте позже.',
+                    ),
+                    parse_mode=None,
+                    media=get_screen_banner('gift'),
+                    media_kind='gift',
+                )
             return
 
         tariff_name = html_mod.escape(purchase.tariff.name) if purchase.tariff and purchase.tariff.name else ''
@@ -133,6 +150,8 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
             ).format(
                 tariff_text=tariff_text,
             ),
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
 
 

@@ -85,6 +85,19 @@ async def _pass(db, deliver, now=NOW):
     return await run_reminder_pass(db, bot=object(), now=now, deliver=deliver, sleep=_no_sleep)
 
 
+@pytest.mark.asyncio
+async def test_dismissed_card_stops_bot_reminders(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        await _seed(
+            db, [_user(1)], [_reminder(1, channels='both')],
+            [UserReminderState(reminder_id=1, user_id=1, sends_count=0, dismissed_at=NOW)],
+        )
+        delivery = Recorder()
+        result = await _pass(db, delivery)
+        assert result.sent == 0
+        assert delivery.calls == []
+
+
 @pytest.mark.parametrize(
     ('hour', 'quiet'), [(9, True), (10, False), (15, False), (20, False), (21, True), (23, True), (3, True)]
 )

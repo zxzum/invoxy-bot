@@ -21,6 +21,7 @@ from app.utils.pricing_utils import (
 from app.utils.promo_offer import (
     build_promo_offer_hint,
 )
+from app.utils.screen_banners import get_screen_banner
 from app.utils.timezone import format_local_datetime
 
 from .common import _format_text_with_placeholders
@@ -212,7 +213,9 @@ async def claim_discount_offer(
                 ]
             ]
         )
-        await callback.message.answer(success_message, reply_markup=back_keyboard)
+        await callback.message.answer(
+            success_message, reply_markup=back_keyboard, media=get_screen_banner('promo'), media_kind='promo'
+        )
         return
 
     discount_percent = int(offer.discount_percent or 0)
@@ -373,7 +376,9 @@ async def claim_discount_offer(
             ]
         ]
     )
-    await callback.message.answer(success_message, reply_markup=buy_keyboard)
+    await callback.message.answer(
+        success_message, reply_markup=buy_keyboard, media=get_screen_banner('promo'), media_kind='promo'
+    )
 
 
 async def handle_promo_offer_close(

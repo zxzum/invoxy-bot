@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +26,7 @@ from app.database.crud.saved_payment_method import (
 )
 from app.database.crud.user import get_user_by_id
 from app.database.models import PaymentMethod, Transaction, User
-from app.services.invoice_creation import serialized_invoice_creation
+from app.services.invoice_creation import record_invoice_created, send_invoice_event, serialized_invoice_creation
 from app.services.notification_types import NotificationType
 from app.services.payment_method_config_service import get_enabled_methods_for_user
 from app.services.payment_service import PaymentService
@@ -247,6 +247,7 @@ async def get_payment_methods(
 @serialized_invoice_creation
 async def create_stars_invoice(
     request: StarsInvoiceRequest,
+    raw_request: Request = None,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -302,6 +303,8 @@ async def create_stars_invoice(
             invoice_url = await create_managed_stars_invoice(
                 db, user, PaymentService(bot=bot), normalized_kopeks, stars_amount,
             )
+
+        await record_invoice_created(db, user)
 
         logger.info(
             'Created Stars invoice for balance top-up: user=, amount= kopeks, stars',
@@ -1087,6 +1090,8 @@ async def _create_payment_link(
             detail='Failed to create payment. Please try again later.',
         )
 
+    if payment_url:
+        await record_invoice_created(db, user)
     return payment_url, payment_id
 
 
@@ -1094,6 +1099,7 @@ async def _create_payment_link(
 @serialized_invoice_creation
 async def create_topup(
     request: TopUpRequest,
+    raw_request: Request = None,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -1581,6 +1587,7 @@ async def cancel_user_pending_payment(
             raise HTTPException(404, 'Счёт не найден или уже закрыт.')
         await clear_stars_invoice(user.id, stars.identifier)
         stars.status = 'canceled'
+        await send_invoice_event(stars, '❌ Счёт отменён')
         await user_cart_service.delete_user_cart(user.id)
         return build_pending_payment_response(stars)
 

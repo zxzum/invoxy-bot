@@ -43,6 +43,7 @@ FULLSCREEN_ENABLED_KEY = 'CABINET_FULLSCREEN_ENABLED'  # Stores "true" or "false
 YANDEX_METRIKA_ID_KEY = 'CABINET_YANDEX_METRIKA_ID'  # Stores counter ID (numeric string)
 GOOGLE_ADS_ID_KEY = 'CABINET_GOOGLE_ADS_ID'  # Stores conversion ID (e.g. "AW-123456789")
 GOOGLE_ADS_LABEL_KEY = 'CABINET_GOOGLE_ADS_LABEL'  # Stores conversion label (alphanumeric)
+UMAMI_WEBSITE_ID_KEY = 'CABINET_UMAMI_WEBSITE_ID'
 LITE_MODE_ENABLED_KEY = 'CABINET_LITE_MODE_ENABLED'  # Stores "true" or "false"
 ANIMATION_CONFIG_KEY = 'CABINET_ANIMATION_CONFIG'  # Stores JSON with animation config
 TELEGRAM_WIDGET_SIZE_KEY = 'TELEGRAM_WIDGET_SIZE'
@@ -320,6 +321,7 @@ class AnalyticsCountersResponse(BaseModel):
     yandex_metrika_id: str = ''
     google_ads_id: str = ''
     google_ads_label: str = ''
+    umami_website_id: str = ''
     offline_conv_enabled: bool = False
     offline_conv_counter_id: str = ''
     offline_conv_measurement_secret_masked: str = ''
@@ -332,6 +334,9 @@ class AnalyticsCountersUpdate(BaseModel):
     yandex_metrika_id: str | None = None
     google_ads_id: str | None = None
     google_ads_label: str | None = None
+    umami_website_id: str | None = Field(
+        None, pattern=r'^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+    )
 
 
 # Default theme colors
@@ -1368,6 +1373,7 @@ async def get_analytics_counters(
         yandex_metrika_id=yandex_id,
         google_ads_id=google_id,
         google_ads_label=google_label,
+        umami_website_id=await get_setting_value(db, UMAMI_WEBSITE_ID_KEY) or '',
         offline_conv_enabled=oc_enabled,
         offline_conv_counter_id=oc_counter,
         offline_conv_measurement_secret_masked=oc_secret_masked,
@@ -1403,6 +1409,9 @@ async def update_analytics_counters(
     if payload.google_ads_label is not None:
         await set_setting_value(db, GOOGLE_ADS_LABEL_KEY, payload.google_ads_label.strip())
 
+    if payload.umami_website_id is not None:
+        await set_setting_value(db, UMAMI_WEBSITE_ID_KEY, payload.umami_website_id.lower())
+
     logger.info('Admin updated analytics counters', telegram_id=admin.telegram_id)
 
     # Return current state
@@ -1426,6 +1435,7 @@ async def update_analytics_counters(
         yandex_metrika_id=yandex_id,
         google_ads_id=google_id,
         google_ads_label=google_label,
+        umami_website_id=await get_setting_value(db, UMAMI_WEBSITE_ID_KEY) or '',
         offline_conv_enabled=oc_enabled,
         offline_conv_counter_id=oc_counter,
         offline_conv_measurement_secret_masked=oc_secret_masked,

@@ -555,7 +555,7 @@ async def test_process_heleket_webhook_success(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=DummyAdminService),
+        SimpleNamespace(AdminNotificationService=DummyAdminService, notify_new_client_created=AsyncMock()),
     )
 
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
@@ -673,7 +673,7 @@ async def test_process_yookassa_webhook_success(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=DummyAdminService),
+        SimpleNamespace(AdminNotificationService=DummyAdminService, notify_new_client_created=AsyncMock()),
     )
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
     # Подтверждение API обязательно: без него тело вебхука не используется.
@@ -787,7 +787,7 @@ async def test_process_yookassa_webhook_uses_remote_status(monkeypatch: pytest.M
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=DummyAdminService),
+        SimpleNamespace(AdminNotificationService=DummyAdminService, notify_new_client_created=AsyncMock()),
     )
 
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
@@ -1007,7 +1007,7 @@ async def test_process_yookassa_webhook_restores_missing_payment(
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=DummyAdminService),
+        SimpleNamespace(AdminNotificationService=DummyAdminService, notify_new_client_created=AsyncMock()),
     )
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
     # Локальной записи нет — восстановление только по данным, подтверждённым API ЮKassa.
@@ -1238,7 +1238,7 @@ async def test_process_yookassa_webhook_skip_ip_credits_when_confirmed(monkeypat
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=DummyAdminService),
+        SimpleNamespace(AdminNotificationService=DummyAdminService, notify_new_client_created=AsyncMock()),
     )
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
 
@@ -1390,8 +1390,8 @@ async def test_process_pal24_callback_success(monkeypatch: pytest.MonkeyPatch) -
     # duplicate post-topup message was dropped from production.
     assert bot.sent_messages
     success_message = bot.sent_messages[-1]
-    assert success_message['args'][0] == user.telegram_id
-    assert 'Пополнение успешно' in success_message['args'][1]
+    assert success_message['kwargs']['chat_id'] == user.telegram_id
+    assert 'Пополнение успешно' in success_message['kwargs']['text']
 
 
 @pytest.mark.anyio('asyncio')
@@ -1528,7 +1528,7 @@ async def test_get_pal24_payment_status_auto_finalize(monkeypatch: pytest.Monkey
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=DummyAdminService),
+        SimpleNamespace(AdminNotificationService=DummyAdminService, notify_new_client_created=AsyncMock()),
     )
 
     user_cart_stub = SimpleNamespace(user_cart_service=SimpleNamespace(has_user_cart=AsyncMock(return_value=False)))

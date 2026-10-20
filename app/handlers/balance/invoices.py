@@ -12,8 +12,9 @@ from app.cabinet.services.active_invoice import (
     resolve_purpose,
 )
 from app.database.models import PaymentMethod
-from app.services.invoice_creation import get_stars_invoice, invoice_creation_lock
+from app.services.invoice_creation import get_stars_invoice, invoice_creation_lock, record_invoice_created
 from app.services.payment_verification_service import list_recent_pending_payments, method_display_name
+from app.utils.screen_banners import get_screen_banner
 from app.utils.timezone import format_local_datetime
 
 
@@ -74,7 +75,13 @@ async def show_open_invoice(message, db, user, edit=False):
     if not records:
         return False
     text, keyboard = invoice_screen(records[0], count=len(records))
-    response = await (message.edit_text if edit else message.answer)(text, reply_markup=keyboard, parse_mode='HTML')
+    response = await (message.edit_text if edit else message.answer)(
+        text,
+        reply_markup=keyboard,
+        parse_mode='HTML',
+        media=get_screen_banner('payment_pending'),
+        media_kind='payment_pending',
+    )
     return response or True
 
 
@@ -84,7 +91,10 @@ async def create_guarded_payment(message, db, user, create):
         async with invoice_creation_lock(user.id):
             if await show_open_invoice(message, db, user):
                 return False, None
-            return True, await create()
+            result = await create()
+            if result:
+                await record_invoice_created(db, user)
+            return True, result
     except HTTPException as error:
         if error.status_code == 409 and await show_open_invoice(message, db, user):
             return False, None
@@ -108,6 +118,7 @@ async def handle_invoice(callback, db_user, db, state):
     records = await active_invoices(db, db_user)
     index = 0
     feedback = None
+    closed_banner = 'balance'
     try:
         if action == 'view':
             index = max(0, min(int(parts[2]), len(records) - 1))
@@ -128,6 +139,7 @@ async def handle_invoice(callback, db_user, db, state):
                 result = await check_payment_status(method=method, payment_id=payment_id, user=db_user, db=db)
                 if result.payment and result.payment.is_paid:
                     feedback = '✅ Оплата подтверждена.'
+                    closed_banner = 'paid_successful'
                 elif not result.success:
                     feedback = result.message or 'Не удалось проверить оплату. Попробуйте позже.'
                 else:
@@ -135,6 +147,7 @@ async def handle_invoice(callback, db_user, db, state):
             elif action == 'cancel':
                 result = await cancel_user_pending_payment(method=method, payment_id=payment_id, user=db_user, db=db)
                 feedback = '✅ Оплата уже подтверждена.' if result.is_paid else 'Счёт отменён.'
+                closed_banner = 'paid_successful' if result.is_paid else 'invoice_cancelled'
             if action in {'check', 'cancel'}:
                 records = await active_invoices(db, db_user)
                 index = min(index, len(records) - 1)
@@ -143,7 +156,13 @@ async def handle_invoice(callback, db_user, db, state):
         return
     if records:
         text, keyboard = invoice_screen(records[index], index, len(records), confirm_cancel=action == 'confirm')
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode='HTML',
+            media=get_screen_banner('payment_pending'),
+            media_kind='payment_pending',
+        )
         await callback.answer(feedback, show_alert=bool(feedback))
     else:
         await state.clear()
@@ -155,5 +174,7 @@ async def handle_invoice(callback, db_user, db, state):
                     [types.InlineKeyboardButton(text='💰 Баланс', callback_data='menu_balance')],
                 ]
             ),
+            media=get_screen_banner(closed_banner),
+            media_kind=closed_banner,
         )
         await callback.answer()

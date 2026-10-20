@@ -15,6 +15,7 @@ from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
 )
+from app.utils.photo_message import send_screen_message
 from app.utils.redis_client import create_redis
 from app.utils.user_utils import get_effective_referral_commission_percent
 
@@ -632,7 +633,7 @@ async def send_referral_notification(
         return
 
     try:
-        await bot.send_message(telegram_id, message, parse_mode='HTML')
+        await send_screen_message(bot, telegram_id, message, parse_mode='HTML', banner='bonus')
         logger.info('✅ Уведомление отправлено пользователю', telegram_id=telegram_id)
     except Exception as e:
         logger.error(

@@ -7,7 +7,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramFor
 from aiogram.types import InaccessibleMessage, InputMediaPhoto
 
 from app.config import settings
-from app.utils.screen_banners import cache_screen_banner_file_id
+from app.utils.screen_banners import cache_screen_banner_file_id, get_screen_banner
 
 from .message_patch import (
     _cache_logo_file_id,
@@ -24,6 +24,22 @@ logger = structlog.get_logger(__name__)
 
 MAX_RETRIES = 3
 RETRY_DELAY = 0.5
+
+
+async def send_screen_message(bot, chat_id, text, *, banner, reply_markup=None, parse_mode='HTML'):
+    """Send a screen banner with the original caption/buttons, falling back to text."""
+    if not caption_exceeds_telegram_limit(text):
+        try:
+            media = get_screen_banner(banner)
+            if media is not None:
+                sent = await bot.send_photo(
+                    chat_id=chat_id, photo=media, caption=text, reply_markup=reply_markup, parse_mode=parse_mode,
+                )
+                _cache_sent_media(sent, banner)
+                return sent
+        except Exception as error:
+            logger.warning('Screen banner unavailable; sending text', banner=banner, error_type=type(error).__name__)
+    return await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 
 def _resolve_media(message: types.Message):

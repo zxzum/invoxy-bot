@@ -17,6 +17,7 @@ from app.services.payment_method_config_service import get_enabled_methods_for_u
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
+from app.utils.screen_banners import get_screen_banner
 
 
 logger = structlog.get_logger(__name__)
@@ -84,12 +85,16 @@ async def _create_rollypay_payment_and_respond(
                 error_text,
                 reply_markup=get_back_keyboard(db_user.language, callback_data='topup_rollypay'),
                 parse_mode='HTML',
+                media=get_screen_banner('payment_failed'),
+                media_kind='payment_failed',
             )
         else:
             await message_or_callback.answer(
                 error_text,
                 reply_markup=get_back_keyboard(db_user.language, callback_data='topup_rollypay'),
                 parse_mode='HTML',
+                media=get_screen_banner('payment_failed'),
+                media_kind='payment_failed',
             )
         return
 
@@ -190,6 +195,8 @@ async def start_rollypay_topup(
             f'\U0001f6ab <b>Пополнение ограничено</b>\n\n{reason}',
             parse_mode='HTML',
             reply_markup=restriction_kb,
+            media=get_screen_banner('account_status'),
+            media_kind='account_status',
         )
         await callback.answer()
         return

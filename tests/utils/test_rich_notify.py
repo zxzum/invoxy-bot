@@ -193,7 +193,7 @@ class TestDeliveryIntegration:
         bot = AsyncMock()
 
         ok = await service._send_telegram_notification(
-            user, NotificationType.SUBSCRIPTION_EXPIRING, {}, bot, 'текст', None
+            user, NotificationType.DAILY_DEBIT, {}, bot, 'текст', None
         )
 
         assert ok is True
@@ -205,7 +205,7 @@ class TestDeliveryIntegration:
         bot = AsyncMock()
 
         ok = await service._send_telegram_notification(
-            user, NotificationType.SUBSCRIPTION_EXPIRING, {}, bot, 'текст', None
+            user, NotificationType.DAILY_DEBIT, {}, bot, 'текст', None
         )
 
         assert ok is True

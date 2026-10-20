@@ -116,6 +116,7 @@ async def test_audience_counts_per_channel(monkeypatch):
                     id=2,
                     email='e@x',
                     password_hash='h',
+                    email_verified=True,
                     first_name='B',
                     language='ru',
                     status='active',

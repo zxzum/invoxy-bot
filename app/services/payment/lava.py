@@ -14,6 +14,7 @@ from app.config import settings
 from app.database.models import PaymentMethod, Subscription, TransactionType
 from app.services.lava_service import lava_service
 from app.utils.payment_logger import payment_logger as logger
+from app.utils.photo_message import send_screen_message
 from app.utils.user_utils import format_referrer_info
 
 
@@ -539,7 +540,8 @@ class LavaPaymentMixin:
         if getattr(self, 'bot', None) and user.telegram_id and settings.is_notifications_enabled():
             try:
                 keyboard = await self.build_topup_success_keyboard(user)
-                await self.bot.send_message(
+                await send_screen_message(
+                    self.bot,
                     user.telegram_id,
                     (
                         '✅ <b>Пополнение успешно!</b>\n\n'
@@ -550,6 +552,7 @@ class LavaPaymentMixin:
                     ),
                     parse_mode='HTML',
                     reply_markup=keyboard,
+                    banner='paid_successful',
                 )
             except Exception as error:
                 logger.error('Ошибка отправки уведомления пользователю Lava', error=error)
@@ -690,7 +693,12 @@ class LavaPaymentMixin:
             }
             text = messages.get(kind)
             if text:
-                await bot.send_message(chat_id=user.telegram_id, text=text)
+                await send_screen_message(
+                    bot,
+                    chat_id=user.telegram_id,
+                    text=text,
+                    banner=('payment_failed' if kind in ('failed', 'past_due') else 'renew'),
+                )
         except Exception as error:  # pragma: no cover - best-effort notify
             logger.warning('Не удалось отправить уведомление об автопродлении Lava', error=str(error), kind=kind)
 

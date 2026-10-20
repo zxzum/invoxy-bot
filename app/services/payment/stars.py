@@ -23,6 +23,7 @@ from app.database.crud.user import get_user_by_id
 from app.database.models import PaymentMethod, TransactionType
 from app.external.telegram_stars import TelegramStarsService
 from app.utils.payment_logger import payment_logger as logger
+from app.utils.photo_message import send_screen_message
 from app.utils.user_utils import format_referrer_info
 
 
@@ -189,6 +190,7 @@ class TelegramStarsMixin:
                 amount_kopeks=amount_kopeks,
                 stars_amount=stars_amount,
                 telegram_payment_charge_id=telegram_payment_charge_id,
+                stars_payload=payload,
             )
 
             if success and '_invoice' in payload:
@@ -502,11 +504,13 @@ class TelegramStarsMixin:
                     ]
                 )
 
-                await self.bot.send_message(
+                await send_screen_message(
+                    self.bot,
                     chat_id=user.telegram_id,
                     text=success_message,
                     reply_markup=keyboard,
                     parse_mode='HTML',
+                    banner='paid_successful',
                 )
                 logger.info(
                     '✅ Пользователь получил уведомление об оплате подписки через Stars', telegram_id=user.telegram_id
@@ -574,6 +578,7 @@ class TelegramStarsMixin:
         amount_kopeks: int,
         stars_amount: int,
         telegram_payment_charge_id: str,
+        stars_payload: str | None = None,
     ) -> bool:
         """Начисляет баланс пользователю после оплаты Stars и запускает автопокупку."""
 
@@ -667,6 +672,7 @@ class TelegramStarsMixin:
                     subscription=subscription,
                     promo_group=promo_group,
                     db=db,
+                    stars_payload=stars_payload,
                 )
             except Exception as error:  # pragma: no cover - диагностический лог
                 logger.error('Ошибка отправки уведомления о пополнении Stars', error=error, exc_info=True)

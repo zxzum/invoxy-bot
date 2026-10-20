@@ -14,6 +14,7 @@ from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
 from app.services.freekassa_service import freekassa_service
 from app.utils.payment_logger import payment_logger as logger
+from app.utils.photo_message import send_screen_message
 from app.utils.user_utils import format_referrer_info
 
 
@@ -395,7 +396,8 @@ class FreekassaPaymentMixin:
                         display_name = settings.get_freekassa_card_display_name_html()
                 except (json.JSONDecodeError, AttributeError, TypeError):
                     pass
-                await self.bot.send_message(
+                await send_screen_message(
+                    self.bot,
                     user.telegram_id,
                     (
                         '✅ <b>Пополнение успешно!</b>\n\n'
@@ -406,6 +408,7 @@ class FreekassaPaymentMixin:
                     ),
                     parse_mode='HTML',
                     reply_markup=keyboard,
+                    banner='paid_successful',
                 )
             except Exception as error:
                 logger.error('Ошибка отправки уведомления пользователю Freekassa', error=error)

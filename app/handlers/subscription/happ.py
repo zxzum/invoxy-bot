@@ -6,6 +6,7 @@ from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import get_happ_download_link_keyboard, get_happ_download_platform_keyboard
 from app.localization.texts import get_texts
+from app.utils.screen_banners import get_screen_banner
 
 
 async def handle_happ_download_request(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
@@ -17,7 +18,9 @@ async def handle_happ_download_request(callback: types.CallbackQuery, db_user: U
 
     keyboard = get_happ_download_platform_keyboard(db_user.language)
 
-    await callback.message.answer(prompt_text, reply_markup=keyboard, parse_mode='HTML')
+    await callback.message.answer(
+        prompt_text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('connect'), media_kind='connect'
+    )
     await callback.answer()
 
 
@@ -54,7 +57,9 @@ async def handle_happ_download_platform_choice(callback: types.CallbackQuery, db
 
     keyboard = get_happ_download_link_keyboard(db_user.language, link)
 
-    await callback.message.edit_text(link_text, reply_markup=keyboard, parse_mode='HTML')
+    await callback.message.edit_text(
+        link_text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('connect'), media_kind='connect'
+    )
     await callback.answer()
 
 
@@ -81,5 +86,7 @@ async def handle_happ_download_back(callback: types.CallbackQuery, db_user: User
 
     keyboard = get_happ_download_platform_keyboard(db_user.language)
 
-    await callback.message.edit_text(prompt_text, reply_markup=keyboard, parse_mode='HTML')
+    await callback.message.edit_text(
+        prompt_text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('connect'), media_kind='connect'
+    )
     await callback.answer()

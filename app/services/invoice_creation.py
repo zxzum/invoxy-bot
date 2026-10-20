@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import wraps
 from types import SimpleNamespace
 from uuid import uuid4
@@ -13,8 +13,11 @@ from uuid import uuid4
 import structlog
 from fastapi import HTTPException
 from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.config import settings
 from app.database.models import PaymentMethod
+from app.services.invoice_notifications import SOURCE_KEY, SOURCES, invoice_message, invoice_source
 from app.utils.cache import cache
 
 
@@ -43,8 +46,14 @@ def serialized_invoice_creation(func):
     @wraps(func)
     async def wrapped(*args, **kwargs):
         arguments = signature.bind(*args, **kwargs).arguments
-        async with invoice_creation_lock(arguments['user'].id):
-            return await func(*args, **kwargs)
+        request = arguments.get('raw_request')
+        source = request.headers.get('X-Client-Source', 'cabinet') if request else 'cabinet'
+        token = invoice_source.set(source if source in SOURCES else 'cabinet')
+        try:
+            async with invoice_creation_lock(arguments['user'].id):
+                return await func(*args, **kwargs)
+        finally:
+            invoice_source.reset(token)
 
     wrapped.__signature__ = signature
     return wrapped
@@ -69,7 +78,9 @@ async def get_stars_invoice(user, data=None):
         created_at=created,
         expires_at=datetime.fromisoformat(data['expires_at']),
         user=user,
-        payment=SimpleNamespace(payment_url=data['payment_url'], description='Пополнение баланса'),
+        payment=SimpleNamespace(
+            payment_url=data['payment_url'], description='Пополнение баланса', metadata_json=data,
+        ),
     )
 
 
@@ -131,3 +142,79 @@ async def clear_stars_invoice(user_id: int, payload: str):
             f'invoice:stars:{user_id}',
             payload,
         )
+
+
+async def send_invoice_event(record, event: str, *, bot=None) -> bool:
+    from app.bot_factory import create_bot
+    from app.cabinet.services.active_invoice import resolve_purpose
+    from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
+    from app.services.payment_verification_service import method_display_name
+
+    owned_bot = bot is None
+    if not settings.ADMIN_NOTIFICATIONS_ENABLED or not settings.BOT_TOKEN:
+        return False
+    try:
+        bot = bot or create_bot()
+        metadata = getattr(record.payment, 'metadata_json', None) or {}
+        purpose, _ = resolve_purpose(record)
+        message = invoice_message(
+            record.user,
+            event=event,
+            amount_kopeks=record.amount_kopeks,
+            method=record.method.value,
+            invoice_id=record.local_id,
+            source=metadata.get(SOURCE_KEY),
+            purpose=purpose,
+            method_title=method_display_name(record.method),
+        )
+        service = AdminNotificationService(bot)
+        return await service._send_message(
+            message, reply_markup=service._build_admin_audit_keyboard(record.user, None),
+            category=NotificationCategory.BALANCE,
+        )
+    except Exception:
+        logger.warning('Admin invoice notification failed', invoice_event=event, exc_info=True)
+        return False
+    finally:
+        if owned_bot and bot is not None:
+            try:
+                await bot.session.close()
+            except Exception:
+                logger.warning('Invoice notification bot close failed', exc_info=True)
+
+
+async def record_invoice_created(db, user) -> None:
+    from app.cabinet.services.active_invoice import get_active_invoice_record
+
+    try:
+        record = await get_active_invoice_record(db, user.id)
+        if not record:
+            return
+        payment = record.payment
+        metadata = getattr(payment, 'metadata_json', None) or {}
+        if metadata.get(SOURCE_KEY):
+            return  # Reusing a link is not a new invoice.
+        source = invoice_source.get()
+        if record.method.value == 'telegram_stars':
+            data = await cache.get(f'invoice:stars:{user.id}')
+            if not data or data['payload'] != record.identifier:
+                return
+            if data.get(SOURCE_KEY):
+                return
+            data[SOURCE_KEY] = source
+            await cache.set(f'invoice:stars:{user.id}', data, expire=timedelta(minutes=30))
+            # shortcut: Stars has no payment row; retain attribution for late payments for 30 days.
+            await cache.set(
+                f'invoice:stars:source:{record.identifier}',
+                {'id': record.local_id, SOURCE_KEY: source},
+                expire=timedelta(days=30),
+            )
+        else:
+            payment.metadata_json = {**metadata, SOURCE_KEY: source}
+            await db.commit()
+        payment.metadata_json = {**metadata, SOURCE_KEY: source}
+        await send_invoice_event(record, '💳 Счёт создан')
+    except Exception as error:
+        if isinstance(error, SQLAlchemyError):
+            await db.rollback()
+        logger.warning('Invoice source/notification unavailable', user_id=user.id, exc_info=True)

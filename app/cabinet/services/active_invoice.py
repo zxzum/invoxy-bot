@@ -26,6 +26,7 @@ from app.database.models import (
     PaymentMethod,
     User,
 )
+from app.services.invoice_notifications import resolve_purpose
 from app.services.notification_types import NotificationType
 from app.services.payment_verification_service import (
     PendingPayment,
@@ -69,21 +70,6 @@ def get_invoice_expires_at(record: PendingPayment) -> datetime:
     if record.expires_at and record.expires_at < our_expiry:
         return record.expires_at
     return our_expiry
-
-
-def resolve_purpose(record: PendingPayment) -> tuple[str, str]:
-    """Return (purpose_text, purpose_code: 'topup' | 'tariff')."""
-    payment = record.payment
-    desc = (
-        getattr(payment, 'description', None)
-        or getattr(payment, 'payload', None)
-        or ''
-    )
-    if 'Оплата тарифа' in desc or 'Активация суточного тарифа' in desc or 'Тариф' in desc:
-        return desc or 'Оплата тарифа', 'tariff'
-    if desc and 'Пополнение баланса' not in desc:
-        return desc, 'topup'
-    return 'Пополнение баланса', 'topup'
 
 
 def get_payment_url(record: PendingPayment) -> str | None:
@@ -247,9 +233,13 @@ async def send_invoice_created_telegram_message(
         ]
     )
     try:
+        from app.utils.photo_message import send_screen_message
+
         bot = create_bot()
         try:
-            await bot.send_message(
+            await send_screen_message(
+                bot,
+                banner='payment_pending',
                 chat_id=user.telegram_id,
                 text=text,
                 reply_markup=keyboard,
@@ -279,9 +269,13 @@ async def send_invoice_cancelled_telegram_message(
         'Можно создать новый в кабинете или в боте.'
     )
     try:
+        from app.utils.photo_message import send_screen_message
+
         bot = create_bot()
         try:
-            await bot.send_message(
+            await send_screen_message(
+                bot,
+                banner='invoice_cancelled',
                 chat_id=user.telegram_id,
                 text=text,
                 parse_mode='HTML',
@@ -380,6 +374,10 @@ async def cancel_pending_payment(
 
     await db.commit()
     refreshed = await get_payment_record(db, payment_method, payment_id) or record
+
+    from app.services.invoice_creation import send_invoice_event
+
+    await send_invoice_event(record, '❌ Счёт отменён')
 
     await send_invoice_cancelled_telegram_message(
         user=user,

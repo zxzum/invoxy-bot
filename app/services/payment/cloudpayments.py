@@ -12,6 +12,7 @@ from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
 from app.services.cloudpayments_service import CloudPaymentsAPIError
 from app.utils.payment_logger import payment_logger as logger
+from app.utils.photo_message import send_screen_message
 from app.utils.user_utils import format_referrer_info
 
 
@@ -497,11 +498,13 @@ class CloudPaymentsPaymentMixin:
 
         async with create_bot() as bot:
             try:
-                await bot.send_message(
+                await send_screen_message(
+                    bot,
                     chat_id=user.telegram_id,
                     text=message,
                     parse_mode='HTML',
                     reply_markup=keyboard,
+                    banner='paid_successful',
                 )
             except Exception as error:
                 logger.warning(
@@ -523,10 +526,8 @@ class CloudPaymentsPaymentMixin:
 
         async with create_bot() as bot:
             try:
-                await bot.send_message(
-                    chat_id=telegram_id,
-                    text=text,
-                    parse_mode='HTML',
+                await send_screen_message(
+                    bot, chat_id=telegram_id, text=text, parse_mode='HTML', banner='payment_failed'
                 )
             except Exception as error:
                 logger.warning('Не удалось отправить уведомление пользователю', telegram_id=telegram_id, error=error)

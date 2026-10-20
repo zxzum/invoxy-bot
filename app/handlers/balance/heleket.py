@@ -15,6 +15,7 @@ from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
+from app.utils.screen_banners import get_screen_banner
 
 
 logger = structlog.get_logger(__name__)
@@ -41,6 +42,8 @@ async def start_heleket_payment(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
             'Если вы считаете это ошибкой, вы можете обжаловать решение.',
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+            media=get_screen_banner('account_status'),
+            media_kind='account_status',
         )
         await callback.answer()
         return
@@ -78,6 +81,8 @@ async def start_heleket_payment(
         '\n'.join(filter(None, message_lines)),
         reply_markup=keyboard,
         parse_mode='HTML',
+        media=get_screen_banner('balance'),
+        media_kind='balance',
     )
 
     await state.set_state(BalanceStates.waiting_for_amount)
@@ -237,7 +242,13 @@ async def process_heleket_payment_amount(
         except Exception as delete_error:  # pragma: no cover - diagnostic
             logger.warning('Не удалось удалить сообщение с запросом суммы Heleket', delete_error=delete_error)
 
-    invoice_message = await message.answer('\n'.join(details), parse_mode='HTML', reply_markup=keyboard)
+    invoice_message = await message.answer(
+        '\n'.join(details),
+        parse_mode='HTML',
+        reply_markup=keyboard,
+        media=get_screen_banner('payment_pending'),
+        media_kind='payment_pending',
+    )
 
     try:
         from app.services import payment_service as payment_module

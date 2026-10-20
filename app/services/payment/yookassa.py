@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
 from app.utils.payment_logger import payment_logger as logger
+from app.utils.photo_message import send_screen_message
 from app.utils.user_utils import format_referrer_info
 
 
@@ -709,7 +710,8 @@ class YooKassaPaymentMixin:
                                     and settings.is_notifications_enabled()
                                 ):
                                     try:
-                                        await self.bot.send_message(
+                                        await send_screen_message(
+                                            self.bot,
                                             chat_id=user.telegram_id,
                                             text=(
                                                 f'🎉 <b>Пробная подписка активирована!</b>\n\n'
@@ -719,6 +721,7 @@ class YooKassaPaymentMixin:
                                                 f'Используйте меню для подключения к VPN.'
                                             ),
                                             parse_mode='HTML',
+                                            banner='trial',
                                         )
                                     except Exception as notify_error:
                                         logger.warning(
@@ -1050,11 +1053,13 @@ class YooKassaPaymentMixin:
                                     ]
                                 )
 
-                                await self.bot.send_message(
+                                await send_screen_message(
+                                    self.bot,
                                     chat_id=user.telegram_id,
                                     text=success_message,
                                     reply_markup=keyboard,
                                     parse_mode='HTML',
+                                    banner='paid_successful',
                                 )
                             elif not user.telegram_id:
                                 logger.info(

@@ -271,8 +271,8 @@ async def show_balance_menu(callback: types.CallbackQuery, db_user: User, db: As
         callback,
         balance_text,
         reply_markup,
-        media=get_screen_banner('main'),
-        media_kind='main',
+        media=get_screen_banner('balance'),
+        media_kind='balance',
     )
     await callback.answer()
 

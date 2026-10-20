@@ -18,6 +18,7 @@ from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
+from app.utils.screen_banners import get_screen_banner
 from app.utils.timezone import format_local_datetime
 
 
@@ -207,6 +208,8 @@ async def _send_pal24_payment_message(
             message_text,
             reply_markup=keyboard,
             parse_mode='HTML',
+            media=get_screen_banner('payment_pending'),
+            media_kind='payment_pending',
         )
 
         try:
@@ -275,6 +278,8 @@ async def start_pal24_payment(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
             'Если вы считаете это ошибкой, вы можете обжаловать решение.',
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+            media=get_screen_banner('account_status'),
+            media_kind='account_status',
         )
         await callback.answer()
         return
@@ -306,9 +311,7 @@ async def start_pal24_payment(
     keyboard = await get_topup_amount_keyboard('pal24', db_user.language, back_callback='balance_topup')
 
     await callback.message.edit_text(
-        message_text,
-        reply_markup=keyboard,
-        parse_mode='HTML',
+        message_text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('balance'), media_kind='balance'
     )
 
     await state.set_state(BalanceStates.waiting_for_amount)

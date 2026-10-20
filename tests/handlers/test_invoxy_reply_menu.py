@@ -117,9 +117,11 @@ async def test_support_button_reuses_existing_support_screen(monkeypatch) -> Non
     monkeypatch.setattr(menu, 'get_support_keyboard', lambda lang: f'kb-{lang}')
     message = _message('Support')
     await menu.handle_reply_button(message, _state(), AsyncMock(), _user(_sub(), language='en'))
-    sent = message.bot.send_message.await_args.kwargs
-    assert sent['text'] == 'support-en'
-    assert sent['reply_markup'] == 'kb-en'
+    sent = message.answer.await_args
+    assert sent.args[0] == 'support-en'
+    assert sent.kwargs['media'] == 'banner:support'
+    assert sent.kwargs['media_kind'] == 'support'
+    assert sent.kwargs['reply_markup'] == 'kb-en'
 
 
 async def test_unknown_text_and_unregistered_user_are_ignored() -> None:

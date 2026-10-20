@@ -7,6 +7,7 @@ from app.config import settings
 from app.database.models import User
 from app.localization.texts import get_texts
 from app.utils.decorators import error_handler
+from app.utils.screen_banners import get_screen_banner
 
 
 logger = structlog.get_logger(__name__)
@@ -32,6 +33,8 @@ async def start_tribute_payment(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
             'Если вы считаете это ошибкой, вы можете обжаловать решение.',
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+            media=get_screen_banner('account_status'),
+            media_kind='account_status',
         )
         await callback.answer()
         return
@@ -75,6 +78,8 @@ async def start_tribute_payment(
             message_text,
             reply_markup=keyboard,
             parse_mode='HTML',
+            media=get_screen_banner('balance'),
+            media_kind='balance',
         )
 
         TributeService.remember_invoice_message(

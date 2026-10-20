@@ -403,7 +403,8 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
             if 'message is not modified' in str(error).lower():
                 return None
             raise
-    if self.photo:
+    # Explicit banners also upgrade older text screens without sending a duplicate message.
+    if self.photo or (media is not None and not caption_exceeds_telegram_limit(text)):
         language = _get_language(self)
         # Если caption потенциально слишком длинный — отправим как текст вместо caption
         try:

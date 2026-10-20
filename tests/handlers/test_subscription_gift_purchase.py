@@ -645,8 +645,8 @@ class TestGiftReplayAndPresentation:
             purchase_result=sample_purchase_result,
         )
 
-        mock_bot.send_message.assert_awaited_once()
-        call_kwargs = mock_bot.send_message.call_args[1]
+        mock_bot.send_photo.assert_awaited_once()
+        call_kwargs = mock_bot.send_photo.call_args[1]
         assert call_kwargs['chat_id'] == mock_db_user.telegram_id
         assert call_kwargs['parse_mode'] == 'HTML'
         assert isinstance(call_kwargs['reply_markup'], InlineKeyboardMarkup)

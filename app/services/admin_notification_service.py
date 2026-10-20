@@ -1250,6 +1250,7 @@ class AdminNotificationService:
         subscription: Subscription | None,
         promo_group: PromoGroup | None,
         db: AsyncSession | None = None,
+        stars_payload: str | None = None,
     ) -> bool:
         logger.info('Начинаем отправку уведомления о пополнении баланса')
 
@@ -1282,6 +1283,30 @@ class AdminNotificationService:
 
         if not self._is_enabled():
             return False
+
+        if transaction.payment_method not in {'manual', 'balance', None}:
+            from app.services.invoice_notifications import invoice_message, paid_invoice_details
+
+            try:
+                invoice_id, source, purpose = await paid_invoice_details(db, transaction, stars_payload=stars_payload)
+                message = invoice_message(
+                    user,
+                    event='✅ Счёт оплачен',
+                    amount_kopeks=transaction.amount_kopeks,
+                    method=transaction.payment_method,
+                    invoice_id=invoice_id,
+                    source=source,
+                    purpose=purpose,
+                    method_title=self._get_payment_method_display(transaction.payment_method),
+                    old_balance=old_balance,
+                    transaction_id=transaction.id,
+                )
+                return await self._send_message(
+                    message, reply_markup=self._build_admin_audit_keyboard(user, subscription),
+                    category=NotificationCategory.BALANCE,
+                )
+            except Exception:
+                logger.warning('Compact payment notification failed; using existing message', exc_info=True)
 
         try:
             logger.info('Пытаемся создать сообщение уведомления')

@@ -29,6 +29,7 @@ from app.services.subscription_checkout_service import (
 from app.services.user_cart_service import user_cart_service
 from app.utils.miniapp_buttons import build_main_menu_button, build_miniapp_or_callback_button
 from app.utils.payment_logger import payment_logger as logger
+from app.utils.photo_message import send_screen_message
 
 
 class PaymentCommonMixin:
@@ -224,11 +225,13 @@ class PaymentCommonMixin:
                 'Средства зачислены на ваш баланс!'
             )
 
-            await self.bot.send_message(
+            await send_screen_message(
+                self.bot,
                 chat_id=telegram_id,
                 text=message,
                 parse_mode='HTML',
                 reply_markup=keyboard,
+                banner='paid_successful',
             )
         except Exception as error:
             from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramServerError

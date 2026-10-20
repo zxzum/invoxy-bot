@@ -76,7 +76,7 @@ def _filled(column) -> ColumnElement[bool]:
 
 def _auth_sql(auth: AuthCondition) -> ColumnElement[bool]:
     telegram = User.telegram_id.is_not(None)
-    email = and_(_filled(User.email), _filled(User.password_hash))
+    email = and_(_filled(User.email), _filled(User.password_hash), User.email_verified.is_(True))
     oauth = [_filled(getattr(User, column)) for column in OAUTH_PROVIDER_COLUMNS.values()]
     count = sum((case((flag, 1), else_=0) for flag in (telegram, email, *oauth)), literal(0))
     single = count == 1
@@ -149,6 +149,8 @@ def _is_alive(subscription, now: datetime) -> bool:
 
 def _auth_matches(user, auth: AuthCondition) -> bool:
     methods = compute_auth_methods(user)
+    if not user.email_verified:
+        methods = [method for method in methods if method != 'email']
     if len(methods) != 1:
         return False
     if auth == 'telegram_only':

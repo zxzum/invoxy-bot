@@ -16,6 +16,7 @@ from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
+from app.utils.screen_banners import get_screen_banner
 
 
 logger = structlog.get_logger(__name__)
@@ -90,11 +91,12 @@ async def _create_freekassa_payment_and_respond(
                 error_text,
                 reply_markup=get_back_keyboard(db_user.language),
                 parse_mode='HTML',
+                media=get_screen_banner('payment_failed'),
+                media_kind='payment_failed',
             )
         else:
             await message_or_callback.answer(
-                error_text,
-                parse_mode='HTML',
+                error_text, parse_mode='HTML', media=get_screen_banner('payment_failed'), media_kind='payment_failed'
             )
         return
 
@@ -134,12 +136,16 @@ async def _create_freekassa_payment_and_respond(
             response_text,
             reply_markup=keyboard,
             parse_mode='HTML',
+            media=get_screen_banner('payment_pending'),
+            media_kind='payment_pending',
         )
     else:
         await message_or_callback.answer(
             response_text,
             reply_markup=keyboard,
             parse_mode='HTML',
+            media=get_screen_banner('payment_pending'),
+            media_kind='payment_pending',
         )
 
     logger.info('Freekassa payment created', telegram_id=db_user.telegram_id, amount_rub=amount_rub)

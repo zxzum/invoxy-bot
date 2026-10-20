@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
 from app.utils.payment_logger import payment_logger as logger
+from app.utils.photo_message import send_screen_message
 from app.utils.user_utils import format_referrer_info
 
 
@@ -448,11 +449,13 @@ class HeleketPaymentMixin:
                     if rate_text:
                         message_lines.append(rate_text)
 
-                    await self.bot.send_message(
+                    await send_screen_message(
+                        self.bot,
                         chat_id=user.telegram_id,
                         text='\n'.join(message_lines),
                         parse_mode='HTML',
                         reply_markup=keyboard,
+                        banner='paid_successful',
                     )
                 except Exception as error:  # pragma: no cover
                     logger.error('Ошибка отправки уведомления пользователю Heleket', error=error)

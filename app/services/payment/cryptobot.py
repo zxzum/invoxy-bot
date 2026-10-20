@@ -25,6 +25,7 @@ from app.services.subscription_renewal_service import (
 )
 from app.utils.currency_converter import currency_converter
 from app.utils.payment_logger import payment_logger as logger
+from app.utils.photo_message import send_screen_message
 from app.utils.user_utils import format_referrer_info
 
 
@@ -648,11 +649,13 @@ class CryptoBotPaymentMixin:
             return
 
         try:
-            await bot_instance.send_message(
+            await send_screen_message(
+                bot_instance,
                 payload.telegram_id,
                 payload.text,
                 parse_mode=payload.parse_mode,
                 reply_markup=payload.reply_markup,
+                banner='paid_successful',
             )
             logger.info(
                 'Отправлено уведомление пользователю о пополнении',

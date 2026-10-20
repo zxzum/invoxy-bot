@@ -57,7 +57,9 @@ async def test_referral_notification_enabled_sends_telegram_message(monkeypatch)
         message='Реферал пополнил баланс',
     )
 
-    bot.send_message.assert_awaited_once_with(202, 'Реферал пополнил баланс', parse_mode='HTML')
+    bot.send_message.assert_awaited_once_with(
+        chat_id=202, text='Реферал пополнил баланс', reply_markup=None, parse_mode='HTML',
+    )
 
 
 async def test_disabled_referral_notifications_skip_email_delivery(monkeypatch):

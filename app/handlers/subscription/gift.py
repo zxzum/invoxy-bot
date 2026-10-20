@@ -59,6 +59,7 @@ from app.services.guest_purchase_service import GuestPurchaseError
 from app.services.user_cart_service import user_cart_service
 from app.states import GiftActivationStates, GiftPurchaseStates
 from app.utils.gift_links import build_gift_claim_artifacts
+from app.utils.screen_banners import get_screen_banner
 
 
 logger = structlog.get_logger(__name__)
@@ -347,7 +348,9 @@ async def handle_gift_catalog(
                     ],
                 ]
             )
-            await callback.message.edit_text(text, reply_markup=back_kb, parse_mode='HTML')
+            await callback.message.edit_text(
+                text, reply_markup=back_kb, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+            )
             await callback.answer()
             return
 
@@ -371,7 +374,9 @@ async def handle_gift_catalog(
                 ],
             ]
         )
-        await callback.message.edit_text(text, reply_markup=back_kb, parse_mode='HTML')
+        await callback.message.edit_text(
+                text, reply_markup=back_kb, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+            )
         await callback.answer()
         return
 
@@ -403,6 +408,8 @@ async def handle_gift_catalog(
             texts.t('GIFT_NO_TARIFFS_AVAILABLE', 'В данный момент нет доступных тарифов для подарка.'),
             reply_markup=back_kb,
             parse_mode='HTML',
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         await callback.answer()
         return
@@ -420,7 +427,9 @@ async def handle_gift_catalog(
     )
 
     text, keyboard = _render_tariff_catalog(db_user, offers)
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+    await callback.message.edit_text(
+            text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
     await callback.answer()
 
 
@@ -460,6 +469,8 @@ async def _render_and_show_periods(
         await callback.message.edit_text(
             texts.t('GIFT_TARIFF_UNAVAILABLE', 'Выбранный тариф недоступен для подарка.'),
             reply_markup=back_kb,
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         await callback.answer()
         return
@@ -473,7 +484,9 @@ async def _render_and_show_periods(
     )
 
     text, keyboard = _render_period_selection(db_user, offer)
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+    await callback.message.edit_text(
+            text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
     await callback.answer()
 
 
@@ -556,6 +569,8 @@ async def handle_gift_period_select(
         await callback.message.edit_text(
             texts.t('GIFT_TARIFF_UNAVAILABLE', 'Выбранный тариф недоступен для подарка.'),
             reply_markup=back_kb,
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         await callback.answer()
         return
@@ -573,6 +588,8 @@ async def handle_gift_period_select(
         await callback.message.edit_text(
             texts.t('GIFT_PERIOD_UNAVAILABLE', 'Выбранный период недоступен.'),
             reply_markup=back_kb,
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         await callback.answer()
         return
@@ -596,7 +613,9 @@ async def handle_gift_period_select(
     )
 
     text, keyboard = _render_confirmation_summary(db_user, quote)
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+    await callback.message.edit_text(
+            text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
     await callback.answer()
 
 
@@ -712,7 +731,9 @@ async def handle_gift_confirm(
             gift_expected_price_kopeks=err.fresh_quote.final_price_kopeks,
         )
         text, keyboard = _render_confirmation_summary(db_user, err.fresh_quote)
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+        await callback.message.edit_text(
+            text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
         await callback.answer(
             texts.t(
                 'GIFT_PRICE_CHANGED_ERROR',
@@ -769,7 +790,9 @@ async def handle_gift_confirm(
             has_saved_cart=True,
             resume_text=texts.t('GIFT_RETURN_TO_CART_BUTTON', '🎁 Вернуться к подарку'),
         )
-        await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        await callback.message.edit_text(
+            text, reply_markup=reply_markup, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
         await callback.answer()
         return
     except GiftPurchaseRestrictedError:
@@ -801,6 +824,8 @@ async def handle_gift_confirm(
         await callback.message.edit_text(
             texts.t('GIFT_TARIFF_UNAVAILABLE', 'Выбранный тариф недоступен для подарка.'),
             reply_markup=back_kb,
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         await callback.answer()
         return
@@ -819,6 +844,8 @@ async def handle_gift_confirm(
         await callback.message.edit_text(
             texts.t('GIFT_PERIOD_UNAVAILABLE', 'Выбранный период недоступен.'),
             reply_markup=back_kb,
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         await callback.answer()
         return
@@ -849,7 +876,9 @@ async def handle_gift_confirm(
         bot_username=bot_username,
         cabinet_url=cabinet_url,
     )
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+    await callback.message.edit_text(
+            text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
     await callback.answer()
     await state.clear()
 
@@ -925,7 +954,9 @@ async def handle_return_to_gift_cart(
             bot_username=bot_username,
             cabinet_url=cabinet_url,
         )
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+        await callback.message.edit_text(
+            text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
         await user_cart_service.delete_user_cart(db_user.id)
         await user_cart_service.clear_topup_intent(db_user.id)
         await state.clear()
@@ -960,6 +991,8 @@ async def handle_return_to_gift_cart(
         await callback.message.edit_text(
             texts.t('GIFT_TARIFF_UNAVAILABLE', 'Выбранный тариф недоступен для подарка.'),
             reply_markup=back_kb,
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         await callback.answer()
         return
@@ -980,6 +1013,8 @@ async def handle_return_to_gift_cart(
         await callback.message.edit_text(
             texts.t('GIFT_PERIOD_UNAVAILABLE', 'Выбранный период недоступен.'),
             reply_markup=back_kb,
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         await callback.answer()
         return
@@ -1039,7 +1074,9 @@ async def handle_return_to_gift_cart(
             has_saved_cart=True,
             resume_text=texts.t('GIFT_RETURN_TO_CART_BUTTON', '🎁 Вернуться к подарку'),
         )
-        await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        await callback.message.edit_text(
+            text, reply_markup=reply_markup, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
         await callback.answer()
         return
 
@@ -1053,7 +1090,9 @@ async def handle_return_to_gift_cart(
     )
 
     text, keyboard = _render_confirmation_summary(db_user, quote)
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+    await callback.message.edit_text(
+            text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
 
     if saved_total_price is not None and quote.final_price_kopeks != saved_total_price:
         await callback.answer(
@@ -1096,9 +1135,13 @@ async def handle_gift_enter_code(
         ]
     )
     try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+        await callback.message.edit_text(
+            text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
     except Exception:
-        await callback.message.answer(text, reply_markup=keyboard, parse_mode='HTML')
+        await callback.message.answer(
+            text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
     await callback.answer()
 
 
@@ -1144,6 +1187,8 @@ async def handle_gift_code_input(
             ),
             reply_markup=cancel_kb,
             parse_mode='HTML',
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         return
 
@@ -1164,6 +1209,8 @@ async def handle_gift_code_input(
             ),
             reply_markup=cancel_kb,
             parse_mode='HTML',
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         return
     except GiftClaimSelfActivationError:
@@ -1174,6 +1221,8 @@ async def handle_gift_code_input(
             ),
             reply_markup=cancel_kb,
             parse_mode='HTML',
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         return
     except GiftClaimAlreadyOwnedError:
@@ -1184,6 +1233,8 @@ async def handle_gift_code_input(
             ),
             reply_markup=cancel_kb,
             parse_mode='HTML',
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         return
     except GiftClaimNotActivatableError:
@@ -1194,6 +1245,8 @@ async def handle_gift_code_input(
             ),
             reply_markup=cancel_kb,
             parse_mode='HTML',
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         return
     except GuestPurchaseError as exc:
@@ -1212,7 +1265,9 @@ async def handle_gift_code_input(
                 'GIFT_ACTIVATION_FAILED_PREFIX',
                 'Не удалось активировать подарок: {error}',
             ).format(error=html.escape(exc.message))
-        await message.answer(msg_text, reply_markup=cancel_kb, parse_mode='HTML')
+        await message.answer(
+            msg_text, reply_markup=cancel_kb, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
         return
     except Exception:
         logger.exception(
@@ -1226,6 +1281,8 @@ async def handle_gift_code_input(
             ),
             reply_markup=cancel_kb,
             parse_mode='HTML',
+            media=get_screen_banner('gift'),
+            media_kind='gift',
         )
         return
 
@@ -1252,7 +1309,9 @@ async def handle_gift_code_input(
             ]
         ]
     )
-    await message.answer(success_text, reply_markup=success_kb, parse_mode='HTML')
+    await message.answer(
+        success_text, reply_markup=success_kb, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+    )
 
 
 # ── Gift History Handlers ───────────────────────────────────────────────────
@@ -1294,7 +1353,9 @@ async def _show_history_page(
         page=page,
         total_count=total_count,
     )
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+    await callback.message.edit_text(
+            text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
     await callback.answer()
 
 
@@ -1384,7 +1445,9 @@ async def handle_gift_my_open(
         )
         return
 
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+    await callback.message.edit_text(
+            text, reply_markup=keyboard, parse_mode='HTML', media=get_screen_banner('gift'), media_kind='gift'
+        )
     await callback.answer()
 
 
@@ -1543,7 +1606,13 @@ async def handle_gift_my_text(
         f'<pre>{html.escape(body)}</pre>'
     )
 
-    await callback.message.edit_text(text, reply_markup=_gift_back_keyboard(texts, item.purchase_id), parse_mode='HTML')
+    await callback.message.edit_text(
+        text,
+        reply_markup=_gift_back_keyboard(texts, item.purchase_id),
+        parse_mode='HTML',
+        media=get_screen_banner('gift'),
+        media_kind='gift',
+    )
     await callback.answer()
 
 

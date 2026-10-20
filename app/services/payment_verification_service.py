@@ -32,6 +32,7 @@ from app.database.models import (
     KassaAiPayment,
     LavaPayment,
     MulenPayPayment,
+    OverpayPayment,
     Pal24Payment,
     ParityPayPayment,
     PaymentMethod,
@@ -995,6 +996,28 @@ async def _fetch_aurapay_payments(
     return records
 
 
+async def _fetch_overpay_payments(
+    db: AsyncSession, cutoff: datetime, user_id: int | None = None
+) -> list[PendingPayment]:
+    result = await db.execute(_build_fetch_stmt(OverpayPayment, cutoff, user_id=user_id))
+    records = []
+    for payment in result.scalars().all():
+        if payment.is_paid or payment.status not in {'pending', 'created', 'processing'}:
+            continue
+        record = _build_record(
+            PaymentMethod.OVERPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status,
+            is_paid=bool(payment.is_paid),
+            expires_at=payment.expires_at,
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 async def _fetch_etoplatezhi_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
     stmt = (
         select(EtoplatezhiPayment)
@@ -1323,6 +1346,7 @@ async def list_recent_pending_payments(
         await _fetch_severpay_payments(db, cutoff, user_id=user_id),
         await _fetch_paypear_payments(db, cutoff, user_id=user_id),
         await _fetch_rollypay_payments(db, cutoff, user_id=user_id),
+        await _fetch_overpay_payments(db, cutoff, user_id=user_id),
         await _fetch_aurapay_payments(db, cutoff, user_id=user_id),
         await _fetch_etoplatezhi_payments(db, cutoff, user_id=user_id),
         await _fetch_antilopay_payments(db, cutoff, user_id=user_id),
@@ -1560,6 +1584,16 @@ async def get_payment_record(
             status=payment.status or '',
             is_paid=bool(payment.is_paid),
             expires_at=getattr(payment, 'expires_at', None),
+        )
+
+    if method == PaymentMethod.OVERPAY:
+        payment = await db.get(OverpayPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method, payment, identifier=payment.order_id, amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '', is_paid=bool(payment.is_paid), expires_at=payment.expires_at,
         )
 
     if method == PaymentMethod.AURAPAY:
@@ -1816,6 +1850,13 @@ async def run_manual_check(
             rollypay_payment = await db.get(RollyPayPayment, local_payment_id)
             if rollypay_payment:
                 result = await payment_service.check_rollypay_payment_status(db, rollypay_payment.order_id)
+                payment = result.get('payment') if result else None
+            else:
+                payment = None
+        elif method == PaymentMethod.OVERPAY:
+            overpay_payment = await db.get(OverpayPayment, local_payment_id)
+            if overpay_payment:
+                result = await payment_service.check_overpay_payment_status(db, overpay_payment.order_id)
                 payment = result.get('payment') if result else None
             else:
                 payment = None

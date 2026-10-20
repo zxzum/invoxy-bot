@@ -72,6 +72,26 @@ NEW_BOT_UX_BANNERS = {
     'subscription_inactive': 'subscription_inactive.png',
 }
 
+USER_BANNERS = {
+    name: f'{name}.jpg' for name in (
+        'invoice_cancelled', 'grace_access', 'account_status', 'gift', 'promo', 'trial', 'support',
+        'bonus', 'traffic', 'connect', 'devices', 'balance', 'account_security',
+    )
+}
+
+
+@pytest.mark.parametrize(('kind', 'filename'), sorted(USER_BANNERS.items()))
+def test_user_jpegs_ship_unchanged_in_bot_and_deploy(kind, filename):
+    assert screen_banners.SCREEN_BANNERS[kind] == filename
+    bot_dir = Path(screen_banners.__file__).resolve().parents[2]
+    path = bot_dir / 'assets' / 'banners' / filename
+    with Image.open(path) as img:
+        assert img.format == 'JPEG'
+        assert img.width > img.height and max(img.size) < 10000
+    deploy_copy = bot_dir.parent / 'deploy' / 'branding-assets' / 'banners' / filename
+    if deploy_copy.parent.is_dir():
+        assert deploy_copy.read_bytes() == path.read_bytes()
+
 
 @pytest.mark.parametrize(('kind', 'filename'), sorted(NEW_BOT_UX_BANNERS.items()))
 def test_bot_ux_banner_kinds_are_registered(kind: str, filename: str) -> None:

@@ -28,6 +28,7 @@ from app.utils.gift_links import (
     build_gift_claim_artifacts,
     build_telegram_gift_share_url,
 )
+from app.utils.photo_message import send_screen_message
 from app.utils.timezone import format_local_datetime
 
 
@@ -443,11 +444,8 @@ async def send_gift_result_message(
 
     target_chat_id = user.telegram_id or user.id
     try:
-        return await bot.send_message(
-            chat_id=target_chat_id,
-            text=text,
-            reply_markup=keyboard,
-            parse_mode='HTML',
+        return await send_screen_message(
+            bot, chat_id=target_chat_id, text=text, reply_markup=keyboard, parse_mode='HTML', banner='gift'
         )
     except Exception as err:
         logger.error('Failed to send gift result message to user chat', user_id=user.id, error=str(err))

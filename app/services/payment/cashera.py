@@ -16,6 +16,7 @@ from app.database.models import PaymentMethod, TransactionType
 from app.services import cashera_recurring_cancel as cashera_cancel
 from app.services.cashera_service import cashera_service, normalize_payment_url
 from app.utils.payment_logger import payment_logger as logger
+from app.utils.photo_message import send_screen_message
 from app.utils.user_utils import format_referrer_info
 
 
@@ -565,7 +566,8 @@ class CasheraPaymentMixin:
         if getattr(self, 'bot', None) and user.telegram_id and settings.is_notifications_enabled():
             try:
                 keyboard = await self.build_topup_success_keyboard(user)
-                await self.bot.send_message(
+                await send_screen_message(
+                    self.bot,
                     user.telegram_id,
                     (
                         '✅ <b>Пополнение успешно!</b>\n\n'
@@ -576,6 +578,7 @@ class CasheraPaymentMixin:
                     ),
                     parse_mode='HTML',
                     reply_markup=keyboard,
+                    banner='paid_successful',
                 )
             except Exception as error:
                 logger.error('Ошибка отправки уведомления пользователю Cashera', error=error)

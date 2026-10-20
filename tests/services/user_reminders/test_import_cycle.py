@@ -98,5 +98,5 @@ async def test_bot_delivery_sends_through_the_given_service() -> None:
     assert await bot_delivery(service)(user, reminder, bot='bot') is True
 
     args, kwargs = service.send_notification.await_args
-    assert args[:3] == (user, NotificationType.USER_REMINDER, {'reminder_id': 7})
+    assert args[:3] == (user, NotificationType.USER_REMINDER, {'reminder_id': 7, 'builtin_key': None})
     assert kwargs['bot'] == 'bot' and kwargs['use_websocket'] is False

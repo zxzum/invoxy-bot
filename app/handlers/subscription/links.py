@@ -11,6 +11,7 @@ from app.keyboards.inline import (
     get_happ_download_button_row,
 )
 from app.localization.texts import get_texts
+from app.utils.screen_banners import get_screen_banner
 from app.utils.subscription_time import local_days_until
 from app.utils.subscription_utils import (
     convert_subscription_link_to_happ_scheme,
@@ -67,6 +68,8 @@ async def handle_connect_subscription(
             await callback.message.edit_text(
                 '🔗 <b>Подключиться</b>\n\nВыберите подписку:',
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+                media=get_screen_banner('connect'),
+                media_kind='connect',
             )
             await callback.answer()
             return
@@ -118,6 +121,8 @@ async def handle_connect_subscription(
             ),
             reply_markup=keyboard,
             parse_mode='HTML',
+            media=get_screen_banner('connect'),
+            media_kind='connect',
         )
 
     elif connect_mode == 'miniapp_custom':
@@ -158,6 +163,8 @@ async def handle_connect_subscription(
             ),
             reply_markup=keyboard,
             parse_mode='HTML',
+            media=get_screen_banner('connect'),
+            media_kind='connect',
         )
 
     elif connect_mode == 'link':
@@ -181,6 +188,8 @@ async def handle_connect_subscription(
             ),
             reply_markup=keyboard,
             parse_mode='HTML',
+            media=get_screen_banner('connect'),
+            media_kind='connect',
         )
     elif connect_mode == 'happ_cryptolink':
         rows = [
@@ -209,6 +218,8 @@ async def handle_connect_subscription(
             ),
             reply_markup=keyboard,
             parse_mode='HTML',
+            media=get_screen_banner('connect'),
+            media_kind='connect',
         )
     else:
         # Guide mode: load config and build dynamic platform keyboard
@@ -230,10 +241,19 @@ async def handle_connect_subscription(
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)],
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню')
+                                if back_cb == 'back_to_menu'
+                                else texts.BACK,
+                                callback_data=back_cb,
+                            )
+                        ],
                     ]
                 ),
                 parse_mode='HTML',
+                media=get_screen_banner('connect'),
+                media_kind='connect',
             )
             await callback.answer()
             return
@@ -262,6 +282,8 @@ async def handle_connect_subscription(
             device_text,
             reply_markup=get_device_selection_keyboard(db_user.language, platforms=platforms, sub_id=sub_id),
             parse_mode='HTML',
+            media=get_screen_banner('connect'),
+            media_kind='connect',
         )
 
     await callback.answer()
@@ -326,6 +348,8 @@ async def handle_open_subscription_link(
             parse_mode='HTML',
             disable_web_page_preview=True,
             reply_markup=keyboard,
+            media=get_screen_banner('connect'),
+            media_kind='connect',
         )
         await callback.answer()
         return
@@ -375,9 +399,18 @@ async def handle_open_subscription_link(
                         else 'subscription_connect',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню') if back_cb == 'back_to_menu' else texts.BACK, callback_data=back_cb)],
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню')
+                        if back_cb == 'back_to_menu'
+                        else texts.BACK,
+                        callback_data=back_cb,
+                    )
+                ],
             ]
         ),
         parse_mode='HTML',
+        media=get_screen_banner('connect'),
+        media_kind='connect',
     )
     await callback.answer()

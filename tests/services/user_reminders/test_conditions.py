@@ -32,6 +32,7 @@ def _user(uid: int, **kw) -> User:
         telegram_id=None,
         email=None,
         password_hash=None,
+        email_verified=True,
         first_name='U',
         language='ru',
         status='active',
@@ -59,6 +60,15 @@ def _sub(sid: int, uid: int, *, status='active', trial=False, days=10, tariff_id
 
 # (conditions, [users], [subs], ожидаемые id)
 CASES = {
+    'pending_email_is_not_a_backup_login': (
+        {'auth': 'single_method'},
+        [
+            _user(1, telegram_id=11, email='pending@x', password_hash='h', email_verified=False),
+            _user(2, telegram_id=12, email='confirmed@x', password_hash='h'),
+        ],
+        [],
+        {1},
+    ),
     'telegram_only': (
         {'auth': 'telegram_only'},
         [

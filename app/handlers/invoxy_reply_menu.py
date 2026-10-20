@@ -78,11 +78,11 @@ async def _send_screen(message: types.Message, screen: Screen) -> None:
 
 
 async def _send_support(message: types.Message, language: str) -> None:
-    await _send_text(
-        message,
+    await _send_screen(message, Screen(
         SupportSettingsService.get_support_info_text(language),
         get_support_keyboard(language),
-    )
+        'support',
+    ))
 
 
 async def dispatch_action(message: types.Message, db: AsyncSession, db_user: User, action: str) -> None:

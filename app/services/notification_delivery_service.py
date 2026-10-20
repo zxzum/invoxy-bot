@@ -256,13 +256,17 @@ class NotificationDeliveryService:
             TelegramServerError,
         )
 
+        from app.utils.photo_message import send_screen_message
+
         # В rich-режиме уведомление отправляется тем же полотном, что и меню, — иначе
         # оно выбивается из общего вида. Ровно одна попытка: любой отказ (включая
         # разметку, которую rich не воспроизводит дословно) отдаёт False, и ниже
         # отрабатывает классический путь со своими ретраями, учётом и метриками.
         from app.utils.rich_notify import try_send_rich_notification
+        from app.utils.screen_banners import notification_banner
 
-        if await try_send_rich_notification(
+        banner = notification_banner(notification_type, context)
+        if not banner and await try_send_rich_notification(
             bot, user.telegram_id, message, keyboard=markup, with_logo=settings.ENABLE_LOGO_MODE
         ):
             return True
@@ -277,9 +281,11 @@ class NotificationDeliveryService:
         for attempt in range(1, max_attempts + 1):
             try:
                 await asyncio.wait_for(
-                    bot.send_message(
-                        chat_id=user.telegram_id,
-                        text=message,
+                    send_screen_message(
+                        bot,
+                        user.telegram_id,
+                        message,
+                        banner=banner,
                         reply_markup=markup,
                         parse_mode='HTML',
                     ),
