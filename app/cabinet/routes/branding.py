@@ -474,6 +474,14 @@ async def get_logo():
     if logo_path is None or not await asyncio.to_thread(logo_path.exists):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No custom logo set')
 
+    if favicon_tile.is_raster_logo(logo_path):
+        try:
+            smaller = await asyncio.to_thread(favicon_tile.cached_downscaled_logo, logo_path)
+        except Exception:
+            logger.warning('Не удалось уменьшить логотип, отдаём файл как есть', path=str(logo_path), exc_info=True)
+        else:
+            if smaller is not None:
+                return Response(content=smaller, media_type='image/webp', headers=_image_headers(_LOGO_MAX_AGE_SECONDS))
     return _logo_file_response(logo_path, max_age=_LOGO_MAX_AGE_SECONDS)
 
 
