@@ -17,7 +17,7 @@ RUN uv sync --frozen --no-dev
 
 FROM python:3.14-slim
 
-ARG VERSION="v5.0.0" # x-release-please-version
+ARG VERSION="v4.12.1" # x-release-please-version
 ARG BUILD_DATE
 ARG VCS_REF
 
