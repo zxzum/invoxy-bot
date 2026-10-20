@@ -59,3 +59,32 @@ def cached_rounded_logo_tile(logo_path: Path) -> bytes:
     """Плитка по файлу логотипа; перерисовывается только когда файл заменили."""
     stat = logo_path.stat()
     return _render_cached(str(logo_path), stat.st_mtime_ns, stat.st_size)
+
+
+# Самый крупный потребитель логотипа — иконка ярлыка 512×512 в манифесте кабинета.
+# Админка принимает файлы до 5 МБ, а исходник в 1254 px весил 1,7 МБ и уходил
+# каждому визиту ради фавиконок.
+LOGO_DISPLAY_MAX_SIDE = 512
+
+
+def downscaled_logo(logo_path: Path, max_side: int = LOGO_DISPLAY_MAX_SIDE) -> bytes | None:
+    """WebP не крупнее ``max_side`` по большей стороне; ``None``, если файл и так не больше."""
+    with Image.open(logo_path) as source:
+        if max(source.size) <= max_side:
+            return None
+        image = source.convert('RGBA')
+    image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+    buffer = BytesIO()
+    image.save(buffer, format='WEBP', quality=90, method=6)
+    return buffer.getvalue()
+
+
+@lru_cache(maxsize=4)
+def _downscaled_cached(logo_path: str, mtime_ns: int, file_size: int) -> bytes | None:
+    return downscaled_logo(Path(logo_path))
+
+
+def cached_downscaled_logo(logo_path: Path) -> bytes | None:
+    """Уменьшенный логотип по файлу; пересчитывается только когда файл заменили."""
+    stat = logo_path.stat()
+    return _downscaled_cached(str(logo_path), stat.st_mtime_ns, stat.st_size)
