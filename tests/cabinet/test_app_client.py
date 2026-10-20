@@ -556,3 +556,53 @@ def test_session_tag_binds_the_token_to_the_installation() -> None:
     from app.services import app_client_service as svc
 
     assert svc.app_session_tag('device-0123456789abcdef') == f"invoxy_app:{svc.hash_device_id('device-0123456789abcdef')}"
+
+
+async def test_http_device_list_says_maintenance_when_the_panel_did_not_answer(
+    panel: _Panel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def degraded(**kwargs: Any) -> dict[str, Any]:
+        return {'devices': [], 'total': 0, 'device_limit': 2, 'degraded': True}
+
+    monkeypatch.setattr(route, '_panel_get_devices', degraded)
+    app = _app(SimpleNamespace(id=7, status='active'))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        response = await client.get('/app/devices/list', headers={'X-Invoxy-Device': 'mine-0123456789abcdef'})
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    detail = response.json()['detail']
+    assert detail['code'] == 'panel_unavailable'
+    assert 'VPN' in detail['message']
+
+
+async def test_http_removal_says_maintenance_when_the_panel_did_not_answer(
+    panel: _Panel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def degraded(**kwargs: Any) -> dict[str, Any]:
+        return {'devices': [], 'total': 0, 'device_limit': 2, 'degraded': True}
+
+    monkeypatch.setattr(route, '_panel_get_devices', degraded)
+    app = _app(SimpleNamespace(id=7, status='active'))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        response = await client.delete(
+            '/app/devices/other-0123456789abcdef', headers={'X-Invoxy-Device': 'mine-0123456789abcdef'}
+        )
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert response.json()['detail']['code'] == 'panel_unavailable'
+    assert panel.deleted == [], 'nothing is removed on a panel that did not answer'
+
+
+def test_an_empty_list_is_not_degraded_by_itself() -> None:
+    assert svc.panel_degraded({'devices': [], 'total': 0}) is False
+    assert svc.panel_degraded({'devices': [], 'degraded': True}) is True
+
+
+def test_service_health_follows_the_maintenance_monitor(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.maintenance_service import MaintenanceStatus, maintenance_service
+
+    monkeypatch.setattr(maintenance_service, '_status', MaintenanceStatus(is_active=False, api_status=True))
+    assert svc.service_health() == {'maintenance': False, 'panel_ok': True, 'message': None}
+    monkeypatch.setattr(maintenance_service, '_status', MaintenanceStatus(is_active=False, api_status=False))
+    health = svc.service_health()
+    assert health['maintenance'] is True and health['panel_ok'] is False and 'VPN' in health['message']
+    monkeypatch.setattr(maintenance_service, '_status', MaintenanceStatus(is_active=True, api_status=True))
+    assert svc.service_health()['maintenance'] is True

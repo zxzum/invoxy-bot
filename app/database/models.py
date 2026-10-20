@@ -5522,6 +5522,49 @@ class AppDeviceEvent(Base):
     network = Column(String(16), nullable=True)
     restricted = Column(Boolean, nullable=False, default=False)
     created_at = Column(AwareDateTime(), default=func.now(), nullable=False, index=True)
+
+
+class AppEvent(Base):
+    """How the Invoxy VPN client is used: one anonymous usage event (screen, connect, switch, update, ...).
+
+    Keyed by the installation's pseudonymous ``app_devices`` row; carries no keys, addresses or visited sites. Kept for a
+    limited period (see ``app_analytics_service.EVENT_RETENTION_DAYS``).
+    """
+
+    __tablename__ = 'app_events'
+    __table_args__ = (Index('ix_app_events_name_created', 'name', 'created_at'),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(Integer, ForeignKey('app_devices.id', ondelete='CASCADE'), nullable=False, index=True)
+    session = Column(String(24), nullable=True)
+    name = Column(String(40), nullable=False)
+    props = Column(JSON, nullable=True)
+    app_version = Column(String(32), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now(), nullable=False, index=True)
+
+
+class AppError(Base):
+    """An error the Invoxy VPN client reported, folded by fingerprint: one row per kind of error and app version."""
+
+    __tablename__ = 'app_errors'
+    __table_args__ = (UniqueConstraint('fingerprint', 'app_version', 'platform', name='uq_app_errors_fingerprint'),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    fingerprint = Column(String(32), nullable=False, index=True)
+    app_version = Column(String(32), nullable=False, default='')
+    platform = Column(String(16), nullable=False, default='')
+    kind = Column(String(24), nullable=False)
+    message = Column(Text, nullable=False, default='')
+    stack = Column(Text, nullable=True)
+    context = Column(JSON, nullable=True)
+    count = Column(Integer, nullable=False, default=1)
+    devices = Column(Integer, nullable=False, default=1)
+    last_device_id = Column(Integer, ForeignKey('app_devices.id', ondelete='SET NULL'), nullable=True)
+    first_seen_at = Column(AwareDateTime(), default=func.now(), nullable=False)
+    last_seen_at = Column(AwareDateTime(), default=func.now(), nullable=False, index=True)
+    last_alert_at = Column(AwareDateTime(), nullable=True)
+
+
 class DpiCheckerAction(Base):
     """Действие админа в DPI//CHECKER из кабинета: проверка, Зонд, Соседи или монитор.
 

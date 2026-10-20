@@ -1023,6 +1023,10 @@ async def get_devices(
             'devices': [],
             'total': 0,
             'device_limit': subscription.device_limit or 0,
+            # INVOXY: marks an empty list that is NOT «no devices» but «the panel did not answer», so that the app
+            # client (app_client.py) can say «maintenance» instead of showing an empty account. Extra key: the cabinet
+            # ignores it.
+            'degraded': True,
         }
 
 

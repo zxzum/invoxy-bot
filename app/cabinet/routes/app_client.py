@@ -1,10 +1,11 @@
 """Contract for the Invoxy VPN client (see docs/INVOXY_APP_INTEGRATION.md)."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cabinet.utils.device_ownership import verify_hwid_belongs_to_user
 from app.database.crud.user import get_user_by_id
 from app.database.models import AppDevice, User, UserStatus
-from app.services import app_client_service as svc
+from app.services import app_analytics_service as analytics, app_client_service as svc
 from app.utils.cache import RateLimitCache
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user, get_optional_cabinet_user, require_permission
@@ -77,7 +78,15 @@ async def get_app_config(request: Request, db: AsyncSession = Depends(get_cabine
         'links': svc.public_links(),
         'routing': await svc.get_routing(db),
         'subscription_domains': await svc.get_subscription_domains(db),
+        'service': svc.service_health(),
     }
+
+
+def _panel_unavailable() -> HTTPException:
+    """The panel behind the service did not answer: the app shows its maintenance notice, the VPN itself is unaffected."""
+    return HTTPException(
+        status.HTTP_503_SERVICE_UNAVAILABLE, {'code': svc.PANEL_UNAVAILABLE_CODE, 'message': svc.SERVICE_NOTE}
+    )
 
 
 @router.post('/login', response_model=LoginStartResponse)
@@ -175,6 +184,37 @@ async def report_app_device(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post('/events', status_code=status.HTTP_204_NO_CONTENT)
+async def report_app_events(
+    request: Request, background: BackgroundTasks, db: AsyncSession = Depends(get_cabinet_db)
+) -> Response:
+    """Anonymous usage events and the client's own error reports (see ``app_analytics_service``).
+
+    Open to any installation (no account needed: a device that is not signed in has errors too), so it is rate limited by
+    address and the body is small. An error that is new, or spikes, reaches the admin chat at once.
+    """
+    await _limit(request, 'app_events', 40)
+    declared = request.headers.get('content-length')
+    if declared and declared.isdigit() and int(declared) > analytics.MAX_BODY_BYTES:
+        raise HTTPException(413, 'too_large')
+    raw = await request.body()
+    if len(raw) > analytics.MAX_BODY_BYTES:
+        raise HTTPException(413, 'too_large')
+    try:
+        payload = json.loads(raw)
+    except ValueError as error:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'invalid_events') from error
+    if not isinstance(payload, dict):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'invalid_events')
+    try:
+        result = await analytics.ingest(db, payload)
+    except ValueError as error:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'invalid_device') from error
+    if result.alerts:
+        background.add_task(analytics.notify_admins, result.alerts)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get('/devices/list')
 async def list_my_devices(
     request: Request,
@@ -186,6 +226,8 @@ async def list_my_devices(
     """Devices of the subscription; the one that asks is marked ``is_current``."""
     await _limit(request, 'app_device_list', 60)
     raw = await _panel_get_devices(subscription_id=subscription_id, user=user, db=db)
+    if svc.panel_degraded(raw):
+        raise _panel_unavailable()
     return svc.format_app_devices(raw, current_device_id=device_id)
 
 
@@ -220,6 +262,8 @@ async def remove_my_device(
         raise HTTPException(status.HTTP_409_CONFLICT, 'busy')
     try:
         listed = await _panel_get_devices(subscription_id=subscription_id, user=user, db=db)
+        if svc.panel_degraded(listed):
+            raise _panel_unavailable()
         if not svc.device_may_free_a_slot(listed, device_id):
             logger.warning('app_device_removal_blocked', user_id=user.id, reason='current_device_not_registered')
             raise HTTPException(status.HTTP_409_CONFLICT, 'current_device_not_registered')
@@ -242,6 +286,16 @@ async def get_app_stats(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     return await svc.device_stats(db, days=days)
+
+
+@admin_router.get('/analytics')
+async def get_app_analytics(
+    days: int = Query(7, ge=1, le=90),
+    admin: User = Depends(require_permission('stats:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> dict[str, Any]:
+    """How the app is used and what breaks: active devices per day, connect results, screens, updates, top errors."""
+    return await analytics.summary(db, days=days)
 
 
 @admin_router.get('/devices')

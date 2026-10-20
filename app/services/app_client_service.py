@@ -396,6 +396,28 @@ def _url_or_none(value: str | None) -> str | None:
     return value if value.startswith('https://') else None
 
 
+PANEL_UNAVAILABLE_CODE = 'panel_unavailable'
+SERVICE_NOTE = 'Идут технические работы. VPN работает как обычно, управление аккаунтом скоро вернётся.'
+
+
+def service_health() -> dict[str, Any]:
+    """What the app is told about the service's own health (``GET /app/config``): maintenance, or the panel not answering.
+
+    The app uses it to switch the account's things off politely (devices, plan, sign-in) while the VPN itself goes on
+    working from the servers it already has. The bot's maintenance monitor owns the facts; this only reports them.
+    """
+    from app.services.maintenance_service import maintenance_service
+
+    state = maintenance_service.status
+    down = bool(state.is_active) or not state.api_status
+    return {'maintenance': down, 'panel_ok': bool(state.api_status), 'message': SERVICE_NOTE if down else None}
+
+
+def panel_degraded(raw: dict[str, Any]) -> bool:
+    """The cabinet's device reader degrades to an empty list when the panel does not answer; it says so with this flag."""
+    return bool(raw.get('degraded'))
+
+
 def public_links() -> dict[str, Any]:
     base = cabinet_base_url()
     bot_username = settings.get_bot_username()
