@@ -7,7 +7,8 @@ from alembic import op
 
 
 revision: str = '0134'
-down_revision: Union[str, None] = '0133'
+# The head is the renumbered upstream chain, which already sits on top of 0133.
+down_revision: Union[str, None] = 'invoxy_upstream_0131'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -24,6 +24,7 @@ import structlog
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database.local_date import local_date_expr
 from app.database.models import AppDevice, AppError, AppEvent
 from app.services import app_client_service as clients
 
@@ -418,14 +419,13 @@ def aggregate_events(rows: list[tuple[str, dict[str, Any] | None, int]]) -> dict
 async def summary(db: AsyncSession, *, days: int = 7) -> dict[str, Any]:
     now = datetime.now(UTC)
     since = now - timedelta(days=days)
+    day = local_date_expr(AppEvent.created_at, db)
     daily = (
         await db.execute(
-            select(
-                func.date(AppEvent.created_at), func.count(func.distinct(AppEvent.device_id)), func.count(AppEvent.id)
-            )
+            select(day, func.count(func.distinct(AppEvent.device_id)), func.count(AppEvent.id))
             .where(AppEvent.created_at >= since)
-            .group_by(func.date(AppEvent.created_at))
-            .order_by(func.date(AppEvent.created_at))
+            .group_by(day)
+            .order_by(day)
         )
     ).all()
     rows = (
