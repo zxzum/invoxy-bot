@@ -241,6 +241,13 @@ async def test_renew_page_survives_bad_payloads(data) -> None:
     callback.answer.assert_awaited()
 
 
+async def test_renew_page_survives_edit_error() -> None:
+    callback = _callback('rnw:1')
+    callback.message.edit_text.side_effect = RuntimeError('message is not modified')
+    await menu.handle_renew_page(callback, AsyncMock(), _user(*[_sub(i, days=i) for i in range(1, 8)]))
+    callback.answer.assert_awaited()
+
+
 # ---- language switch ---------------------------------------------------------
 
 
@@ -292,6 +299,13 @@ async def test_language_choice_double_tap_is_ignored(_env) -> None:
     callback = _callback('ilang:en')
     await menu.handle_language_choice(callback, AsyncMock(), _user(_sub(), language='ru'))
     _env.update_user.assert_not_awaited()
+
+
+async def test_language_choice_survives_send_keyboard_error(_env) -> None:
+    callback = _callback('ilang:en')
+    callback.bot.send_message.side_effect = RuntimeError('network error')
+    await menu.handle_language_choice(callback, AsyncMock(), _user(_sub(), language='ru'))
+    callback.answer.assert_awaited()
 
 
 def test_command_handler_is_registered() -> None:

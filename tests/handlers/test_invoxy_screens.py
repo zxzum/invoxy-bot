@@ -258,3 +258,7 @@ async def test_slow_pricing_never_blocks_the_renew_button(monkeypatch) -> None:
     screen = await screens.build_renew_screen(None, _user(_sub(5)), 'ru')
     assert 'От ' not in screen.text
     assert _web_app_urls(screen) == ['https://invoxy.example/subscriptions/5/renew']
+
+
+def test_date_handles_missing_end_date() -> None:
+    assert screens._date(SimpleNamespace(end_date=None)) == '—'
