@@ -67,3 +67,11 @@ async def test_timeout_defers_to_fallback_and_returns_promptly():
 
     assert enqueued == ['deferred-to-retry-queue']
     assert elapsed < 5
+
+
+def test_renewal_panel_reset_follows_payment_setting_not_expiry():
+    # An active subscription renewed early had its local counter zeroed by
+    # extend_subscription while the panel kept last month's usage.
+    src = inspect.getsource(subscription_renewal_service)
+    assert 'reset_traffic = settings.RESET_TRAFFIC_ON_PAYMENT\n' in src
+    assert 'was_expired and settings.RESET_TRAFFIC_ON_PAYMENT' not in src
