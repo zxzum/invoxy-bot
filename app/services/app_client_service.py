@@ -630,6 +630,18 @@ async def device_stats(db: AsyncSession, *, days: int = 7) -> dict[str, Any]:
 
 APP_SESSION_PREFIX = 'invoxy_app'
 
+# The JWT of an app session outlives any idle window: the database row decides (sliding, revocable).
+APP_REFRESH_JWT_DAYS = 3650
+
+
+def is_app_session(device_info: str | None) -> bool:
+    return bool(device_info) and (device_info == APP_SESSION_PREFIX or device_info.startswith(f'{APP_SESSION_PREFIX}:'))
+
+
+def app_session_expires_at() -> datetime:
+    """An app session ends only after this long without a single refresh (or on sign-out, or by an administrator)."""
+    return datetime.now(UTC) + timedelta(days=settings.get_cabinet_app_session_idle_days())
+
 
 def app_session_tag(device_id: str) -> str:
     """What marks a refresh token as the one of this installation, so an administrator can sign exactly it out."""

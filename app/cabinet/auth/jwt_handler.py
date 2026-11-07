@@ -76,17 +76,18 @@ def create_access_token(
     return jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id: int) -> str:
+def create_refresh_token(user_id: int, expire_days: int | None = None) -> str:
     """
     Create a long-lived refresh token.
 
     Args:
         user_id: Database user ID
+        expire_days: Lifetime of the JWT itself (default: the cabinet's refresh lifetime)
 
     Returns:
         Encoded JWT refresh token
     """
-    expire_days = settings.get_cabinet_refresh_token_expire_days()
+    expire_days = expire_days or settings.get_cabinet_refresh_token_expire_days()
     expires = datetime.now(UTC) + timedelta(days=expire_days)
 
     payload = {
@@ -165,7 +166,7 @@ def create_auto_login_token(user_id: int, ttl_hours: int = 72) -> str:
     return jwt.encode(payload, settings.get_cabinet_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
-def get_refresh_token_expires_at() -> datetime:
+def get_refresh_token_expires_at(expire_days: int | None = None) -> datetime:
     """Get the expiration datetime for a new refresh token."""
-    expire_days = settings.get_cabinet_refresh_token_expire_days()
+    expire_days = expire_days or settings.get_cabinet_refresh_token_expire_days()
     return datetime.now(UTC) + timedelta(days=expire_days)

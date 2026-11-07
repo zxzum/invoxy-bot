@@ -38,7 +38,7 @@ from app.database.crud.user import (
     verify_and_apply_email_change,
 )
 from app.database.models import CabinetRefreshToken, User, UserStatus
-from app.services import legal_consent_service
+from app.services import app_client_service, legal_consent_service
 from app.services.admin_notification_service import notify_new_client_created
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
@@ -337,12 +337,13 @@ async def _store_refresh_token(
     user_id: int,
     refresh_token: str,
     device_info: str | None = None,
+    expires_at: datetime | None = None,
 ) -> None:
     """Store refresh token hash in database using upsert to avoid duplicate key errors."""
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
-    expires_at = get_refresh_token_expires_at()
+    expires_at = expires_at or get_refresh_token_expires_at()
 
     stmt = pg_insert(CabinetRefreshToken).values(
         user_id=user_id,
@@ -1961,6 +1962,19 @@ async def refresh_token(
             detail='User not found or inactive',
         )
 
+    refresh_out = request.refresh_token
+    if app_client_service.is_app_session(token_record.device_info):
+        # An app session slides: every refresh moves its idle deadline. A short JWT issued before app sessions were
+        # long is swapped once for a long one; the old one is left to run out (a parallel refresh must not sign out).
+        token_record.expires_at = app_client_service.app_session_expires_at()
+        jwt_left = float(payload.get('exp') or 0) - datetime.now(UTC).timestamp()
+        if jwt_left < app_client_service.APP_REFRESH_JWT_DAYS * 86400 / 2:
+            refresh_out = create_refresh_token(user.id, expire_days=app_client_service.APP_REFRESH_JWT_DAYS)
+            await _store_refresh_token(
+                db, user.id, refresh_out, device_info=token_record.device_info, expires_at=token_record.expires_at
+            )
+        await db.commit()
+
     user_permissions, user_role_names, user_role_level = await UserRoleCRUD.get_user_permissions(db, user.id)
     access_token = create_access_token(
         user.id,
@@ -1973,7 +1987,7 @@ async def refresh_token(
 
     return TokenResponse(
         access_token=access_token,
-        refresh_token=request.refresh_token,
+        refresh_token=refresh_out,
         token_type='bearer',
         expires_in=expires_in,
     )

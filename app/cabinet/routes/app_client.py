@@ -16,6 +16,7 @@ from app.database.models import AppDevice, User, UserStatus
 from app.services import app_analytics_service as analytics, app_client_service as svc
 from app.utils.cache import RateLimitCache
 
+from ..auth import create_refresh_token
 from ..dependencies import get_cabinet_db, get_current_cabinet_user, get_optional_cabinet_user, require_permission
 from ..ip_utils import get_client_ip
 from ..schemas.auth import AuthResponse
@@ -129,7 +130,15 @@ async def exchange_app_login(
     user.cabinet_last_login = datetime.now(UTC)
     await db.commit()
     auth = await _create_auth_response(user, db)
-    await _store_refresh_token(db, user.id, auth.refresh_token, device_info=svc.app_session_tag(body.device_id))
+    # An app installation stays signed in: a long refresh token whose database row slides (see /auth/refresh).
+    auth.refresh_token = create_refresh_token(user.id, expire_days=svc.APP_REFRESH_JWT_DAYS)
+    await _store_refresh_token(
+        db,
+        user.id,
+        auth.refresh_token,
+        device_info=svc.app_session_tag(body.device_id),
+        expires_at=svc.app_session_expires_at(),
+    )
     await svc.clear_revocation(db, body.device_id)
     logger.info('Invoxy app login completed', user_id=user.id)
     return auth

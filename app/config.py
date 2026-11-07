@@ -1573,6 +1573,9 @@ class Settings(BaseSettings):
     CABINET_JWT_SECRET: str | None = None
     CABINET_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     CABINET_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Invoxy app sessions: signed out only after this many days without a single refresh (sliding), on sign-out,
+    # or by an administrator. The web cabinet keeps CABINET_REFRESH_TOKEN_EXPIRE_DAYS.
+    CABINET_APP_SESSION_IDLE_DAYS: int = 365
     CABINET_ALLOWED_ORIGINS: str = ''
     CABINET_EMAIL_VERIFICATION_ENABLED: bool = True
     CABINET_EMAIL_VERIFICATION_EXPIRE_HOURS: int = 24
@@ -4527,6 +4530,9 @@ class Settings(BaseSettings):
 
     def get_cabinet_refresh_token_expire_days(self) -> int:
         return max(1, self.CABINET_REFRESH_TOKEN_EXPIRE_DAYS)
+
+    def get_cabinet_app_session_idle_days(self) -> int:
+        return max(1, self.CABINET_APP_SESSION_IDLE_DAYS)
 
     def get_cabinet_allowed_origins(self) -> list[str]:
         if not self.CABINET_ALLOWED_ORIGINS:
