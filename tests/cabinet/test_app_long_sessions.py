@@ -1,5 +1,6 @@
 """App sessions stay signed in: a long refresh JWT and a sliding database deadline."""
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -34,13 +35,13 @@ class _Db:
 
 
 def _record(device_info: str | None, expires_at: datetime) -> Any:
-    record = SimpleNamespace(device_info=device_info, expires_at=expires_at, revoked_at=None)
+    record = SimpleNamespace(device_info=device_info, expires_at=expires_at, revoked_at=None, token_hash='old')
     record.is_valid = True
     return record
 
 
 @pytest.fixture
-def stored(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+def stored(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(type(route.settings), 'get_cabinet_jwt_secret', lambda _self: 'test-secret')
 
     async def user(_db: Any, user_id: int) -> Any:
@@ -49,22 +50,15 @@ def stored(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     async def perms(_db: Any, _user_id: int) -> tuple[list, list, int]:
         return [], [], 0
 
-    saved: list[dict[str, Any]] = []
-
-    async def store(_db: Any, user_id: int, token: str, device_info: str | None = None, expires_at: Any = None) -> None:
-        saved.append({'token': token, 'device_info': device_info, 'expires_at': expires_at})
-
     monkeypatch.setattr(route, 'get_user_by_id', user)
     monkeypatch.setattr(route.UserRoleCRUD, 'get_user_permissions', perms)
-    monkeypatch.setattr(route, '_store_refresh_token', store)
-    return saved
 
 
 def _exp(token: str) -> datetime:
     return datetime.fromtimestamp(jwt.decode(token, 'test-secret', algorithms=['HS256'])['exp'], UTC)
 
 
-async def test_app_refresh_slides_and_swaps_a_short_token_once(stored: list[dict[str, Any]]) -> None:
+async def test_app_refresh_slides_and_swaps_a_short_token_once(stored: None) -> None:
     short = jwt_handler.create_refresh_token(7)  # issued before app sessions were long (7 days)
     record = _record(svc.app_session_tag('device-1'), datetime.now(UTC) + timedelta(days=1))
     db = _Db(record)
@@ -74,18 +68,18 @@ async def test_app_refresh_slides_and_swaps_a_short_token_once(stored: list[dict
     assert record.expires_at > datetime.now(UTC) + timedelta(days=360)
     assert answer.refresh_token != short
     assert _exp(answer.refresh_token) > datetime.now(UTC) + timedelta(days=3000)
-    assert stored == [{'token': answer.refresh_token, 'device_info': record.device_info, 'expires_at': record.expires_at}]
-    assert record.revoked_at is None  # the old one runs out by itself: a parallel refresh is not signed out
+    # Swapped in the same row: the old token no longer matches it, a revoke of the row covers the new one.
+    assert record.token_hash == hashlib.sha256(answer.refresh_token.encode()).hexdigest()
 
     # The long token is kept as it is from now on; only the deadline moves.
     record.expires_at = datetime.now(UTC) + timedelta(days=1)
     again = await route.refresh_token(RefreshTokenRequest(refresh_token=answer.refresh_token), db)
     assert again.refresh_token == answer.refresh_token
     assert record.expires_at > datetime.now(UTC) + timedelta(days=360)
-    assert len(stored) == 1
+    assert record.token_hash == hashlib.sha256(answer.refresh_token.encode()).hexdigest()
 
 
-async def test_cabinet_refresh_keeps_its_own_lifetime(stored: list[dict[str, Any]]) -> None:
+async def test_cabinet_refresh_keeps_its_own_lifetime(stored: None) -> None:
     token = jwt_handler.create_refresh_token(7)
     deadline = datetime.now(UTC) + timedelta(days=3)
     record = _record(None, deadline)
@@ -94,7 +88,7 @@ async def test_cabinet_refresh_keeps_its_own_lifetime(stored: list[dict[str, Any
 
     assert answer.refresh_token == token
     assert record.expires_at == deadline
-    assert stored == []
+    assert record.token_hash == 'old'
 
 
 def test_app_session_tag_is_recognised() -> None:

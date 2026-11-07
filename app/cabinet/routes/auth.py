@@ -1935,10 +1935,13 @@ async def refresh_token(
     # Verify token exists in database and is not revoked
     token_hash = hashlib.sha256(request.refresh_token.encode()).hexdigest()
     result = await db.execute(
-        select(CabinetRefreshToken).where(
+        select(CabinetRefreshToken)
+        .where(
             CabinetRefreshToken.token_hash == token_hash,
             CabinetRefreshToken.revoked_at.is_(None),
         )
+        # Parallel refreshes of one token wait for each other: a swap below happens once, and a revoke is never missed.
+        .with_for_update()
     )
     token_record = result.scalar_one_or_none()
 
@@ -1965,15 +1968,13 @@ async def refresh_token(
     refresh_out = request.refresh_token
     if app_client_service.is_app_session(token_record.device_info):
         # An app session slides: every refresh moves its idle deadline. A short JWT issued before app sessions were
-        # long is swapped once for a long one; the old one is left to run out (a parallel refresh must not sign out).
+        # long is swapped once for a long one in the same row, so the old one stops working and a revoke covers the new.
         token_record.expires_at = app_client_service.app_session_expires_at()
         jwt_left = float(payload.get('exp') or 0) - datetime.now(UTC).timestamp()
         if jwt_left < app_client_service.APP_REFRESH_JWT_DAYS * 86400 / 2:
             refresh_out = create_refresh_token(user.id, expire_days=app_client_service.APP_REFRESH_JWT_DAYS)
-            await _store_refresh_token(
-                db, user.id, refresh_out, device_info=token_record.device_info, expires_at=token_record.expires_at
-            )
-        await db.commit()
+            token_record.token_hash = hashlib.sha256(refresh_out.encode()).hexdigest()
+    await db.commit()
 
     user_permissions, user_role_names, user_role_level = await UserRoleCRUD.get_user_permissions(db, user.id)
     access_token = create_access_token(
